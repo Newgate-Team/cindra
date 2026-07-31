@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
@@ -11,6 +12,19 @@ from app.schemas import PostCreate, PostOut
 from app.usage import enforce_and_record_usage
 
 router = APIRouter(prefix="/posts", tags=["posts"])
+
+
+@router.get("", response_model=list[PostOut])
+def list_posts(
+    current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
+) -> list[Post]:
+    return list(
+        db.scalars(
+            select(Post)
+            .where(Post.user_id == current_user.id)
+            .order_by(Post.scheduled_for.desc())
+        )
+    )
 
 
 @router.post("", response_model=PostOut, status_code=status.HTTP_201_CREATED)

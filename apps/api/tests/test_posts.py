@@ -4,7 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app.models import SocialPlatform, User
+from app.models import Post, PostStatus, SocialPlatform, User
 from app.scheduler import registry
 from app.scheduler.registry import register_publisher
 from app.social_accounts import upsert_social_account
@@ -101,6 +101,40 @@ def test_get_post(client: TestClient, db: Session) -> None:
     response = client.get(f"/posts/{created['id']}", headers=headers)
     assert response.status_code == 200
     assert response.json()["id"] == created["id"]
+
+
+def test_list_posts_scoped_to_owner(client: TestClient, db: Session) -> None:
+    headers = _auth_headers(client)
+    account_id = _connected_account_id(client, headers, db)
+    client.post(
+        "/posts", json={"social_account_id": account_id, "text": "мой пост"}, headers=headers
+    )
+
+    other = User(email="eve2@cindra.dev", hashed_password="x")
+    db.add(other)
+    db.commit()
+    other_account = upsert_social_account(
+        db, other, SocialPlatform.telegram, "-777", access_token="t"
+    )
+    db.add(
+        Post(
+            user_id=other.id,
+            social_account_id=other_account.id,
+            text="чужой пост",
+            status=PostStatus.published,
+            scheduled_for=datetime.now(UTC),
+        )
+    )
+    db.commit()
+
+    response = client.get("/posts", headers=headers)
+    assert response.status_code == 200
+    texts = [p["text"] for p in response.json()]
+    assert texts == ["мой пост"]
+
+
+def test_list_posts_requires_auth(client: TestClient) -> None:
+    assert client.get("/posts").status_code == 401
 
 
 def test_create_post_requires_auth(client: TestClient) -> None:
