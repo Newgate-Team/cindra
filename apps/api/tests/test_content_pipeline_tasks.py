@@ -121,5 +121,22 @@ def test_transient_error_beyond_max_retries_gives_up(db: Session, user: User) ->
     assert job.attempts == 1  # this call's own single execution
 
 
+def test_generated_text_is_moderated_automatically(db: Session, user: User) -> None:
+    # The generator itself doesn't know about moderation -- it's the
+    # task pipeline's job to check `output["text"]` before marking a
+    # job completed, so a generator that never heard of
+    # ContentModeratedError still gets flagged for bad output.
+    register_generator(
+        GenerationContentType.text, lambda payload: {"text": "это сука хороший кофе"}
+    )
+    job = _create_job(db, user)
+
+    run_generation_job.apply(args=[str(job.id)])
+
+    db.refresh(job)
+    assert job.status == GenerationStatus.flagged
+    assert "нецензурн" in job.error_message.lower()
+
+
 def test_unknown_job_id_is_a_noop() -> None:
     run_generation_job.apply(args=[str(uuid.uuid4())])
