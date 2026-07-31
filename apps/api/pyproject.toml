@@ -12,6 +12,7 @@ dependencies = [
     "passlib[argon2]>=1.7",
     "pyjwt>=2.10",
     "email-validator>=2.2",
+    "cryptography>=43.0",
 ]
 
 [project.optional-dependencies]
