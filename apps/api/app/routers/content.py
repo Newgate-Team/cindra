@@ -4,8 +4,9 @@ from sqlalchemy.orm import Session
 from app.content_pipeline.tasks import run_generation_job
 from app.db import get_db
 from app.deps import get_current_user
-from app.models import GenerationJob, User
+from app.models import GenerationJob, UsageEventType, User
 from app.schemas import GenerationJobOut, GenerationRequest
+from app.usage import enforce_and_record_usage
 
 router = APIRouter(prefix="/content", tags=["content"])
 
@@ -25,6 +26,8 @@ def generate_content(
     # since no provider is chosen yet for either (see gate ticket
     # CIN-50). Nothing about this endpoint or the queue needs to
     # change once one is.
+    enforce_and_record_usage(db, current_user, UsageEventType.generation)
+
     job = GenerationJob(
         user_id=current_user.id,
         content_type=payload.content_type,

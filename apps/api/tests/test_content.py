@@ -93,6 +93,24 @@ def test_generate_image_has_no_provider_yet_but_fails_cleanly(client: TestClient
     assert "generationcontenttype.image" in body["error_message"].lower()
 
 
+def test_generate_returns_402_once_tier_limit_is_reached(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    for _ in range(10):  # free tier limit, see app/plans.py
+        response = client.post(
+            "/content/generate",
+            json={"topic": "тема", "platform": "telegram"},
+            headers=headers,
+        )
+        assert response.status_code == 202
+
+    response = client.post(
+        "/content/generate",
+        json={"topic": "тема", "platform": "telegram"},
+        headers=headers,
+    )
+    assert response.status_code == 402
+
+
 def test_generate_requires_auth(client: TestClient) -> None:
     response = client.post(
         "/content/generate", json={"topic": "тема", "platform": "telegram"}
