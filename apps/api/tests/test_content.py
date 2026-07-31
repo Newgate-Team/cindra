@@ -11,9 +11,9 @@ from app.models import GenerationContentType
 @pytest.fixture(autouse=True)
 def _fake_text_generator():
     # Endpoint tests exercise routing/DB/queue wiring, not the real
-    # Anthropic call (that's covered offline in test_text_generator.py
+    # Gemini call (that's covered offline in test_text_generator.py
     # via MockTransport, and was verified once manually against the
-    # live endpoint -- see CIN-49).
+    # live endpoint -- see CIN-53).
     previous = registry._REGISTRY.get(GenerationContentType.text)
     register_generator(
         GenerationContentType.text, lambda payload: {"text": f"пост про {payload['topic']}"}
