@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 
 from app.celery_app import celery_app
 from app.content_pipeline.errors import ContentModeratedError, TransientGenerationError
+from app.content_pipeline.moderation import check_content
 from app.content_pipeline.registry import get_generator
 from app.db import SessionLocal
 from app.models import GenerationJob, GenerationStatus
@@ -27,6 +28,8 @@ def run_generation_job(self, job_id: str) -> None:
         try:
             generator = get_generator(job.content_type)
             output = generator(job.input_payload)
+            if "text" in output:
+                check_content(output["text"])
         except ContentModeratedError as exc:
             job.status = GenerationStatus.flagged
             job.error_message = str(exc)
