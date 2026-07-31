@@ -75,6 +75,24 @@ def test_get_generation_job_not_owned_returns_404(client: TestClient, db: Sessio
     assert response.status_code == 404
 
 
+def test_generate_image_has_no_provider_yet_but_fails_cleanly(client: TestClient) -> None:
+    # No image generator is registered (CIN-50 -- provider not
+    # chosen yet). The request/queue path still works end to end;
+    # only the actual generation fails, informatively rather than
+    # with a 500.
+    headers = _auth_headers(client)
+    response = client.post(
+        "/content/generate",
+        json={"topic": "тема", "platform": "instagram", "content_type": "image"},
+        headers=headers,
+    )
+    assert response.status_code == 202
+    body = response.json()
+    assert body["content_type"] == "image"
+    assert body["status"] == "failed"
+    assert "generationcontenttype.image" in body["error_message"].lower()
+
+
 def test_generate_requires_auth(client: TestClient) -> None:
     response = client.post(
         "/content/generate", json={"topic": "тема", "platform": "telegram"}

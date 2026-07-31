@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from app.content_pipeline.tasks import run_generation_job
 from app.db import get_db
 from app.deps import get_current_user
-from app.models import GenerationContentType, GenerationJob, User
+from app.models import GenerationJob, User
 from app.schemas import GenerationJobOut, GenerationRequest
 
 router = APIRouter(prefix="/content", tags=["content"])
@@ -13,14 +13,21 @@ router = APIRouter(prefix="/content", tags=["content"])
 @router.post(
     "/generate", response_model=GenerationJobOut, status_code=status.HTTP_202_ACCEPTED
 )
-def generate_text(
+def generate_content(
     payload: GenerationRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> GenerationJob:
+    # content_type defaults to text (the only one with a real
+    # generator registered -- CIN-22). image/video are accepted here
+    # too: the job is created and queued the same way, and fails with
+    # a clear "no generator registered" message rather than a 500,
+    # since no provider is chosen yet for either (see gate ticket
+    # CIN-50). Nothing about this endpoint or the queue needs to
+    # change once one is.
     job = GenerationJob(
         user_id=current_user.id,
-        content_type=GenerationContentType.text,
+        content_type=payload.content_type,
         input_payload=payload.model_dump(mode="json"),
     )
     db.add(job)
