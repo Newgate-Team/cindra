@@ -28,7 +28,7 @@ def publish_post(self, post_id: str) -> None:
 
         try:
             publisher = get_publisher(account.platform)
-            result = publisher(account, post.text)
+            result = publisher(account, post)
         except (PermanentPublishError, NotImplementedError) as exc:
             post.status = PostStatus.failed
             post.error_message = str(exc)

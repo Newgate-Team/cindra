@@ -135,3 +135,59 @@ def test_connect_telegram_bad_chat_returns_400(client: TestClient) -> None:
 def test_connect_telegram_requires_auth(client: TestClient) -> None:
     response = client.post("/social-accounts/telegram/connect", json={"chat_id": "@mychannel"})
     assert response.status_code == 401
+
+
+def test_connect_instagram_creates_social_account(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    with (
+        patch(
+            "app.routers.social_accounts.instagram.exchange_code_for_token",
+            return_value="short-lived",
+        ),
+        patch(
+            "app.routers.social_accounts.instagram.get_long_lived_token",
+            return_value="long-lived",
+        ),
+        patch(
+            "app.routers.social_accounts.instagram.discover_instagram_business_account",
+            return_value={"id": "ig-42", "username": "mybrand"},
+        ),
+    ):
+        response = client.post(
+            "/social-accounts/instagram/connect", json={"code": "auth-code"}, headers=headers
+        )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["platform"] == "instagram"
+    assert body["external_account_id"] == "ig-42"
+    assert body["display_name"] == "mybrand"
+
+
+def test_connect_instagram_no_linked_account_returns_400(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    with (
+        patch(
+            "app.routers.social_accounts.instagram.exchange_code_for_token",
+            return_value="short-lived",
+        ),
+        patch(
+            "app.routers.social_accounts.instagram.get_long_lived_token",
+            return_value="long-lived",
+        ),
+        patch(
+            "app.routers.social_accounts.instagram.discover_instagram_business_account",
+            side_effect=PermanentPublishError("нет привязанного Instagram-аккаунта"),
+        ),
+    ):
+        response = client.post(
+            "/social-accounts/instagram/connect", json={"code": "auth-code"}, headers=headers
+        )
+
+    assert response.status_code == 400
+    assert "нет привязанного" in response.json()["detail"]
+
+
+def test_connect_instagram_requires_auth(client: TestClient) -> None:
+    response = client.post("/social-accounts/instagram/connect", json={"code": "auth-code"})
+    assert response.status_code == 401

@@ -39,7 +39,7 @@ def _make_post(db: Session, user: User, **overrides) -> Post:
 
 
 def test_successful_publish_marks_post_published(db: Session, user: User) -> None:
-    register_publisher(SocialPlatform.telegram, lambda account, text: {"message_id": 42})
+    register_publisher(SocialPlatform.telegram, lambda account, post: {"message_id": 42})
     post = _make_post(db, user)
 
     publish_post.apply(args=[str(post.id)])
@@ -52,7 +52,7 @@ def test_successful_publish_marks_post_published(db: Session, user: User) -> Non
 
 
 def test_permanent_failure_marks_post_failed(db: Session, user: User) -> None:
-    def _forbidden(account, text):
+    def _forbidden(account, post):
         raise PermanentPublishError("бот не админ канала")
 
     register_publisher(SocialPlatform.telegram, _forbidden)
@@ -68,7 +68,7 @@ def test_permanent_failure_marks_post_failed(db: Session, user: User) -> None:
 def test_transient_error_triggers_a_retry(db: Session, user: User) -> None:
     from celery.exceptions import Retry
 
-    def _rate_limited(account, text):
+    def _rate_limited(account, post):
         raise TransientPublishError("flood control")
 
     register_publisher(SocialPlatform.telegram, _rate_limited)
@@ -100,7 +100,7 @@ def test_unknown_post_id_is_a_noop() -> None:
 
 
 def test_enqueue_due_posts_dispatches_only_due_ones(db: Session, user: User) -> None:
-    register_publisher(SocialPlatform.telegram, lambda account, text: {"message_id": 1})
+    register_publisher(SocialPlatform.telegram, lambda account, post: {"message_id": 1})
 
     due = _make_post(db, user, scheduled_for=datetime.now(UTC) - timedelta(minutes=1))
     future = _make_post(db, user, scheduled_for=datetime.now(UTC) + timedelta(hours=1))

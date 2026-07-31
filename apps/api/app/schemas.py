@@ -70,6 +70,7 @@ class GenerationJobOut(BaseModel):
 class PostCreate(BaseModel):
     social_account_id: uuid.UUID
     text: str = Field(min_length=1, max_length=4096)
+    image_url: str | None = None  # required for Instagram, optional for Telegram
     scheduled_for: datetime | None = None  # None = publish as soon as possible
     generation_job_id: uuid.UUID | None = None
 
@@ -78,6 +79,7 @@ class PostOut(BaseModel):
     id: uuid.UUID
     social_account_id: uuid.UUID
     text: str
+    image_url: str | None
     status: PostStatus
     scheduled_for: datetime
     platform_message_id: str | None
@@ -90,6 +92,12 @@ class PostOut(BaseModel):
 
 class TelegramConnectRequest(BaseModel):
     chat_id: str = Field(min_length=1, description="Telegram @username или numeric chat_id")
+
+
+class InstagramConnectRequest(BaseModel):
+    code: str = Field(
+        min_length=1, description="Authorization code от Meta OAuth-редиректа (см. CIN-52)"
+    )
 
 
 class SocialAccountOut(BaseModel):

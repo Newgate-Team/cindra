@@ -5,10 +5,11 @@ from app.content_pipeline.text_generator import anthropic_text_generator
 from app.models import GenerationContentType, SocialPlatform
 from app.routers import auth, billing, content, posts, social_accounts
 from app.scheduler.registry import register_publisher
-from app.social_integrations import telegram
+from app.social_integrations import instagram, telegram
 
 register_generator(GenerationContentType.text, anthropic_text_generator)
 register_publisher(SocialPlatform.telegram, telegram.publish)
+register_publisher(SocialPlatform.instagram, instagram.publish)
 
 app = FastAPI(title="Cindra API")
 app.include_router(auth.router)

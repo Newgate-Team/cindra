@@ -13,7 +13,7 @@ from app.social_accounts import upsert_social_account
 @pytest.fixture(autouse=True)
 def _fake_telegram_publisher():
     previous = registry._REGISTRY.get(SocialPlatform.telegram)
-    register_publisher(SocialPlatform.telegram, lambda account, text: {"message_id": 7})
+    register_publisher(SocialPlatform.telegram, lambda account, post: {"message_id": 7})
     yield
     if previous is not None:
         register_publisher(SocialPlatform.telegram, previous)

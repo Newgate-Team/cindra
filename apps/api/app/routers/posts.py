@@ -33,6 +33,7 @@ def create_post(
         social_account_id=account.id,
         generation_job_id=payload.generation_job_id,
         text=payload.text,
+        image_url=payload.image_url,
         scheduled_for=scheduled_for,
     )
     db.add(post)

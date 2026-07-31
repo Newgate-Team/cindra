@@ -180,6 +180,11 @@ class Post(Base):
         UUID(as_uuid=True), ForeignKey("generation_jobs.id", ondelete="SET NULL"), nullable=True
     )
     text: Mapped[str] = mapped_column(String(4096), nullable=False)
+    # Telegram can publish text alone; Instagram's Content Publishing
+    # API has no text-only post, every post needs media -- so this is
+    # required for Instagram posts and optional for Telegram ones,
+    # enforced by each platform's publisher, not at the schema level.
+    image_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     status: Mapped[PostStatus] = mapped_column(
         Enum(PostStatus, name="post_status"), default=PostStatus.scheduled, nullable=False
     )
