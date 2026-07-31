@@ -1,5 +1,5 @@
 from app.content_pipeline.registry import register_generator
-from app.content_pipeline.text_generator import anthropic_text_generator
+from app.content_pipeline.text_generator import gemini_text_generator
 from app.models import GenerationContentType, SocialPlatform
 from app.scheduler.registry import register_publisher
 from app.social_integrations import instagram, telegram
@@ -16,6 +16,6 @@ def bootstrap() -> None:
     celery_app (via content_pipeline.tasks), so both processes end up
     covered from a single call site.
     """
-    register_generator(GenerationContentType.text, anthropic_text_generator)
+    register_generator(GenerationContentType.text, gemini_text_generator)
     register_publisher(SocialPlatform.telegram, telegram.publish)
     register_publisher(SocialPlatform.instagram, instagram.publish)

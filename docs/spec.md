@@ -64,7 +64,7 @@ cindra/
 | Backend/API | **Python (FastAPI)** — выбрано вместо NestJS |
 | Очереди задач | **Celery + Redis** — Python-нативный эквивалент BullMQ (BullMQ специфичен для Node.js и несовместим с FastAPI-бэкендом) |
 | БД | PostgreSQL |
-| Генерация текста | Claude / GPT API |
+| Генерация текста | Google Gemini 2.5 Flash-Lite API |
 | Генерация изображений/видео | сторонние API (Midjourney/Runway/др.) |
 | Хостинг | Vercel (frontend) + Railway/Render (backend) |
 
