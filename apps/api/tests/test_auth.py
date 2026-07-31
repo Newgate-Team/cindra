@@ -8,8 +8,32 @@ def test_register_creates_user(client: TestClient) -> None:
     assert response.status_code == 201
     body = response.json()
     assert body["email"] == "ada@cindra.dev"
+    assert body["role"] == "solo"
     assert "id" in body
     assert "hashed_password" not in body
+
+
+def test_register_accepts_agency_role(client: TestClient) -> None:
+    response = client.post(
+        "/auth/register",
+        json={"email": "agency@cindra.dev", "password": "supersecret1", "role": "agency"},
+    )
+    assert response.status_code == 201
+    assert response.json()["role"] == "agency"
+
+
+def test_update_me_changes_role(client: TestClient) -> None:
+    payload = {"email": "ada@cindra.dev", "password": "supersecret1"}
+    client.post("/auth/register", json=payload)
+    token = client.post("/auth/login", json=payload).json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    response = client.patch("/auth/me", json={"role": "agency"}, headers=headers)
+    assert response.status_code == 200
+    assert response.json()["role"] == "agency"
+
+    me_response = client.get("/auth/me", headers=headers)
+    assert me_response.json()["role"] == "agency"
 
 
 def test_register_duplicate_email_conflicts(client: TestClient) -> None:
