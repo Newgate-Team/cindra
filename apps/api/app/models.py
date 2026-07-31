@@ -1,9 +1,10 @@
 import enum
 import uuid
 from datetime import UTC, datetime
+from typing import Any
 
-from sqlalchemy import DateTime, Enum, ForeignKey, String, UniqueConstraint
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import DateTime, Enum, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -43,6 +44,20 @@ class SubscriptionStore(str, enum.Enum):
 class UsageEventType(str, enum.Enum):
     generation = "generation"
     publication = "publication"
+
+
+class GenerationContentType(str, enum.Enum):
+    text = "text"
+    image = "image"
+    video = "video"
+
+
+class GenerationStatus(str, enum.Enum):
+    queued = "queued"
+    processing = "processing"
+    completed = "completed"
+    failed = "failed"
+    flagged = "flagged"
 
 
 class User(Base):
@@ -110,6 +125,35 @@ class UsageEvent(Base):
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), index=True
+    )
+
+
+class GenerationJob(Base):
+    __tablename__ = "generation_jobs"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    content_type: Mapped[GenerationContentType] = mapped_column(
+        Enum(GenerationContentType, name="generation_content_type"), nullable=False
+    )
+    status: Mapped[GenerationStatus] = mapped_column(
+        Enum(GenerationStatus, name="generation_status"),
+        default=GenerationStatus.queued,
+        nullable=False,
+    )
+    input_payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    output_payload: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    error_message: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
 
 
