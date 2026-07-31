@@ -111,6 +111,13 @@ class SocialAccountOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class MetricsSummary(BaseModel):
+    average_time_to_first_post_seconds: float | None
+    retention_d7: float
+    retention_d30: float
+    publish_success_rate: float | None
+
+
 class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"
