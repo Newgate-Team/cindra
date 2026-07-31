@@ -60,6 +60,13 @@ class GenerationStatus(str, enum.Enum):
     flagged = "flagged"
 
 
+class PostStatus(str, enum.Enum):
+    scheduled = "scheduled"
+    publishing = "publishing"
+    published = "published"
+    failed = "failed"
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -153,6 +160,37 @@ class GenerationJob(Base):
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
     completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+class Post(Base):
+    __tablename__ = "posts"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    social_account_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("social_accounts.id", ondelete="CASCADE"), nullable=False
+    )
+    generation_job_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("generation_jobs.id", ondelete="SET NULL"), nullable=True
+    )
+    text: Mapped[str] = mapped_column(String(4096), nullable=False)
+    status: Mapped[PostStatus] = mapped_column(
+        Enum(PostStatus, name="post_status"), default=PostStatus.scheduled, nullable=False
+    )
+    scheduled_for: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    platform_message_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    error_message: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    published_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
 

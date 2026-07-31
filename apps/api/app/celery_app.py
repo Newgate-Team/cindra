@@ -14,6 +14,12 @@ celery_app.conf.update(
     result_serializer="json",
     task_default_retry_delay=10,
     task_acks_late=True,
+    beat_schedule={
+        "enqueue-due-posts": {
+            "task": "app.scheduler.tasks.enqueue_due_posts",
+            "schedule": 60.0,
+        },
+    },
 )
 
-celery_app.autodiscover_tasks(["app.content_pipeline"])
+celery_app.autodiscover_tasks(["app.content_pipeline", "app.scheduler"])
