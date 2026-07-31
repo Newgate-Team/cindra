@@ -3,7 +3,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, EmailStr, Field
 
-from app.models import UserRole
+from app.models import SocialPlatform, UserRole
 
 
 class UserCreate(BaseModel):
@@ -28,6 +28,17 @@ class UserOut(BaseModel):
 
 class UserUpdate(BaseModel):
     role: UserRole
+
+
+class SocialAccountOut(BaseModel):
+    id: uuid.UUID
+    platform: SocialPlatform
+    external_account_id: str
+    display_name: str | None
+    token_expires_at: datetime | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
 
 
 class Token(BaseModel):
