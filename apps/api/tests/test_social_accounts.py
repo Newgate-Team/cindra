@@ -1,10 +1,12 @@
 from datetime import UTC, datetime, timedelta
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.models import SocialPlatform, User
 from app.social_accounts import get_access_token, upsert_social_account
+from app.social_integrations.errors import PermanentPublishError
 from app.token_crypto import decrypt_token, encrypt_token
 
 
@@ -94,3 +96,42 @@ def test_disconnect_social_account_not_owned_returns_404(
     headers = _auth_headers(client)
     response = client.delete(f"/social-accounts/{other_account.id}", headers=headers)
     assert response.status_code == 404
+
+
+def test_connect_telegram_creates_social_account(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    with patch(
+        "app.routers.social_accounts.get_chat",
+        return_value={"id": -100123, "title": "My Channel"},
+    ):
+        response = client.post(
+            "/social-accounts/telegram/connect", json={"chat_id": "@mychannel"}, headers=headers
+        )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["platform"] == "telegram"
+    assert body["external_account_id"] == "-100123"
+    assert body["display_name"] == "My Channel"
+
+    listed = client.get("/social-accounts", headers=headers).json()
+    assert len(listed) == 1
+
+
+def test_connect_telegram_bad_chat_returns_400(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    with patch(
+        "app.routers.social_accounts.get_chat",
+        side_effect=PermanentPublishError("chat not found"),
+    ):
+        response = client.post(
+            "/social-accounts/telegram/connect", json={"chat_id": "@doesnotexist"}, headers=headers
+        )
+
+    assert response.status_code == 400
+    assert "chat not found" in response.json()["detail"]
+
+
+def test_connect_telegram_requires_auth(client: TestClient) -> None:
+    response = client.post("/social-accounts/telegram/connect", json={"chat_id": "@mychannel"})
+    assert response.status_code == 401
