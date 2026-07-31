@@ -2,7 +2,7 @@ from typing import Any
 
 import httpx
 
-from app.models import SocialAccount
+from app.models import Post, SocialAccount
 from app.social_accounts import get_access_token
 from app.social_integrations.errors import PermanentPublishError, TransientPublishError
 
@@ -54,6 +54,27 @@ def send_message(
     return _handle_response(response)
 
 
-def publish(account: SocialAccount, text: str) -> dict[str, Any]:
-    """Registered in app.scheduler.registry as the telegram publisher."""
-    return send_message(account.external_account_id, text, get_access_token(account))
+def send_photo(
+    chat_id: str, photo_url: str, caption: str, bot_token: str, client: httpx.Client | None = None
+) -> dict[str, Any]:
+    """Publish a photo with `caption` to `chat_id`. Real POST to .../sendPhoto."""
+    url = f"{_TELEGRAM_API_BASE}/bot{bot_token}/sendPhoto"
+    json_body = {"chat_id": chat_id, "photo": photo_url, "caption": caption}
+    response = (
+        client.post(url, json=json_body, timeout=15.0)
+        if client is not None
+        else httpx.post(url, json=json_body, timeout=15.0)
+    )
+    return _handle_response(response)
+
+
+def publish(account: SocialAccount, post: Post) -> dict[str, Any]:
+    """Registered in app.scheduler.registry as the telegram publisher.
+
+    Unlike Instagram, Telegram doesn't require media -- an image_url
+    just switches sendMessage for sendPhoto+caption when present.
+    """
+    bot_token = get_access_token(account)
+    if post.image_url:
+        return send_photo(account.external_account_id, post.image_url, post.text, bot_token)
+    return send_message(account.external_account_id, post.text, bot_token)

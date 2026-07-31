@@ -1,11 +1,14 @@
 from collections.abc import Callable
 from typing import Any
 
-from app.models import SocialAccount, SocialPlatform
+from app.models import Post, SocialAccount, SocialPlatform
 
-# A publisher sends `text` via the given connected account and returns
+# A publisher sends `post` via the given connected account and returns
 # the platform's raw response dict (used to pull out a message id).
-Publisher = Callable[[SocialAccount, str], dict[str, Any]]
+# Takes the whole Post (not just its text) because platforms differ
+# in what they need -- Telegram can publish text alone, Instagram
+# requires post.image_url and has no text-only post at all.
+Publisher = Callable[[SocialAccount, Post], dict[str, Any]]
 
 _REGISTRY: dict[SocialPlatform, Publisher] = {}
 
