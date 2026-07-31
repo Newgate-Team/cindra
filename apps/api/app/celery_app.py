@@ -23,3 +23,11 @@ celery_app.conf.update(
 )
 
 celery_app.autodiscover_tasks(["app.content_pipeline", "app.scheduler"])
+
+# Registers every generator/publisher into their registries. Runs
+# here (not just in main.py) because the Celery worker process
+# (`celery -A app.celery_app worker`) never imports main.py -- without
+# this, tasks running in the worker see an empty registry.
+from app.bootstrap import bootstrap
+
+bootstrap()
