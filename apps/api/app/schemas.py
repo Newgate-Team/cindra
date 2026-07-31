@@ -3,7 +3,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, EmailStr, Field
 
-from app.models import SocialPlatform, UserRole
+from app.models import SocialPlatform, SubscriptionStatus, SubscriptionTier, UserRole
 
 
 class UserCreate(BaseModel):
@@ -28,6 +28,14 @@ class UserOut(BaseModel):
 
 class UserUpdate(BaseModel):
     role: UserRole
+
+
+class SubscriptionOut(BaseModel):
+    tier: SubscriptionTier
+    status: SubscriptionStatus
+    current_period_end: datetime | None
+
+    model_config = {"from_attributes": True}
 
 
 class SocialAccountOut(BaseModel):

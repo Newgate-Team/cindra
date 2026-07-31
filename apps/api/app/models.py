@@ -19,6 +19,32 @@ class SocialPlatform(str, enum.Enum):
     instagram = "instagram"
 
 
+class SubscriptionTier(str, enum.Enum):
+    free = "free"
+    pro = "pro"
+
+
+class SubscriptionStatus(str, enum.Enum):
+    active = "active"
+    past_due = "past_due"
+    canceled = "canceled"
+
+
+class SubscriptionStore(str, enum.Enum):
+    # No real value until the payment provider decision lands -- see
+    # the CIN-18 gate ticket. `none` is what every subscription has
+    # until then (tier/status still work for enforcement in the
+    # meantime, e.g. the default free tier).
+    none = "none"
+    google_play = "google_play"
+    app_store = "app_store"
+
+
+class UsageEventType(str, enum.Enum):
+    generation = "generation"
+    publication = "publication"
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -32,6 +58,58 @@ class User(Base):
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+
+
+class Subscription(Base):
+    __tablename__ = "subscriptions"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        unique=True,
+        nullable=False,
+    )
+    tier: Mapped[SubscriptionTier] = mapped_column(
+        Enum(SubscriptionTier, name="subscription_tier"),
+        default=SubscriptionTier.free,
+        nullable=False,
+    )
+    status: Mapped[SubscriptionStatus] = mapped_column(
+        Enum(SubscriptionStatus, name="subscription_status"),
+        default=SubscriptionStatus.active,
+        nullable=False,
+    )
+    store: Mapped[SubscriptionStore] = mapped_column(
+        Enum(SubscriptionStore, name="subscription_store"),
+        default=SubscriptionStore.none,
+        nullable=False,
+    )
+    current_period_end: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+
+
+class UsageEvent(Base):
+    __tablename__ = "usage_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    event_type: Mapped[UsageEventType] = mapped_column(
+        Enum(UsageEventType, name="usage_event_type"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), index=True
     )
 
 
