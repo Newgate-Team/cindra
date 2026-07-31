@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     # the credential is missing.
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-5"
+    # Empty until CIN-51 is resolved -- see that gate ticket.
+    telegram_bot_token: str = ""
 
     model_config = {"env_file": ".env"}
 

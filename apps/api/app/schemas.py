@@ -66,6 +66,10 @@ class GenerationJobOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class TelegramConnectRequest(BaseModel):
+    chat_id: str = Field(min_length=1, description="Telegram @username или numeric chat_id")
+
+
 class SocialAccountOut(BaseModel):
     id: uuid.UUID
     platform: SocialPlatform
