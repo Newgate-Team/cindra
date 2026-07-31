@@ -5,9 +5,12 @@ from fastapi.testclient import TestClient
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.celery_app import celery_app
 from app.db import SessionLocal
 from app.main import app
 from app.models import User
+
+celery_app.conf.update(task_always_eager=True, task_eager_propagates=True)
 
 
 @pytest.fixture(autouse=True)
