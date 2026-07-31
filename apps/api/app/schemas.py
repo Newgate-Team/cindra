@@ -7,6 +7,7 @@ from pydantic import BaseModel, EmailStr, Field
 from app.models import (
     GenerationContentType,
     GenerationStatus,
+    PostStatus,
     SocialPlatform,
     SubscriptionStatus,
     SubscriptionTier,
@@ -62,6 +63,27 @@ class GenerationJobOut(BaseModel):
     error_message: str | None
     created_at: datetime
     completed_at: datetime | None
+
+    model_config = {"from_attributes": True}
+
+
+class PostCreate(BaseModel):
+    social_account_id: uuid.UUID
+    text: str = Field(min_length=1, max_length=4096)
+    scheduled_for: datetime | None = None  # None = publish as soon as possible
+    generation_job_id: uuid.UUID | None = None
+
+
+class PostOut(BaseModel):
+    id: uuid.UUID
+    social_account_id: uuid.UUID
+    text: str
+    status: PostStatus
+    scheduled_for: datetime
+    platform_message_id: str | None
+    error_message: str | None
+    created_at: datetime
+    published_at: datetime | None
 
     model_config = {"from_attributes": True}
 

@@ -2,6 +2,8 @@ from typing import Any
 
 import httpx
 
+from app.models import SocialAccount
+from app.social_accounts import get_access_token
 from app.social_integrations.errors import PermanentPublishError, TransientPublishError
 
 _TELEGRAM_API_BASE = "https://api.telegram.org"
@@ -50,3 +52,8 @@ def send_message(
         else httpx.post(url, json=json_body, timeout=15.0)
     )
     return _handle_response(response)
+
+
+def publish(account: SocialAccount, text: str) -> dict[str, Any]:
+    """Registered in app.scheduler.registry as the telegram publisher."""
+    return send_message(account.external_account_id, text, get_access_token(account))
