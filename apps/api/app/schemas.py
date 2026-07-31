@@ -1,9 +1,17 @@
 import uuid
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, EmailStr, Field
 
-from app.models import SocialPlatform, SubscriptionStatus, SubscriptionTier, UserRole
+from app.models import (
+    GenerationContentType,
+    GenerationStatus,
+    SocialPlatform,
+    SubscriptionStatus,
+    SubscriptionTier,
+    UserRole,
+)
 
 
 class UserCreate(BaseModel):
@@ -34,6 +42,25 @@ class SubscriptionOut(BaseModel):
     tier: SubscriptionTier
     status: SubscriptionStatus
     current_period_end: datetime | None
+
+    model_config = {"from_attributes": True}
+
+
+class GenerationRequest(BaseModel):
+    topic: str = Field(min_length=1, max_length=500)
+    platform: SocialPlatform
+    content_kind: str = "post"
+    brand_guide: str | None = None
+
+
+class GenerationJobOut(BaseModel):
+    id: uuid.UUID
+    content_type: GenerationContentType
+    status: GenerationStatus
+    output_payload: dict[str, Any] | None
+    error_message: str | None
+    created_at: datetime
+    completed_at: datetime | None
 
     model_config = {"from_attributes": True}
 

@@ -4,6 +4,7 @@ import pytest
 from celery.exceptions import Retry
 from sqlalchemy.orm import Session
 
+from app.content_pipeline import registry
 from app.content_pipeline.errors import ContentModeratedError, TransientGenerationError
 from app.content_pipeline.registry import register_generator
 from app.content_pipeline.tasks import run_generation_job
@@ -11,9 +12,13 @@ from app.models import GenerationContentType, GenerationJob, GenerationStatus, U
 
 
 @pytest.fixture(autouse=True)
-def _clear_text_generator():
+def _restore_text_generator():
+    previous = registry._REGISTRY.get(GenerationContentType.text)
     yield
-    register_generator(GenerationContentType.text, None)  # type: ignore[arg-type]
+    if previous is not None:
+        register_generator(GenerationContentType.text, previous)
+    else:
+        registry._REGISTRY.pop(GenerationContentType.text, None)
 
 
 def _create_job(db: Session, user: User) -> GenerationJob:
