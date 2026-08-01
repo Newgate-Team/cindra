@@ -37,7 +37,7 @@ def veo_video_generator(
     client: httpx.Client | None = None,
     sleep: Callable[[float], None] = time.sleep,
 ) -> dict[str, Any]:
-    """Real Google Veo 3 Fast video-generation call.
+    """Real Google Veo 3.1 Fast video-generation call.
 
     `payload` is a GenerationJob.input_payload built by the /content
     router: {"topic", "platform", "content_kind", "brand_guide"}.
@@ -45,7 +45,7 @@ def veo_video_generator(
     endpoint and fails with a real 400 API_KEY_INVALID -- proving the
     request is shaped correctly, not mocking the call away (verified
     manually against the real generativelanguage.googleapis.com
-    endpoint; see CIN-55).
+    endpoint; see CIN-55/CIN-57).
 
     Video generation is asynchronous: predictLongRunning kicks off an
     operation, then this polls it until done. `client`/`sleep` are
@@ -59,10 +59,11 @@ def veo_video_generator(
 
     Note: the exact shape parsed out of the completed operation
     (`response.generateVideoResponse.generatedSamples[0].video.uri`)
-    is based on Google's documented long-running-operation format, not
-    verified against a real successful response -- only auth-layer
-    errors are reachable without a paid key. Re-verify once a real key
-    lands and the first generation actually completes (see CIN-55).
+    is cross-checked against Google's documented request/response
+    examples (see CIN-57), but still not verified against a real
+    successful response -- only auth-layer errors are reachable
+    without a paid key. Re-verify once a real key lands and the first
+    generation actually completes.
     """
     settings = get_settings()
     prompt = _build_video_prompt(payload)
@@ -75,7 +76,13 @@ def veo_video_generator(
         start_url,
         params=params,
         headers={"content-type": "application/json"},
-        json={"instances": [{"prompt": prompt}]},
+        json={
+            "instances": [{"prompt": prompt}],
+            "parameters": {
+                "durationSeconds": settings.veo_duration_seconds,
+                "resolution": settings.veo_resolution,
+            },
+        },
         timeout=30.0,
     )
     if start_response.status_code in _RETRYABLE_STATUS_CODES:
