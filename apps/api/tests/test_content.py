@@ -9,18 +9,25 @@ from app.models import GenerationContentType
 
 
 @pytest.fixture(autouse=True)
-def _fake_text_generator():
+def _fake_generators():
     # Endpoint tests exercise routing/DB/queue wiring, not the real
-    # Gemini call (that's covered offline in test_text_generator.py
-    # via MockTransport, and was verified once manually against the
-    # live endpoint -- see CIN-53).
-    previous = registry._REGISTRY.get(GenerationContentType.text)
+    # Gemini/Imagen/Veo calls (those are covered offline in
+    # test_text_generator.py / test_image_generator.py /
+    # test_video_generator.py via MockTransport, and were verified
+    # once manually against the live endpoints -- see CIN-53/54/55).
+    previous = dict(registry._REGISTRY)
     register_generator(
         GenerationContentType.text, lambda payload: {"text": f"пост про {payload['topic']}"}
     )
+    register_generator(
+        GenerationContentType.image, lambda payload: {"image_base64": "ZmFrZQ=="}
+    )
+    register_generator(
+        GenerationContentType.video, lambda payload: {"video_uri": "https://example.com/fake.mp4"}
+    )
     yield
-    if previous is not None:
-        register_generator(GenerationContentType.text, previous)
+    registry._REGISTRY.clear()
+    registry._REGISTRY.update(previous)
 
 
 def _auth_headers(client: TestClient) -> dict[str, str]:
@@ -75,11 +82,9 @@ def test_get_generation_job_not_owned_returns_404(client: TestClient, db: Sessio
     assert response.status_code == 404
 
 
-def test_generate_image_has_no_provider_yet_but_fails_cleanly(client: TestClient) -> None:
-    # No image generator is registered (CIN-50 -- provider not
-    # chosen yet). The request/queue path still works end to end;
-    # only the actual generation fails, informatively rather than
-    # with a 500.
+def test_generate_image_runs_synchronously_in_eager_mode_and_completes(
+    client: TestClient,
+) -> None:
     headers = _auth_headers(client)
     response = client.post(
         "/content/generate",
@@ -89,8 +94,24 @@ def test_generate_image_has_no_provider_yet_but_fails_cleanly(client: TestClient
     assert response.status_code == 202
     body = response.json()
     assert body["content_type"] == "image"
-    assert body["status"] == "failed"
-    assert "generationcontenttype.image" in body["error_message"].lower()
+    assert body["status"] == "completed"
+    assert body["output_payload"] == {"image_base64": "ZmFrZQ=="}
+
+
+def test_generate_video_runs_synchronously_in_eager_mode_and_completes(
+    client: TestClient,
+) -> None:
+    headers = _auth_headers(client)
+    response = client.post(
+        "/content/generate",
+        json={"topic": "тема", "platform": "instagram", "content_type": "video"},
+        headers=headers,
+    )
+    assert response.status_code == 202
+    body = response.json()
+    assert body["content_type"] == "video"
+    assert body["status"] == "completed"
+    assert body["output_payload"] == {"video_uri": "https://example.com/fake.mp4"}
 
 
 def test_generate_returns_402_once_tier_limit_is_reached(client: TestClient) -> None:
