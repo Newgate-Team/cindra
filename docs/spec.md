@@ -65,7 +65,8 @@ cindra/
 | Очереди задач | **Celery + Redis** — Python-нативный эквивалент BullMQ (BullMQ специфичен для Node.js и несовместим с FastAPI-бэкендом) |
 | БД | PostgreSQL |
 | Генерация текста | Google Gemini 2.5 Flash-Lite API |
-| Генерация изображений/видео | сторонние API (Midjourney/Runway/др.) |
+| Генерация изображений | Google Imagen 4 API |
+| Генерация видео | Google Veo 3 Fast API |
 | Хостинг | Vercel (frontend) + Railway/Render (backend) |
 
 Frontend и backend на разных языках (TypeScript / Python) — контракт между ними держится через OpenAPI-схему FastAPI (автогенерация) → генерация TS-типов в `packages/shared-types` (например, `openapi-typescript`), а не через общий TS-код, как было бы при NestJS.

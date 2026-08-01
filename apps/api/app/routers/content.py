@@ -19,13 +19,10 @@ def generate_content(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> GenerationJob:
-    # content_type defaults to text (the only one with a real
-    # generator registered -- CIN-22). image/video are accepted here
-    # too: the job is created and queued the same way, and fails with
-    # a clear "no generator registered" message rather than a 500,
-    # since no provider is chosen yet for either (see gate ticket
-    # CIN-50). Nothing about this endpoint or the queue needs to
-    # change once one is.
+    # content_type defaults to text. All three content types now have
+    # real generators registered (text: CIN-53, image: CIN-54, video:
+    # CIN-55) -- nothing about this endpoint or the queue needed to
+    # change once they were.
     enforce_and_record_usage(db, current_user, UsageEventType.generation)
 
     job = GenerationJob(
