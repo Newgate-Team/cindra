@@ -53,7 +53,7 @@ def test_starts_operation_polls_and_returns_video_uri() -> None:
     assert "утренний кофе" in result["prompt"]
     start_url = (
         "https://generativelanguage.googleapis.com/v1beta/models/"
-        "veo-3.0-fast-generate-001:predictLongRunning"
+        "veo-3.1-fast-generate-preview:predictLongRunning"
     )
     assert captured["requests"][0] == ("POST", start_url)
     assert captured["requests"][1] == (
@@ -62,6 +62,8 @@ def test_starts_operation_polls_and_returns_video_uri() -> None:
     )
     body = json.loads(captured["start_body"])
     assert "утренний кофе" in body["instances"][0]["prompt"]
+    assert body["parameters"]["durationSeconds"] == "8"
+    assert body["parameters"]["resolution"] == "1080p"
 
 
 def test_start_429_is_transient() -> None:

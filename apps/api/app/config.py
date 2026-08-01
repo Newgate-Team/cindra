@@ -14,8 +14,15 @@ class Settings(BaseSettings):
     # (CIN-55) -- one Google AI Studio key for the whole stack.
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.5-flash-lite"
+    # Imagen 4 is deprecated by Google, shutting down 2026-08-17 --
+    # see gate ticket CIN-58, migration not done yet.
     imagen_model: str = "imagen-4.0-generate-001"
-    veo_model: str = "veo-3.0-fast-generate-001"
+    # Was "veo-3.0-fast-generate-001" (does not exist) until CIN-57
+    # caught it -- see that ticket for how the bug slipped through
+    # the earlier manual verification.
+    veo_model: str = "veo-3.1-fast-generate-preview"
+    veo_duration_seconds: str = "8"
+    veo_resolution: str = "1080p"
     # Empty until CIN-51 is resolved -- see that gate ticket.
     telegram_bot_token: str = ""
     # Empty until CIN-52 is resolved -- see that gate ticket.
