@@ -3,7 +3,7 @@ export type SocialPlatform = "telegram" | "instagram";
 export type GenerationContentType = "text" | "image" | "video";
 export type GenerationStatus = "queued" | "processing" | "completed" | "failed" | "flagged";
 export type PostStatus = "scheduled" | "publishing" | "published" | "failed";
-export type SubscriptionTier = "free" | "pro";
+export type SubscriptionTier = "free" | "pro" | "business";
 export type SubscriptionStatus = "active" | "past_due" | "canceled";
 
 export interface User {

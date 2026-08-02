@@ -1,11 +1,12 @@
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.content_pipeline import registry
 from app.content_pipeline.errors import ContentModeratedError
 from app.content_pipeline.registry import register_generator
-from app.models import GenerationContentType
+from app.models import GenerationContentType, Subscription, SubscriptionTier, User
 
 
 @pytest.fixture(autouse=True)
@@ -99,9 +100,18 @@ def test_generate_image_runs_synchronously_in_eager_mode_and_completes(
 
 
 def test_generate_video_runs_synchronously_in_eager_mode_and_completes(
-    client: TestClient,
+    client: TestClient, db: Session
 ) -> None:
     headers = _auth_headers(client)
+    # Free tier's video limit is 0 (see app/plans.py) -- upgrade to
+    # pro so this test exercises the generation path itself, not the
+    # limit (that's covered separately by test_generate_video_returns_402_on_free_tier).
+    user = db.scalar(select(User).where(User.email == "ada@cindra.dev"))
+    db.execute(
+        update(Subscription).where(Subscription.user_id == user.id).values(tier=SubscriptionTier.pro)
+    )
+    db.commit()
+
     response = client.post(
         "/content/generate",
         json={"topic": "тема", "platform": "instagram", "content_type": "video"},
@@ -115,18 +125,33 @@ def test_generate_video_runs_synchronously_in_eager_mode_and_completes(
 
 
 def test_generate_returns_402_once_tier_limit_is_reached(client: TestClient) -> None:
+    # Free tier's image limit (3/month, see app/plans.py) -- chosen
+    # over the text limit (20/month) so this test doesn't need 20
+    # requests to hit it.
     headers = _auth_headers(client)
-    for _ in range(10):  # free tier limit, see app/plans.py
+    for _ in range(3):
         response = client.post(
             "/content/generate",
-            json={"topic": "тема", "platform": "telegram"},
+            json={"topic": "тема", "platform": "telegram", "content_type": "image"},
             headers=headers,
         )
         assert response.status_code == 202
 
     response = client.post(
         "/content/generate",
-        json={"topic": "тема", "platform": "telegram"},
+        json={"topic": "тема", "platform": "telegram", "content_type": "image"},
+        headers=headers,
+    )
+    assert response.status_code == 402
+
+
+def test_generate_video_returns_402_on_free_tier(client: TestClient) -> None:
+    # Free tier's video limit is 0 -- blocked on the very first
+    # attempt, unlike text/image which allow a few before blocking.
+    headers = _auth_headers(client)
+    response = client.post(
+        "/content/generate",
+        json={"topic": "тема", "platform": "telegram", "content_type": "video"},
         headers=headers,
     )
     assert response.status_code == 402
