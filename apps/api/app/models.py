@@ -23,6 +23,7 @@ class SocialPlatform(str, enum.Enum):
 class SubscriptionTier(str, enum.Enum):
     free = "free"
     pro = "pro"
+    business = "business"
 
 
 class SubscriptionStatus(str, enum.Enum):
@@ -129,6 +130,13 @@ class UsageEvent(Base):
     )
     event_type: Mapped[UsageEventType] = mapped_column(
         Enum(UsageEventType, name="usage_event_type"), nullable=False
+    )
+    # Only set for generation events -- text/image/video have costs
+    # four orders of magnitude apart (see CIN-59), so limits and usage
+    # counts are enforced per format, not as one "generations" total.
+    # Null for publication events, which don't have this distinction.
+    content_type: Mapped[GenerationContentType | None] = mapped_column(
+        Enum(GenerationContentType, name="generation_content_type"), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), index=True

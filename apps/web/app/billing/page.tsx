@@ -10,7 +10,8 @@ import { RequireAuth } from "../components/RequireAuth";
 
 const TIER_LABELS: Record<string, string> = {
   free: "Free",
-  pro: "Pro ($10/мес)",
+  pro: "Pro ($19/мес)",
+  business: "Business ($100/мес)",
 };
 
 function BillingSummary() {
@@ -42,8 +43,9 @@ function BillingSummary() {
           )}
           {subscription.tier === "free" && (
             <p className="muted">
-              На бесплатном тарифе — до 10 генераций и 10 публикаций в месяц. Апгрейд до Pro пока
-              недоступен: не выбран платёжный провайдер (см. задачу CIN-18).
+              На бесплатном тарифе — 20 текстов, 3 фото и 10 публикаций в месяц (видео
+              недоступно). Апгрейд до Pro/Business пока недоступен: не выбран платёжный провайдер
+              (см. задачу CIN-18).
             </p>
           )}
         </div>

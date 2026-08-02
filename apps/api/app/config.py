@@ -29,6 +29,12 @@ class Settings(BaseSettings):
     meta_app_id: str = ""
     meta_app_secret: str = ""
     meta_redirect_uri: str = "https://app.cindra.example/oauth/instagram/callback"
+    # Comma-separated. Without CORS the browser blocks every request
+    # from the web app (blocked at the OPTIONS preflight, not
+    # something curl-based manual testing ever exercises) -- found
+    # while verifying CIN-60's frontend changes against a real
+    # browser for the first time.
+    cors_origins: str = "http://localhost:3000"
 
     model_config = {"env_file": ".env"}
 

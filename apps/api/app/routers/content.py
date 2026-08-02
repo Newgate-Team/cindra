@@ -22,8 +22,12 @@ def generate_content(
     # content_type defaults to text. All three content types now have
     # real generators registered (text: CIN-53, image: CIN-54, video:
     # CIN-55) -- nothing about this endpoint or the queue needed to
-    # change once they were.
-    enforce_and_record_usage(db, current_user, UsageEventType.generation)
+    # change once they were. Limit is per-format (CIN-60), not a
+    # single "generations" total -- text/image/video cost four orders
+    # of magnitude apart (see CIN-59).
+    enforce_and_record_usage(
+        db, current_user, UsageEventType.generation, payload.content_type
+    )
 
     job = GenerationJob(
         user_id=current_user.id,
