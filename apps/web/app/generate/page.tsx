@@ -107,6 +107,25 @@ function ReviewAndPublish({ job }: { job: GenerationJob }) {
   );
 }
 
+// "Сторис" сегодня реально публикуется только для Instagram (CIN-74)
+// -- у Telegram/Facebook нет своего эквивалента в нашем пайплайне, не
+// показываем эту опцию там, чтобы не обещать то, чего нет.
+const CONTENT_KIND_OPTIONS: Record<SocialPlatform, { value: string; label: string }[]> = {
+  telegram: [
+    { value: "post", label: "Пост" },
+    { value: "video_script", label: "Сценарий видео" },
+  ],
+  instagram: [
+    { value: "post", label: "Пост" },
+    { value: "story", label: "Сторис" },
+    { value: "video_script", label: "Сценарий видео" },
+  ],
+  facebook: [
+    { value: "post", label: "Пост" },
+    { value: "video_script", label: "Сценарий видео" },
+  ],
+};
+
 function GenerateForm() {
   const { token } = useAuth();
   const [topic, setTopic] = useState("");
@@ -179,7 +198,15 @@ function GenerateForm() {
         </label>
         <label>
           Платформа
-          <select value={platform} onChange={(e) => setPlatform(e.target.value as SocialPlatform)}>
+          <select
+            value={platform}
+            onChange={(e) => {
+              const nextPlatform = e.target.value as SocialPlatform;
+              setPlatform(nextPlatform);
+              const available = CONTENT_KIND_OPTIONS[nextPlatform].map((o) => o.value);
+              if (!available.includes(contentKind)) setContentKind("post");
+            }}
+          >
             <option value="telegram">Telegram</option>
             <option value="instagram">Instagram</option>
             <option value="facebook">Facebook</option>
@@ -188,9 +215,11 @@ function GenerateForm() {
         <label>
           Тип контента
           <select value={contentKind} onChange={(e) => setContentKind(e.target.value)}>
-            <option value="post">Пост</option>
-            <option value="story">Сторис</option>
-            <option value="video_script">Сценарий видео</option>
+            {CONTENT_KIND_OPTIONS[platform].map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
           </select>
         </label>
         <label>
