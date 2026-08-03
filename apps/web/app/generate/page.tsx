@@ -15,7 +15,7 @@ const POLL_INTERVAL_MS = 2000;
 // completes, the raw text becomes an editable draft here rather than
 // a separate screen -- reviewing what you just generated is part of
 // the same flow, not a different destination.
-function ReviewAndPublish({ job }: { job: GenerationJob }) {
+function ReviewAndPublish({ job, contentKind }: { job: GenerationJob; contentKind: string }) {
   const { token } = useAuth();
   const [text, setText] = useState(job.output_payload?.text ?? "");
   const [accounts, setAccounts] = useState<SocialAccount[]>([]);
@@ -42,6 +42,7 @@ function ReviewAndPublish({ job }: { job: GenerationJob }) {
         {
           social_account_id: accountId,
           text,
+          content_kind: contentKind,
           generation_job_id: job.id,
           scheduled_for: scheduledFor ? new Date(scheduledFor).toISOString() : null,
         },
@@ -243,7 +244,7 @@ function GenerateForm() {
             Статус генерации: <span className={`badge ${job.status}`}>{job.status}</span>
           </p>
           {job.status === "completed" && job.output_payload?.text && (
-            <ReviewAndPublish job={job} />
+            <ReviewAndPublish job={job} contentKind={contentKind} />
           )}
           {job.status === "failed" && <p className="error">{job.error_message}</p>}
           {job.status === "flagged" && (

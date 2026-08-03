@@ -169,6 +169,47 @@ def test_publish_with_image_url_creates_then_publishes_container(
     ):
         result = instagram.publish(account, post)
 
-    create.assert_called_once_with("ig-42", "https://example.com/x.jpg", "caption", "token")
+    create.assert_called_once_with("ig-42", "https://example.com/x.jpg", "caption", "token", None)
     pub.assert_called_once_with("ig-42", "container-1", "token")
     assert result == {"id": "media-1"}
+
+
+def test_publish_story_passes_stories_media_type(db: Session, user: User) -> None:
+    account = upsert_social_account(
+        db, user, SocialPlatform.instagram, "ig-42", access_token="token"
+    )
+    post = Post(
+        user_id=user.id,
+        social_account_id=account.id,
+        text="caption",
+        image_url="https://example.com/x.jpg",
+        content_kind="story",
+        scheduled_for=datetime.now(UTC),
+    )
+
+    with (
+        patch("app.social_integrations.instagram.create_media_container", return_value="container-1") as create,
+        patch("app.social_integrations.instagram.publish_media", return_value={"id": "media-1"}),
+    ):
+        instagram.publish(account, post)
+
+    create.assert_called_once_with(
+        "ig-42", "https://example.com/x.jpg", "caption", "token", "STORIES"
+    )
+
+
+def test_create_media_container_stories_omits_caption() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert "media_type=STORIES" in str(request.url)
+        assert "caption=" not in str(request.url)
+        return httpx.Response(200, json={"id": "container-1"})
+
+    creation_id = instagram.create_media_container(
+        "ig-42",
+        "https://example.com/x.jpg",
+        "caption",
+        "token",
+        media_type="STORIES",
+        client=_client(handler),
+    )
+    assert creation_id == "container-1"

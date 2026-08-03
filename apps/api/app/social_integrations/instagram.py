@@ -123,10 +123,18 @@ def create_media_container(
     image_url: str,
     caption: str,
     access_token: str,
+    media_type: str | None = None,
     client: httpx.Client | None = None,
 ) -> str:
+    """`media_type="STORIES"` publishes a Story instead of a regular feed
+    post (CIN-74). Stories don't carry a caption in the Content
+    Publishing API -- `caption` is only sent for regular posts."""
     url = f"{_GRAPH_API_BASE}/{ig_user_id}/media"
-    params = {"image_url": image_url, "caption": caption, "access_token": access_token}
+    params: dict[str, str] = {"image_url": image_url, "access_token": access_token}
+    if media_type == "STORIES":
+        params["media_type"] = media_type
+    else:
+        params["caption"] = caption
     response = (
         client.post(url, params=params, timeout=30.0)
         if client is not None
@@ -162,7 +170,8 @@ def publish(account: SocialAccount, post: Post) -> dict[str, Any]:
             "(текстовые посты не поддерживаются Content Publishing API)"
         )
     access_token = get_access_token(account)
+    media_type = "STORIES" if post.content_kind == "story" else None
     creation_id = create_media_container(
-        account.external_account_id, post.image_url, post.text, access_token
+        account.external_account_id, post.image_url, post.text, access_token, media_type
     )
     return publish_media(account.external_account_id, creation_id, access_token)

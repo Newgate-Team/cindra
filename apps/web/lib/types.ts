@@ -43,6 +43,7 @@ export interface Post {
   social_account_id: string;
   text: string;
   image_url: string | null;
+  content_kind: string;
   status: PostStatus;
   scheduled_for: string;
   platform_message_id: string | null;
