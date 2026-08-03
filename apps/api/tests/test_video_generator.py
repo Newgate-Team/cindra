@@ -1,4 +1,5 @@
 import json
+from unittest.mock import patch
 
 import httpx
 import pytest
@@ -9,6 +10,8 @@ from app.content_pipeline.video_generator import (
     veo_video_generator,
 )
 
+_VIDEO_URI = "https://generativelanguage.googleapis.com/v1beta/files/xyz"
+
 
 def _client(handler) -> httpx.Client:
     return httpx.Client(transport=httpx.MockTransport(handler))
@@ -18,15 +21,20 @@ def _no_sleep(_: float) -> None:
     pass
 
 
-def test_starts_operation_polls_and_returns_video_uri() -> None:
+def test_starts_operation_polls_downloads_and_returns_video_url() -> None:
     captured = {"requests": []}
     poll_count = {"n": 0}
 
     def handler(request: httpx.Request) -> httpx.Response:
-        captured["requests"].append((request.method, str(request.url).split("?")[0]))
+        url = str(request.url).split("?")[0]
+        captured["requests"].append((request.method, url))
         if request.method == "POST":
             captured["start_body"] = request.content
             return httpx.Response(200, json={"name": "operations/abc123"})
+
+        if url == _VIDEO_URI:
+            assert request.headers.get("x-goog-api-key") is not None
+            return httpx.Response(200, content=b"fake-video-bytes")
 
         poll_count["n"] += 1
         if poll_count["n"] < 2:
@@ -38,18 +46,21 @@ def test_starts_operation_polls_and_returns_video_uri() -> None:
                 "done": True,
                 "response": {
                     "generateVideoResponse": {
-                        "generatedSamples": [
-                            {"video": {"uri": "https://generativelanguage.googleapis.com/v1beta/files/xyz"}}
-                        ]
+                        "generatedSamples": [{"video": {"uri": _VIDEO_URI}}]
                     }
                 },
             },
         )
 
     payload = {"topic": "утренний кофе", "platform": "instagram"}
-    result = veo_video_generator(payload, client=_client(handler), sleep=_no_sleep)
+    with patch(
+        "app.content_pipeline.video_generator.upload_bytes",
+        return_value="https://media.cindra.example/abc.mp4",
+    ) as upload:
+        result = veo_video_generator(payload, client=_client(handler), sleep=_no_sleep)
 
-    assert result["video_uri"] == "https://generativelanguage.googleapis.com/v1beta/files/xyz"
+    upload.assert_called_once_with(b"fake-video-bytes", "video/mp4", "mp4")
+    assert result["video_url"] == "https://media.cindra.example/abc.mp4"
     assert "утренний кофе" in result["prompt"]
     start_url = (
         "https://generativelanguage.googleapis.com/v1beta/models/"

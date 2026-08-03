@@ -1,4 +1,5 @@
 import json
+from unittest.mock import patch
 
 import httpx
 import pytest
@@ -24,9 +25,14 @@ def test_sends_correct_request_shape_and_parses_response() -> None:
         )
 
     payload = {"topic": "утренний кофе", "platform": "instagram"}
-    result = imagen_image_generator(payload, client=_client(handler))
+    with patch(
+        "app.content_pipeline.image_generator.upload_bytes",
+        return_value="https://media.cindra.example/abc.png",
+    ) as upload:
+        result = imagen_image_generator(payload, client=_client(handler))
 
-    assert result["image_base64"] == "ZmFrZS1pbWFnZQ=="
+    upload.assert_called_once_with(b"fake-image", "image/png", "png")
+    assert result["image_url"] == "https://media.cindra.example/abc.png"
     assert "утренний кофе" in result["prompt"]
     assert captured["url"] == (
         "https://generativelanguage.googleapis.com/v1beta/models/"
