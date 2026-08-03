@@ -99,7 +99,23 @@ function SocialAccountsManager() {
 
       <h2>Подключить Instagram</h2>
       {META_APP_ID ? (
-        <button onClick={handleConnectInstagram}>Войти через Meta</button>
+        <>
+          <p className="muted">Перед подключением убедитесь, что:</p>
+          <ul className="muted">
+            <li>Instagram-аккаунт переведён в профессиональный режим (Business или Creator);</li>
+            <li>он привязан к Facebook-странице, которой вы управляете как администратор.</li>
+          </ul>
+          <p className="muted">
+            <a
+              href="https://developers.facebook.com/docs/instagram-platform"
+              target="_blank"
+              rel="noreferrer"
+            >
+              Подробнее в документации Meta
+            </a>
+          </p>
+          <button onClick={handleConnectInstagram}>Войти через Meta</button>
+        </>
       ) : (
         <p className="muted">
           Подключение Instagram пока недоступно — не настроено Meta App (см. задачу CIN-52).
