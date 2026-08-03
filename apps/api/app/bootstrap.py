@@ -4,7 +4,7 @@ from app.content_pipeline.text_generator import gemini_text_generator
 from app.content_pipeline.video_generator import veo_video_generator
 from app.models import GenerationContentType, SocialPlatform
 from app.scheduler.registry import register_publisher
-from app.social_integrations import instagram, telegram
+from app.social_integrations import facebook, instagram, telegram
 
 
 def bootstrap() -> None:
@@ -23,3 +23,4 @@ def bootstrap() -> None:
     register_generator(GenerationContentType.video, veo_video_generator)
     register_publisher(SocialPlatform.telegram, telegram.publish)
     register_publisher(SocialPlatform.instagram, instagram.publish)
+    register_publisher(SocialPlatform.facebook, facebook.publish)
