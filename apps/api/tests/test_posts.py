@@ -265,3 +265,29 @@ def test_cancel_already_published_post_returns_400(client: TestClient, db: Sessi
 
     response = client.delete(f"/posts/{published['id']}", headers=headers)
     assert response.status_code == 400
+
+
+def test_create_post_with_past_scheduled_for_returns_400(client: TestClient, db: Session) -> None:
+    headers = _auth_headers(client)
+    account_id = _connected_account_id(client, headers, db)
+    past = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
+
+    response = client.post(
+        "/posts",
+        json={"social_account_id": account_id, "text": "тест", "scheduled_for": past},
+        headers=headers,
+    )
+    assert response.status_code == 400
+    assert "прошлом" in response.json()["detail"]
+
+
+def test_reschedule_post_to_the_past_returns_400(client: TestClient, db: Session) -> None:
+    headers = _auth_headers(client)
+    post = _scheduled_post(client, headers, db)
+    past = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
+
+    response = client.patch(
+        f"/posts/{post['id']}", json={"scheduled_for": past}, headers=headers
+    )
+    assert response.status_code == 400
+    assert "прошлом" in response.json()["detail"]
