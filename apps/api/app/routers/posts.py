@@ -6,9 +6,9 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.deps import get_current_user
-from app.models import Post, SocialAccount, UsageEventType, User
+from app.models import Post, PostStatus, SocialAccount, UsageEventType, User
 from app.scheduler.tasks import publish_post
-from app.schemas import PostCreate, PostOut
+from app.schemas import PostCreate, PostOut, PostUpdate
 from app.usage import enforce_and_record_usage
 
 router = APIRouter(prefix="/posts", tags=["posts"])
@@ -77,3 +77,43 @@ def get_post(
             status_code=status.HTTP_404_NOT_FOUND, detail="Публикация не найдена"
         )
     return post
+
+
+def _get_scheduled_post_owned_by(db: Session, post_id: str, current_user: User) -> Post:
+    post = db.get(Post, post_id)
+    if post is None or post.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Публикация не найдена"
+        )
+    if post.status != PostStatus.scheduled:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Изменить или отменить можно только ещё не опубликованную (scheduled) публикацию",
+        )
+    return post
+
+
+@router.patch("/{post_id}", response_model=PostOut)
+def update_post(
+    post_id: str,
+    payload: PostUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Post:
+    post = _get_scheduled_post_owned_by(db, post_id, current_user)
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(post, field, value)
+    db.commit()
+    db.refresh(post)
+    return post
+
+
+@router.delete("/{post_id}", status_code=status.HTTP_204_NO_CONTENT)
+def cancel_post(
+    post_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> None:
+    post = _get_scheduled_post_owned_by(db, post_id, current_user)
+    db.delete(post)
+    db.commit()

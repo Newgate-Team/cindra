@@ -77,6 +77,15 @@ class PostCreate(BaseModel):
     content_kind: str = "post"  # "post" / "story" -- see Post.content_kind (CIN-74)
 
 
+class PostUpdate(BaseModel):
+    """Перенос/редактирование запланированной публикации (CIN-77).
+    Оба поля необязательны -- передаётся только то, что меняется
+    (exclude_unset в роутере), не указанные остаются как есть."""
+
+    text: str | None = Field(default=None, min_length=1, max_length=4096)
+    scheduled_for: datetime | None = None
+
+
 class PostOut(BaseModel):
     id: uuid.UUID
     social_account_id: uuid.UUID

@@ -168,3 +168,100 @@ def test_create_post_returns_402_once_publication_limit_reached(
         "/posts", json={"social_account_id": account_id, "text": "тест"}, headers=headers
     )
     assert response.status_code == 402
+
+
+def _scheduled_post(client: TestClient, headers: dict[str, str], db: Session) -> dict:
+    account_id = _connected_account_id(client, headers, db)
+    future = (datetime.now(UTC) + timedelta(hours=2)).isoformat()
+    return client.post(
+        "/posts",
+        json={"social_account_id": account_id, "text": "черновик", "scheduled_for": future},
+        headers=headers,
+    ).json()
+
+
+def test_update_post_changes_text_and_scheduled_for(client: TestClient, db: Session) -> None:
+    headers = _auth_headers(client)
+    post = _scheduled_post(client, headers, db)
+    new_time = (datetime.now(UTC) + timedelta(days=1)).isoformat()
+
+    response = client.patch(
+        f"/posts/{post['id']}",
+        json={"text": "новый текст", "scheduled_for": new_time},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["text"] == "новый текст"
+    assert body["status"] == "scheduled"
+
+
+def test_update_post_partial_only_changes_provided_fields(client: TestClient, db: Session) -> None:
+    headers = _auth_headers(client)
+    post = _scheduled_post(client, headers, db)
+
+    response = client.patch(
+        f"/posts/{post['id']}", json={"text": "только текст поменялся"}, headers=headers
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["text"] == "только текст поменялся"
+    assert body["scheduled_for"] == post["scheduled_for"]
+
+
+def test_update_already_published_post_returns_400(client: TestClient, db: Session) -> None:
+    headers = _auth_headers(client)
+    account_id = _connected_account_id(client, headers, db)
+    published = client.post(
+        "/posts", json={"social_account_id": account_id, "text": "уже вышел"}, headers=headers
+    ).json()
+    assert published["status"] == "published"
+
+    response = client.patch(
+        f"/posts/{published['id']}", json={"text": "поздно"}, headers=headers
+    )
+    assert response.status_code == 400
+
+
+def test_update_someone_elses_post_returns_404(client: TestClient, db: Session) -> None:
+    other = User(email="eve3@cindra.dev", hashed_password="x")
+    db.add(other)
+    db.commit()
+    other_account = upsert_social_account(
+        db, other, SocialPlatform.telegram, "-555", access_token="t"
+    )
+    other_post = Post(
+        user_id=other.id,
+        social_account_id=other_account.id,
+        text="чужой",
+        status=PostStatus.scheduled,
+        scheduled_for=datetime.now(UTC) + timedelta(hours=1),
+    )
+    db.add(other_post)
+    db.commit()
+
+    headers = _auth_headers(client)
+    response = client.patch(
+        f"/posts/{other_post.id}", json={"text": "хочу поменять чужое"}, headers=headers
+    )
+    assert response.status_code == 404
+
+
+def test_cancel_scheduled_post_deletes_it(client: TestClient, db: Session) -> None:
+    headers = _auth_headers(client)
+    post = _scheduled_post(client, headers, db)
+
+    response = client.delete(f"/posts/{post['id']}", headers=headers)
+    assert response.status_code == 204
+    assert client.get(f"/posts/{post['id']}", headers=headers).status_code == 404
+
+
+def test_cancel_already_published_post_returns_400(client: TestClient, db: Session) -> None:
+    headers = _auth_headers(client)
+    account_id = _connected_account_id(client, headers, db)
+    published = client.post(
+        "/posts", json={"social_account_id": account_id, "text": "уже вышел"}, headers=headers
+    ).json()
+
+    response = client.delete(f"/posts/{published['id']}", headers=headers)
+    assert response.status_code == 400
