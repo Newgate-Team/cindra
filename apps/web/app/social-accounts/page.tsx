@@ -14,6 +14,12 @@ import { RequireAuth } from "../components/RequireAuth";
 const META_APP_ID = process.env.NEXT_PUBLIC_META_APP_ID;
 const META_REDIRECT_URI = process.env.NEXT_PUBLIC_META_REDIRECT_URI;
 
+const PLATFORM_LABELS: Record<string, string> = {
+  telegram: "Telegram",
+  instagram: "Instagram",
+  facebook: "Facebook-страница",
+};
+
 function SocialAccountsManager() {
   const { token } = useAuth();
   const [accounts, setAccounts] = useState<SocialAccount[] | null>(null);
@@ -73,7 +79,8 @@ function SocialAccountsManager() {
       {accounts?.map((account) => (
         <div key={account.id} className="card" style={{ display: "flex", alignItems: "center" }}>
           <div style={{ flex: 1 }}>
-            <strong>{account.platform}</strong> — {account.display_name ?? account.external_account_id}
+            <strong>{PLATFORM_LABELS[account.platform] ?? account.platform}</strong> —{" "}
+            {account.display_name ?? account.external_account_id}
           </div>
           <button className="secondary" onClick={() => handleDisconnect(account.id)}>
             Отключить
@@ -120,6 +127,10 @@ function SocialAccountsManager() {
             </a>
           </p>
           <button onClick={handleConnectInstagram}>Войти через Meta</button>
+          <p className="muted">
+            Заодно подключится и сама Facebook-страница — она появится в списке выше отдельной
+            записью, публиковать в неё можно так же, как в Telegram и Instagram.
+          </p>
         </>
       ) : (
         <p className="muted">

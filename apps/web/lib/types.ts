@@ -1,5 +1,5 @@
 export type UserRole = "agency" | "solo";
-export type SocialPlatform = "telegram" | "instagram";
+export type SocialPlatform = "telegram" | "instagram" | "facebook";
 export type GenerationContentType = "text" | "image" | "video";
 export type GenerationStatus = "queued" | "processing" | "completed" | "failed" | "flagged";
 export type PostStatus = "scheduled" | "publishing" | "published" | "failed";
