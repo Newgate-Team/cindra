@@ -29,9 +29,19 @@ def _auth_headers(client: TestClient) -> dict[str, str]:
 def _connected_account_id(client: TestClient, headers: dict[str, str], db: Session) -> str:
     from unittest.mock import patch
 
-    with patch(
-        "app.routers.social_accounts.get_chat",
-        return_value={"id": -100123, "title": "My Channel"},
+    with (
+        patch(
+            "app.routers.social_accounts.get_chat",
+            return_value={"id": -100123, "title": "My Channel"},
+        ),
+        patch(
+            "app.routers.social_accounts.get_me",
+            return_value={"id": 999, "username": "cindra_bot"},
+        ),
+        patch(
+            "app.routers.social_accounts.get_chat_member",
+            return_value={"status": "member"},
+        ),
     ):
         response = client.post(
             "/social-accounts/telegram/connect", json={"chat_id": "@mychannel"}, headers=headers

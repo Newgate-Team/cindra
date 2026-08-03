@@ -40,6 +40,32 @@ def get_chat(
     return _handle_response(response)
 
 
+def get_me(bot_token: str, client: httpx.Client | None = None) -> dict[str, Any]:
+    """Fetch the bot's own identity (id, username) -- used to check its membership
+    in a chat before connecting it (see get_chat_member)."""
+    url = f"{_TELEGRAM_API_BASE}/bot{bot_token}/getMe"
+    response = (
+        client.get(url, timeout=15.0) if client is not None else httpx.get(url, timeout=15.0)
+    )
+    return _handle_response(response)
+
+
+def get_chat_member(
+    chat_id: str, user_id: int, bot_token: str, client: httpx.Client | None = None
+) -> dict[str, Any]:
+    """Look up the bot's own membership status in `chat_id`. Unlike get_chat
+    (which succeeds for public channels even if the bot was never added),
+    this is what actually tells us whether the bot can publish there."""
+    url = f"{_TELEGRAM_API_BASE}/bot{bot_token}/getChatMember"
+    params = {"chat_id": chat_id, "user_id": user_id}
+    response = (
+        client.get(url, params=params, timeout=15.0)
+        if client is not None
+        else httpx.get(url, params=params, timeout=15.0)
+    )
+    return _handle_response(response)
+
+
 def send_message(
     chat_id: str, text: str, bot_token: str, client: httpx.Client | None = None
 ) -> dict[str, Any]:
