@@ -12,6 +12,13 @@ function formatDate(iso: string): string {
   return new Date(iso).toLocaleString("ru-RU");
 }
 
+// datetime-local's `min` needs "yyyy-MM-ddTHH:mm" -- called fresh on
+// every render rather than a module-level constant, so it stays "now"
+// across a long-lived page instead of freezing at page load.
+function minDatetimeLocal(): string {
+  return new Date().toISOString().slice(0, 16);
+}
+
 // Планирование публикации прямо здесь, без обязательного прохождения
 // генерации контента (CIN-76) -- POST /posts уже поддерживает пост
 // без generation_job_id, не хватало только формы.
@@ -93,6 +100,7 @@ function CreatePostForm({ onCreated }: { onCreated: () => void }) {
         Запланировать на (необязательно — иначе публикуем сразу)
         <input
           type="datetime-local"
+          min={minDatetimeLocal()}
           value={scheduledFor}
           onChange={(e) => setScheduledFor(e.target.value)}
         />
@@ -157,6 +165,7 @@ function PostActions({ post, onChanged }: { post: Post; onChanged: () => void })
       <div>
         <input
           type="datetime-local"
+          min={minDatetimeLocal()}
           value={newScheduledFor}
           onChange={(e) => setNewScheduledFor(e.target.value)}
         />

@@ -14,6 +14,16 @@ from app.usage import enforce_and_record_usage
 router = APIRouter(prefix="/posts", tags=["posts"])
 
 
+def _reject_if_in_the_past(scheduled_for: datetime | None) -> None:
+    """`None` means "not provided" (create: publish now: update: no
+    change) -- only an explicit past datetime is rejected."""
+    if scheduled_for is not None and scheduled_for < datetime.now(UTC):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Дата публикации не может быть в прошлом",
+        )
+
+
 @router.get("", response_model=list[PostOut])
 def list_posts(
     current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
@@ -39,6 +49,7 @@ def create_post(
             status_code=status.HTTP_404_NOT_FOUND, detail="Соцаккаунт не найден"
         )
 
+    _reject_if_in_the_past(payload.scheduled_for)
     enforce_and_record_usage(db, current_user, UsageEventType.publication)
 
     scheduled_for = payload.scheduled_for or datetime.now(UTC)
@@ -101,6 +112,7 @@ def update_post(
     db: Session = Depends(get_db),
 ) -> Post:
     post = _get_scheduled_post_owned_by(db, post_id, current_user)
+    _reject_if_in_the_past(payload.scheduled_for)
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(post, field, value)
     db.commit()
