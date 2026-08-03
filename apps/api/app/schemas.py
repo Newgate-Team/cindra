@@ -74,6 +74,7 @@ class PostCreate(BaseModel):
     image_url: str | None = None  # required for Instagram, optional for Telegram
     scheduled_for: datetime | None = None  # None = publish as soon as possible
     generation_job_id: uuid.UUID | None = None
+    content_kind: str = "post"  # "post" / "story" -- see Post.content_kind (CIN-74)
 
 
 class PostOut(BaseModel):
@@ -81,6 +82,7 @@ class PostOut(BaseModel):
     social_account_id: uuid.UUID
     text: str
     image_url: str | None
+    content_kind: str
     status: PostStatus
     scheduled_for: datetime
     platform_message_id: str | None
