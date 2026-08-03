@@ -1,3 +1,4 @@
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
@@ -98,11 +99,29 @@ def test_disconnect_social_account_not_owned_returns_404(
     assert response.status_code == 404
 
 
+@contextmanager
+def _bot_is_member(status: str = "member"):
+    with (
+        patch(
+            "app.routers.social_accounts.get_me",
+            return_value={"id": 999, "username": "cindra_bot"},
+        ),
+        patch(
+            "app.routers.social_accounts.get_chat_member",
+            return_value={"status": status},
+        ),
+    ):
+        yield
+
+
 def test_connect_telegram_creates_social_account(client: TestClient) -> None:
     headers = _auth_headers(client)
-    with patch(
-        "app.routers.social_accounts.get_chat",
-        return_value={"id": -100123, "title": "My Channel"},
+    with (
+        patch(
+            "app.routers.social_accounts.get_chat",
+            return_value={"id": -100123, "title": "My Channel"},
+        ),
+        _bot_is_member(),
     ):
         response = client.post(
             "/social-accounts/telegram/connect", json={"chat_id": "@mychannel"}, headers=headers
@@ -120,10 +139,13 @@ def test_connect_telegram_creates_social_account(client: TestClient) -> None:
 
 def test_connect_telegram_normalizes_tme_link_before_lookup(client: TestClient) -> None:
     headers = _auth_headers(client)
-    with patch(
-        "app.routers.social_accounts.get_chat",
-        return_value={"id": -100123, "title": "My Channel"},
-    ) as mock_get_chat:
+    with (
+        patch(
+            "app.routers.social_accounts.get_chat",
+            return_value={"id": -100123, "title": "My Channel"},
+        ) as mock_get_chat,
+        _bot_is_member(),
+    ):
         response = client.post(
             "/social-accounts/telegram/connect",
             json={"chat_id": "https://t.me/mychannel"},
@@ -147,6 +169,51 @@ def test_connect_telegram_bad_chat_returns_400(client: TestClient) -> None:
 
     assert response.status_code == 400
     assert "chat not found" in response.json()["detail"]
+
+
+def test_connect_telegram_bot_not_member_returns_400_with_bot_username(
+    client: TestClient,
+) -> None:
+    headers = _auth_headers(client)
+    with (
+        patch(
+            "app.routers.social_accounts.get_chat",
+            return_value={"id": -100123, "title": "My Channel"},
+        ),
+        _bot_is_member(status="left"),
+    ):
+        response = client.post(
+            "/social-accounts/telegram/connect", json={"chat_id": "@mychannel"}, headers=headers
+        )
+
+    assert response.status_code == 400
+    assert "@cindra_bot" in response.json()["detail"]
+
+
+def test_connect_telegram_bot_membership_check_error_treated_as_not_added(
+    client: TestClient,
+) -> None:
+    headers = _auth_headers(client)
+    with (
+        patch(
+            "app.routers.social_accounts.get_chat",
+            return_value={"id": -100123, "title": "My Channel"},
+        ),
+        patch(
+            "app.routers.social_accounts.get_me",
+            return_value={"id": 999, "username": "cindra_bot"},
+        ),
+        patch(
+            "app.routers.social_accounts.get_chat_member",
+            side_effect=PermanentPublishError("user not found"),
+        ),
+    ):
+        response = client.post(
+            "/social-accounts/telegram/connect", json={"chat_id": "@mychannel"}, headers=headers
+        )
+
+    assert response.status_code == 400
+    assert "@cindra_bot" in response.json()["detail"]
 
 
 def test_connect_telegram_requires_auth(client: TestClient) -> None:

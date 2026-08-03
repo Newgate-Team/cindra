@@ -14,7 +14,7 @@ from app.schemas import (
 from app.social_accounts import upsert_social_account
 from app.social_integrations import instagram
 from app.social_integrations.errors import PermanentPublishError, TransientPublishError
-from app.social_integrations.telegram import get_chat
+from app.social_integrations.telegram import get_chat, get_chat_member, get_me
 
 router = APIRouter(prefix="/social-accounts", tags=["social-accounts"])
 
@@ -39,6 +39,27 @@ def connect_telegram(
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
         ) from exc
+
+    # get_chat succeeds for public channels even if the bot was never added
+    # to them (Telegram exposes basic public-channel info to any bot) -- so
+    # it alone can't tell us whether the bot can actually publish there.
+    # getChatMember on the bot's own ID is what actually answers that.
+    bot = get_me(bot_token)
+    try:
+        membership = get_chat_member(payload.chat_id, bot["id"], bot_token)
+        bot_is_member = membership["status"] not in ("left", "kicked")
+    except PermanentPublishError:
+        bot_is_member = False
+    except TransientPublishError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        ) from exc
+
+    if not bot_is_member:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Добавьте бота @{bot['username']} в канал/группу, чтобы подключить его",
+        )
 
     return upsert_social_account(
         db,
