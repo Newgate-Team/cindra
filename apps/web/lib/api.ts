@@ -16,6 +16,10 @@ async function request<T>(
 ): Promise<T> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
+    // Пропускает межстраничную заглушку-предупреждение ngrok (см. CIN-52,
+    // локальный OAuth-тест через туннель) -- без этого заголовка ngrok
+    // отдаёт HTML вместо JSON первому запросу с нового браузера.
+    "ngrok-skip-browser-warning": "true",
     ...((options.headers as Record<string, string>) ?? {}),
   };
   if (token) headers.Authorization = `Bearer ${token}`;
