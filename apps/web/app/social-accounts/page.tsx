@@ -47,7 +47,10 @@ function SocialAccountsManager() {
     const url = new URL("https://www.facebook.com/v21.0/dialog/oauth");
     url.searchParams.set("client_id", META_APP_ID);
     url.searchParams.set("redirect_uri", META_REDIRECT_URI ?? "");
-    url.searchParams.set("scope", "instagram_basic,instagram_content_publish,pages_show_list");
+    url.searchParams.set(
+      "scope",
+      "instagram_basic,instagram_content_publish,pages_show_list,pages_read_engagement,business_management"
+    );
     window.location.href = url.toString();
   }
 
