@@ -233,8 +233,11 @@ def test_connect_instagram_creates_social_account(client: TestClient) -> None:
             return_value="long-lived",
         ),
         patch(
-            "app.routers.social_accounts.instagram.discover_instagram_business_account",
-            return_value={"id": "ig-42", "username": "mybrand"},
+            "app.routers.social_accounts.instagram.discover_connected_accounts",
+            return_value={
+                "instagram": {"id": "ig-42", "username": "mybrand"},
+                "facebook_page": {"id": "page-1", "name": "Cindra", "access_token": "page-token"},
+            },
         ),
     ):
         response = client.post(
@@ -246,6 +249,34 @@ def test_connect_instagram_creates_social_account(client: TestClient) -> None:
     assert body["platform"] == "instagram"
     assert body["external_account_id"] == "ig-42"
     assert body["display_name"] == "mybrand"
+
+
+def test_connect_instagram_also_connects_facebook_page(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    with (
+        patch(
+            "app.routers.social_accounts.instagram.exchange_code_for_token",
+            return_value="short-lived",
+        ),
+        patch(
+            "app.routers.social_accounts.instagram.get_long_lived_token",
+            return_value="long-lived",
+        ),
+        patch(
+            "app.routers.social_accounts.instagram.discover_connected_accounts",
+            return_value={
+                "instagram": {"id": "ig-42", "username": "mybrand"},
+                "facebook_page": {"id": "page-1", "name": "Cindra", "access_token": "page-token"},
+            },
+        ),
+    ):
+        client.post("/social-accounts/instagram/connect", json={"code": "auth-code"}, headers=headers)
+
+    listed = client.get("/social-accounts", headers=headers).json()
+    platforms = {account["platform"]: account for account in listed}
+    assert set(platforms) == {"instagram", "facebook"}
+    assert platforms["facebook"]["external_account_id"] == "page-1"
+    assert platforms["facebook"]["display_name"] == "Cindra"
 
 
 def test_connect_instagram_no_linked_account_returns_400(client: TestClient) -> None:
@@ -260,7 +291,7 @@ def test_connect_instagram_no_linked_account_returns_400(client: TestClient) -> 
             return_value="long-lived",
         ),
         patch(
-            "app.routers.social_accounts.instagram.discover_instagram_business_account",
+            "app.routers.social_accounts.instagram.discover_connected_accounts",
             side_effect=PermanentPublishError("нет привязанного Instagram-аккаунта"),
         ),
     ):
