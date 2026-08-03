@@ -182,6 +182,7 @@ function GenerateForm() {
           <select value={platform} onChange={(e) => setPlatform(e.target.value as SocialPlatform)}>
             <option value="telegram">Telegram</option>
             <option value="instagram">Instagram</option>
+            <option value="facebook">Facebook</option>
           </select>
         </label>
         <label>
