@@ -1,9 +1,11 @@
+import base64
 from typing import Any
 
 import httpx
 
 from app.config import get_settings
 from app.content_pipeline.errors import TransientGenerationError
+from app.content_pipeline.media_storage import upload_bytes
 
 _GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 
@@ -36,9 +38,9 @@ def imagen_image_generator(
     httpx.MockTransport -- production always uses the default real
     client.
 
-    Returns the image as base64 (`image_base64`), not a URL -- Imagen's
-    predict response has no hosted URL. Turning this into a public
-    Post.image_url is a separate concern; see gate ticket CIN-56.
+    Imagen's predict response has no hosted URL, only base64 -- this
+    uploads the decoded bytes to R2 (CIN-56/CIN-78) and returns a real
+    public `image_url`, directly usable as Post.image_url.
     """
     settings = get_settings()
     prompt = _build_image_prompt(payload)
@@ -67,4 +69,5 @@ def imagen_image_generator(
 
     body = response.json()
     image_base64 = body["predictions"][0]["bytesBase64Encoded"]
-    return {"image_base64": image_base64, "prompt": prompt}
+    image_url = upload_bytes(base64.b64decode(image_base64), "image/png", "png")
+    return {"image_url": image_url, "prompt": prompt}

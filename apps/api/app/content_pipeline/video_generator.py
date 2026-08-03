@@ -6,6 +6,7 @@ import httpx
 
 from app.config import get_settings
 from app.content_pipeline.errors import TransientGenerationError
+from app.content_pipeline.media_storage import upload_bytes
 
 _GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 
@@ -52,10 +53,12 @@ def veo_video_generator(
     only for tests to inject an httpx.MockTransport and a no-op sleep
     -- production always uses the default real client and time.sleep.
 
-    Returns the Google-hosted video URI (`video_uri`), not a public
-    URL -- it requires the API key to download and isn't directly
-    usable as Post.image_url. Turning it into something publishable is
-    a separate concern; see gate ticket CIN-56.
+    The completed operation only gives a Google-hosted video URI that
+    requires the API key to download and expires -- not safe to hand
+    straight to a publisher, especially once a post can be scheduled
+    for later (CIN-75) and that URI may have already expired by
+    publish time. This downloads the bytes immediately and re-uploads
+    them to R2 (CIN-56/CIN-78), returning a stable public `video_url`.
 
     Note: the exact shape parsed out of the completed operation
     (`response.generateVideoResponse.generatedSamples[0].video.uri`)
@@ -110,7 +113,12 @@ def veo_video_generator(
 
         samples = operation["response"]["generateVideoResponse"]["generatedSamples"]
         video_uri = samples[0]["video"]["uri"]
-        return {"video_uri": video_uri, "prompt": prompt}
+        download_response = get(
+            video_uri, headers={"x-goog-api-key": settings.gemini_api_key}, timeout=60.0
+        )
+        download_response.raise_for_status()
+        video_url = upload_bytes(download_response.content, "video/mp4", "mp4")
+        return {"video_url": video_url, "prompt": prompt}
 
     raise VideoGenerationFailedError(
         f"Veo generation did not finish within {_MAX_POLL_ATTEMPTS} polls "

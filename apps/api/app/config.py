@@ -35,6 +35,20 @@ class Settings(BaseSettings):
     # while verifying CIN-60's frontend changes against a real
     # browser for the first time.
     cors_origins: str = "http://localhost:3000"
+    # Empty until CIN-56/CIN-78 gate ticket is resolved (Cloudflare
+    # account + bucket not created yet). Generated images/video need a
+    # real public URL -- Imagen/Veo return base64/a temporary
+    # authenticated Google URI, neither usable as Post.image_url
+    # (Instagram Content Publishing API in particular requires a
+    # public URL, no direct-upload alternative exists there).
+    r2_account_id: str = ""
+    r2_access_key_id: str = ""
+    r2_secret_access_key: str = ""
+    r2_bucket_name: str = "cindra-media"
+    # Public base URL for the bucket (r2.dev subdomain or custom
+    # domain) -- uploaded keys are appended to this to build the URL
+    # returned to callers.
+    r2_public_url_base: str = ""
 
     model_config = {"env_file": ".env"}
 
