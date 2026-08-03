@@ -49,6 +49,12 @@ class Settings(BaseSettings):
     # domain) -- uploaded keys are appended to this to build the URL
     # returned to callers.
     r2_public_url_base: str = ""
+    # Empty until a real CloudPayments merchant account exists (see
+    # CIN-18/CIN-20). api_secret isn't used yet -- webhook signature
+    # verification isn't implemented (see cloudpayments.py), only
+    # declared here ahead of that follow-up.
+    cloudpayments_public_id: str = ""
+    cloudpayments_api_secret: str = ""
 
     model_config = {"env_file": ".env"}
 

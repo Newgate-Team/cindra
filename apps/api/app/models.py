@@ -34,13 +34,17 @@ class SubscriptionStatus(str, enum.Enum):
 
 
 class SubscriptionStore(str, enum.Enum):
-    # No real value until the payment provider decision lands -- see
-    # the CIN-18 gate ticket. `none` is what every subscription has
-    # until then (tier/status still work for enforcement in the
-    # meantime, e.g. the default free tier).
+    # `none` is what every subscription has until it's actually paid
+    # through a real provider -- tier/status still work for
+    # enforcement in the meantime (e.g. the default free tier).
+    # google_play/app_store were placeholders from before CIN-18
+    # settled on CloudPayments (this is a web SaaS, not app-store
+    # distributed -- kept for now in case mobile distribution happens
+    # later, but not wired to anything).
     none = "none"
     google_play = "google_play"
     app_store = "app_store"
+    cloudpayments = "cloudpayments"
 
 
 class UsageEventType(str, enum.Enum):
