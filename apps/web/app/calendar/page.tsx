@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 
 import { ApiError, api } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
-import type { Post } from "@/lib/types";
+import type { Post, SocialAccount } from "@/lib/types";
 
 import { RequireAuth } from "../components/RequireAuth";
 
@@ -12,17 +12,112 @@ function formatDate(iso: string): string {
   return new Date(iso).toLocaleString("ru-RU");
 }
 
+// Планирование публикации прямо здесь, без обязательного прохождения
+// генерации контента (CIN-76) -- POST /posts уже поддерживает пост
+// без generation_job_id, не хватало только формы.
+function CreatePostForm({ onCreated }: { onCreated: () => void }) {
+  const { token } = useAuth();
+  const [accounts, setAccounts] = useState<SocialAccount[]>([]);
+  const [accountId, setAccountId] = useState("");
+  const [text, setText] = useState("");
+  const [scheduledFor, setScheduledFor] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    api.get<SocialAccount[]>("/social-accounts", token).then((list) => {
+      setAccounts(list);
+      if (list.length > 0) setAccountId(list[0].id);
+    });
+  }, [token]);
+
+  async function handleSubmit(event: FormEvent) {
+    event.preventDefault();
+    setError(null);
+    setSubmitting(true);
+    try {
+      await api.post<Post>(
+        "/posts",
+        {
+          social_account_id: accountId,
+          text,
+          scheduled_for: scheduledFor ? new Date(scheduledFor).toISOString() : null,
+        },
+        token
+      );
+      setText("");
+      setScheduledFor("");
+      onCreated();
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 402) {
+        setError("Лимит публикаций по тарифу исчерпан.");
+      } else {
+        setError(err instanceof ApiError ? err.message : "Не удалось запланировать");
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  if (accounts.length === 0) {
+    return (
+      <p className="muted">
+        Чтобы запланировать публикацию, сначала подключите соцсеть на странице «Соцсети».
+      </p>
+    );
+  }
+
+  return (
+    <form onSubmit={handleSubmit}>
+      <label>
+        Текст
+        <textarea
+          rows={4}
+          required
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder="текст публикации"
+        />
+      </label>
+      <label>
+        Куда опубликовать
+        <select value={accountId} onChange={(e) => setAccountId(e.target.value)}>
+          {accounts.map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.platform} — {a.display_name ?? a.external_account_id}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        Запланировать на (необязательно — иначе публикуем сразу)
+        <input
+          type="datetime-local"
+          value={scheduledFor}
+          onChange={(e) => setScheduledFor(e.target.value)}
+        />
+      </label>
+      {error && <p className="error">{error}</p>}
+      <button type="submit" disabled={submitting}>
+        {submitting ? "Сохраняем…" : scheduledFor ? "Запланировать" : "Опубликовать сейчас"}
+      </button>
+    </form>
+  );
+}
+
 function CalendarList() {
   const { token } = useAuth();
   const [posts, setPosts] = useState<Post[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
+  function reload() {
     api
       .get<Post[]>("/posts", token)
       .then(setPosts)
       .catch((err) => setError(err instanceof ApiError ? err.message : "Не удалось загрузить"));
-  }, [token]);
+  }
+
+  useEffect(reload, [token]);
 
   return (
     <>
@@ -55,6 +150,9 @@ function CalendarList() {
           </tbody>
         </table>
       )}
+
+      <h2>Запланировать публикацию</h2>
+      <CreatePostForm onCreated={reload} />
     </>
   );
 }
