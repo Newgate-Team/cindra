@@ -105,6 +105,85 @@ function CreatePostForm({ onCreated }: { onCreated: () => void }) {
   );
 }
 
+// datetime-local нужен формат "yyyy-MM-ddTHH:mm" без секунд/зоны --
+// toISOString даёт "...ss.sssZ", обрезаем до минут.
+function toDatetimeLocalValue(iso: string): string {
+  return new Date(iso).toISOString().slice(0, 16);
+}
+
+function PostActions({ post, onChanged }: { post: Post; onChanged: () => void }) {
+  const { token } = useAuth();
+  const [rescheduling, setRescheduling] = useState(false);
+  const [newScheduledFor, setNewScheduledFor] = useState(() =>
+    toDatetimeLocalValue(post.scheduled_for)
+  );
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  if (post.status !== "scheduled") return null;
+
+  async function handleReschedule() {
+    setError(null);
+    setBusy(true);
+    try {
+      await api.patch(
+        `/posts/${post.id}`,
+        { scheduled_for: new Date(newScheduledFor).toISOString() },
+        token
+      );
+      setRescheduling(false);
+      onChanged();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Не удалось перенести");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleCancel() {
+    setError(null);
+    setBusy(true);
+    try {
+      await api.delete(`/posts/${post.id}`, token);
+      onChanged();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Не удалось отменить");
+      setBusy(false);
+    }
+  }
+
+  if (rescheduling) {
+    return (
+      <div>
+        <input
+          type="datetime-local"
+          value={newScheduledFor}
+          onChange={(e) => setNewScheduledFor(e.target.value)}
+        />
+        <button type="button" disabled={busy} onClick={handleReschedule}>
+          Сохранить
+        </button>
+        <button type="button" className="secondary" onClick={() => setRescheduling(false)}>
+          Отмена
+        </button>
+        {error && <p className="error">{error}</p>}
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <button type="button" onClick={() => setRescheduling(true)}>
+        Перенести
+      </button>
+      <button type="button" className="secondary" disabled={busy} onClick={handleCancel}>
+        Отменить
+      </button>
+      {error && <p className="error">{error}</p>}
+    </div>
+  );
+}
+
 function CalendarList() {
   const { token } = useAuth();
   const [posts, setPosts] = useState<Post[] | null>(null);
@@ -132,6 +211,7 @@ function CalendarList() {
               <th>Когда</th>
               <th>Текст</th>
               <th>Статус</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
@@ -144,6 +224,9 @@ function CalendarList() {
                   {post.status === "failed" && post.error_message && (
                     <div className="muted">{post.error_message}</div>
                   )}
+                </td>
+                <td>
+                  <PostActions post={post} onChanged={reload} />
                 </td>
               </tr>
             ))}
