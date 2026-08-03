@@ -118,6 +118,23 @@ def test_connect_telegram_creates_social_account(client: TestClient) -> None:
     assert len(listed) == 1
 
 
+def test_connect_telegram_normalizes_tme_link_before_lookup(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    with patch(
+        "app.routers.social_accounts.get_chat",
+        return_value={"id": -100123, "title": "My Channel"},
+    ) as mock_get_chat:
+        response = client.post(
+            "/social-accounts/telegram/connect",
+            json={"chat_id": "https://t.me/mychannel"},
+            headers=headers,
+        )
+
+    assert response.status_code == 201
+    mock_get_chat.assert_called_once()
+    assert mock_get_chat.call_args[0][0] == "@mychannel"
+
+
 def test_connect_telegram_bad_chat_returns_400(client: TestClient) -> None:
     headers = _auth_headers(client)
     with patch(

@@ -1,8 +1,9 @@
+import re
 import uuid
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 from app.models import (
     GenerationContentType,
@@ -90,8 +91,35 @@ class PostOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+_TME_LINK_RE = re.compile(r"^(?:https?://)?t\.me/(.+)$", re.IGNORECASE)
+
+
 class TelegramConnectRequest(BaseModel):
-    chat_id: str = Field(min_length=1, description="Telegram @username или numeric chat_id")
+    chat_id: str = Field(
+        min_length=1,
+        description="Telegram @username, username, t.me-ссылка на публичный канал или numeric chat_id",
+    )
+
+    @field_validator("chat_id")
+    @classmethod
+    def normalize_chat_id(cls, value: str) -> str:
+        value = value.strip()
+
+        match = _TME_LINK_RE.match(value)
+        if match:
+            path = match.group(1).strip("/")
+            if path.startswith(("+", "joinchat/")):
+                raise ValueError(
+                    "Приватные инвайт-ссылки (t.me/+... или t.me/joinchat/...) не поддерживаются -- "
+                    "укажите @username канала/группы или его numeric chat_id"
+                )
+            username = path.split("/")[0].split("?")[0]
+            return f"@{username}"
+
+        if value.startswith("@") or re.fullmatch(r"-?\d+", value):
+            return value
+
+        return f"@{value}"
 
 
 class InstagramConnectRequest(BaseModel):
