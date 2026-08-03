@@ -18,6 +18,7 @@ class UserRole(str, enum.Enum):
 class SocialPlatform(str, enum.Enum):
     telegram = "telegram"
     instagram = "instagram"
+    facebook = "facebook"
 
 
 class SubscriptionTier(str, enum.Enum):
