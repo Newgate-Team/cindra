@@ -90,7 +90,7 @@ def connect_instagram(
         long_lived_token = instagram.get_long_lived_token(
             short_lived_token, settings.meta_app_id, settings.meta_app_secret
         )
-        ig_account = instagram.discover_instagram_business_account(long_lived_token)
+        accounts = instagram.discover_connected_accounts(long_lived_token)
     except PermanentPublishError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -101,7 +101,8 @@ def connect_instagram(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
         ) from exc
 
-    return upsert_social_account(
+    ig_account = accounts["instagram"]
+    instagram_account = upsert_social_account(
         db,
         current_user,
         platform=SocialPlatform.instagram,
@@ -109,6 +110,22 @@ def connect_instagram(
         access_token=long_lived_token,
         display_name=ig_account.get("username"),
     )
+
+    # Same OAuth code, no extra consent screen (CIN-65): the Facebook
+    # Page discovered alongside the Instagram account gets connected
+    # too, using its own Page Access Token (not the user token above)
+    # since that's what Facebook's Pages API requires for publishing.
+    fb_page = accounts["facebook_page"]
+    upsert_social_account(
+        db,
+        current_user,
+        platform=SocialPlatform.facebook,
+        external_account_id=fb_page["id"],
+        access_token=fb_page["access_token"],
+        display_name=fb_page.get("name"),
+    )
+
+    return instagram_account
 
 
 @router.get("", response_model=list[SocialAccountOut])

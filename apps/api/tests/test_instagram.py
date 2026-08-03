@@ -50,42 +50,61 @@ def test_get_long_lived_token() -> None:
     assert token == "long-lived-token"
 
 
-def test_discover_instagram_business_account_found_on_first_page() -> None:
+def test_discover_connected_accounts_found_on_first_page() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/v21.0/me/accounts":
-            return httpx.Response(200, json={"data": [{"id": "page-1"}]})
+            return httpx.Response(
+                200,
+                json={"data": [{"id": "page-1", "name": "Cindra", "access_token": "page-token-1"}]},
+            )
         assert request.url.path == "/v21.0/page-1"
         return httpx.Response(
             200,
             json={"instagram_business_account": {"id": "ig-42", "username": "mybrand"}},
         )
 
-    account = instagram.discover_instagram_business_account("token", client=_client(handler))
-    assert account == {"id": "ig-42", "username": "mybrand"}
+    accounts = instagram.discover_connected_accounts("token", client=_client(handler))
+    assert accounts["instagram"] == {"id": "ig-42", "username": "mybrand"}
+    assert accounts["facebook_page"] == {
+        "id": "page-1",
+        "name": "Cindra",
+        "access_token": "page-token-1",
+    }
 
 
-def test_discover_instagram_business_account_skips_pages_without_ig() -> None:
+def test_discover_connected_accounts_skips_pages_without_ig() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/v21.0/me/accounts":
-            return httpx.Response(200, json={"data": [{"id": "page-1"}, {"id": "page-2"}]})
+            return httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {"id": "page-1", "name": "No IG", "access_token": "token-1"},
+                        {"id": "page-2", "name": "Has IG", "access_token": "token-2"},
+                    ]
+                },
+            )
         if request.url.path == "/v21.0/page-1":
             return httpx.Response(200, json={})  # no instagram_business_account
         return httpx.Response(
             200, json={"instagram_business_account": {"id": "ig-99", "username": "other"}}
         )
 
-    account = instagram.discover_instagram_business_account("token", client=_client(handler))
-    assert account["id"] == "ig-99"
+    accounts = instagram.discover_connected_accounts("token", client=_client(handler))
+    assert accounts["instagram"]["id"] == "ig-99"
+    assert accounts["facebook_page"]["id"] == "page-2"
 
 
-def test_discover_instagram_business_account_none_linked_is_permanent_error() -> None:
+def test_discover_connected_accounts_none_linked_is_permanent_error() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/v21.0/me/accounts":
-            return httpx.Response(200, json={"data": [{"id": "page-1"}]})
+            return httpx.Response(
+                200, json={"data": [{"id": "page-1", "name": "Cindra", "access_token": "t"}]}
+            )
         return httpx.Response(200, json={})
 
     with pytest.raises(PermanentPublishError):
-        instagram.discover_instagram_business_account("token", client=_client(handler))
+        instagram.discover_connected_accounts("token", client=_client(handler))
 
 
 def test_create_and_publish_media() -> None:

@@ -64,15 +64,25 @@ def get_long_lived_token(
     return _handle_response(response)["access_token"]
 
 
-def discover_instagram_business_account(
+def discover_connected_accounts(
     access_token: str, client: httpx.Client | None = None
 ) -> dict[str, Any]:
-    """Find the Instagram Business Account linked to one of the user's
-    Facebook Pages. Real 2-step Graph API lookup: list Pages the token
-    can manage, then read each Page's linked IG account.
+    """Find the Facebook Page (and the Instagram Business Account linked
+    to it). Real 2-step Graph API lookup: list Pages the token can
+    manage, then read each Page's linked IG account -- the first Page
+    found with one linked wins for both (see CIN-65: Cindra publishes
+    to whichever Page the user picked when linking Instagram, so the
+    Facebook Page account we create has to be *that* Page, not just
+    any Page the user happens to manage).
 
-    Raises PermanentPublishError if no Page has one linked (the
-    accounts's IG profile isn't converted to Business/Creator, or
+    `page["access_token"]` here is the Page Access Token (not the user
+    token) -- /me/accounts returns it by default alongside id/name, no
+    extra request needed. It's long-lived as long as the user token
+    used to fetch it was already exchanged for a long-lived one (see
+    get_long_lived_token, called before this in the connect flow).
+
+    Raises PermanentPublishError if no Page has an IG account linked
+    (the account's IG profile isn't converted to Business/Creator, or
     isn't linked to any Facebook Page -- Meta requires both).
     """
     pages_url = f"{_GRAPH_API_BASE}/me/accounts"
@@ -94,7 +104,14 @@ def discover_instagram_business_account(
         page_detail = _handle_response(page_detail_response)
         ig_account = page_detail.get("instagram_business_account")
         if ig_account:
-            return ig_account
+            return {
+                "instagram": ig_account,
+                "facebook_page": {
+                    "id": page["id"],
+                    "name": page.get("name"),
+                    "access_token": page["access_token"],
+                },
+            }
 
     raise PermanentPublishError(
         "Ни одна из Facebook-страниц не привязана к Instagram Business/Creator аккаунту"

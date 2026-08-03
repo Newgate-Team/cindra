@@ -49,7 +49,12 @@ function SocialAccountsManager() {
     url.searchParams.set("redirect_uri", META_REDIRECT_URI ?? "");
     url.searchParams.set(
       "scope",
-      "instagram_basic,instagram_content_publish,pages_show_list,pages_read_engagement,business_management"
+      // pages_manage_posts/pages_manage_engagement/pages_read_user_content
+      // added for CIN-65 (publishing to the Facebook Page itself, not
+      // just the Instagram account linked to it) -- connected in the
+      // same OAuth round-trip, no separate consent screen.
+      "instagram_basic,instagram_content_publish,pages_show_list,pages_read_engagement," +
+        "business_management,pages_manage_posts,pages_manage_engagement,pages_read_user_content"
     );
     window.location.href = url.toString();
   }
