@@ -8,12 +8,21 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6380/0"
     jwt_secret: str = "dev-only-insecure-secret-change-in-.env"
     social_token_encryption_key: str = "miLbnE1KsbWEH0uvZOPC03XFYh_NydEqOpPk0KVAn18="
-    # Empty until CIN-53 is resolved -- see that ticket. The client
-    # below is real (real endpoint, real request shape); only the
-    # credential is missing. Same key covers Imagen (CIN-54) and Veo
-    # (CIN-55) -- one Google AI Studio key for the whole stack.
+    # CIN-53 resolved 2026-08-04: real key obtained, gemini-2.5-flash-lite
+    # is deprecated for new accounts (404 "no longer available to new
+    # users") -- gemini-3.5-flash-lite confirmed as a real, working
+    # model with a real generateContent response (candidates/usageMetadata
+    # present, modelVersion echoed back). Note: generativelanguage
+    # .googleapis.com enforces a "User location is not supported" check
+    # per-request based on the caller's IP -- confirmed to fail from
+    # Kazakhstan-based networks (both a sandboxed dev environment and a
+    # real residential Mac) but succeed from at least one other network.
+    # This is a request-origin check, not an account/key restriction --
+    # Railway's US/EU-hosted servers are expected to be unaffected, but
+    # local development from a KZ network may need a VPN to reach this
+    # API directly. Same key covers Imagen (CIN-54) and Veo (CIN-55).
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-2.5-flash-lite"
+    gemini_model: str = "gemini-3.5-flash-lite"
     # Imagen 4 (old imagen_model setting) was deprecated by Google,
     # shut down 2026-08-17 -- migrated in CIN-58 to the Interactions
     # API's Nano Banana family. gemini-2.5-flash-image (not
