@@ -1,0 +1,35 @@
+[project]
+name = "cindra-api"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic-settings>=2.6",
+    "sqlalchemy>=2.0",
+    "psycopg[binary]>=3.2",
+    "alembic>=1.14",
+    "passlib[argon2]>=1.7",
+    "pyjwt>=2.10",
+    "email-validator>=2.2",
+    "cryptography>=43.0",
+    "celery[redis]>=5.4",
+    "boto3>=1.35",
+    "python-multipart>=0.0.18",
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "ruff>=0.8",
+]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.ruff]
+extend-exclude = ["migrations/versions"]
+
+[tool.ruff.lint]
+extend-ignore = ["B008"]

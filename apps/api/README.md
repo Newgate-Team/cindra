@@ -1,0 +1,63 @@
+# apps/api
+
+Backend Cindra: FastAPI + Python.
+
+## Разработка
+
+```bash
+cp .env.example .env
+pip install -e ".[dev]"
+uvicorn app.main:app --reload
+```
+
+`.env` — gitignored, только для локальных значений. Продакшн-секреты и значения `.env` — разные, не путать «протестировано локально» с «работает в проде».
+
+Health-check: `GET /health`.
+
+## Тесты и линт
+
+```bash
+pytest
+ruff check .
+```
+
+## Деплой (Railway)
+
+Три сервиса из одного репозитория (Railway привязывает один конфиг-файл к одному сервису -- отдельного multi-service синтаксиса нет, см. `railway.toml`):
+
+| Сервис | Root directory | Start Command | Примечание |
+|---|---|---|---|
+| API | `apps/api` | (по умолчанию из `Dockerfile`/`railway.toml`) | `alembic upgrade head` + uvicorn, healthcheck `/health` |
+| Worker | `apps/api` | `celery -A app.celery_app worker --loglevel=info` | тот же образ, Custom Start Command в Dashboard |
+| Beat | `apps/api` | `celery -A app.celery_app beat --loglevel=info` | тот же образ, Custom Start Command в Dashboard; **не может быть на засыпающем тарифе** -- отвечает за запланированные публикации |
+
+Плюс managed-аддоны Postgres и Redis (Railway создаёт `DATABASE_URL`/`REDIS_URL`-совместимые переменные автоматически при подключении аддона -- сверить с именами, которые ждёт `config.py`, при необходимости смэпить вручную).
+
+**Переменные окружения** (см. полный список и комментарии в `.env.example`) -- вводятся в Railway Dashboard, не коммитятся:
+
+```
+DATABASE_URL
+REDIS_URL
+JWT_SECRET
+SOCIAL_TOKEN_ENCRYPTION_KEY
+CORS_ORIGINS               # https://<домен фронтенда на Vercel>
+GEMINI_API_KEY
+GEMINI_MODEL
+IMAGE_MODEL
+VEO_MODEL
+TELEGRAM_BOT_TOKEN
+META_APP_ID
+META_APP_SECRET
+META_REDIRECT_URI           # https://<домен API>/oauth/instagram/callback
+R2_ACCOUNT_ID
+R2_ACCESS_KEY_ID
+R2_SECRET_ACCESS_KEY
+R2_BUCKET_NAME
+R2_PUBLIC_URL_BASE
+PAYPAL_CLIENT_ID             # live, не sandbox
+PAYPAL_CLIENT_SECRET         # live
+PAYPAL_MODE=live
+PAYPAL_PRO_PLAN_ID
+PAYPAL_BUSINESS_PLAN_ID
+PAYPAL_WEBHOOK_ID             # регистрируется после первого деплоя, когда есть реальный URL
+```
