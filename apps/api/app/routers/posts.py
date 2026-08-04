@@ -14,6 +14,24 @@ from app.usage import enforce_and_record_usage
 router = APIRouter(prefix="/posts", tags=["posts"])
 
 
+def _post_out(post: Post, account: SocialAccount) -> PostOut:
+    return PostOut(
+        id=post.id,
+        social_account_id=post.social_account_id,
+        text=post.text,
+        image_url=post.image_url,
+        content_kind=post.content_kind,
+        status=post.status,
+        scheduled_for=post.scheduled_for,
+        platform_message_id=post.platform_message_id,
+        error_message=post.error_message,
+        created_at=post.created_at,
+        published_at=post.published_at,
+        platform=account.platform,
+        account_label=account.display_name or account.external_account_id,
+    )
+
+
 def _reject_if_in_the_past(scheduled_for: datetime | None) -> None:
     """`None` means "not provided" (create: publish now: update: no
     change) -- only an explicit past datetime is rejected."""
@@ -27,14 +45,14 @@ def _reject_if_in_the_past(scheduled_for: datetime | None) -> None:
 @router.get("", response_model=list[PostOut])
 def list_posts(
     current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
-) -> list[Post]:
-    return list(
-        db.scalars(
-            select(Post)
-            .where(Post.user_id == current_user.id)
-            .order_by(Post.scheduled_for.desc())
-        )
-    )
+) -> list[PostOut]:
+    rows = db.execute(
+        select(Post, SocialAccount)
+        .join(SocialAccount, Post.social_account_id == SocialAccount.id)
+        .where(Post.user_id == current_user.id)
+        .order_by(Post.scheduled_for.desc())
+    ).all()
+    return [_post_out(post, account) for post, account in rows]
 
 
 @router.post("", response_model=PostOut, status_code=status.HTTP_201_CREATED)
@@ -42,7 +60,7 @@ def create_post(
     payload: PostCreate,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-) -> Post:
+) -> PostOut:
     account = db.get(SocialAccount, payload.social_account_id)
     if account is None or account.user_id != current_user.id:
         raise HTTPException(
@@ -73,7 +91,7 @@ def create_post(
         publish_post.delay(str(post.id))
         db.refresh(post)
 
-    return post
+    return _post_out(post, account)
 
 
 @router.get("/{post_id}", response_model=PostOut)
@@ -81,13 +99,13 @@ def get_post(
     post_id: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-) -> Post:
+) -> PostOut:
     post = db.get(Post, post_id)
     if post is None or post.user_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Публикация не найдена"
         )
-    return post
+    return _post_out(post, db.get(SocialAccount, post.social_account_id))
 
 
 def _get_scheduled_post_owned_by(db: Session, post_id: str, current_user: User) -> Post:
@@ -110,14 +128,14 @@ def update_post(
     payload: PostUpdate,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-) -> Post:
+) -> PostOut:
     post = _get_scheduled_post_owned_by(db, post_id, current_user)
     _reject_if_in_the_past(payload.scheduled_for)
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(post, field, value)
     db.commit()
     db.refresh(post)
-    return post
+    return _post_out(post, db.get(SocialAccount, post.social_account_id))
 
 
 @router.delete("/{post_id}", status_code=status.HTTP_204_NO_CONTENT)

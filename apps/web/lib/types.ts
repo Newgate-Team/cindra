@@ -50,4 +50,6 @@ export interface Post {
   error_message: string | null;
   created_at: string;
   published_at: string | null;
+  platform: SocialPlatform;
+  account_label: string;
 }

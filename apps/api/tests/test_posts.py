@@ -281,6 +281,54 @@ def test_create_post_with_past_scheduled_for_returns_400(client: TestClient, db:
     assert "прошлом" in response.json()["detail"]
 
 
+def test_create_post_includes_platform_and_account_label(client: TestClient, db: Session) -> None:
+    headers = _auth_headers(client)
+    account_id = _connected_account_id(client, headers, db)
+
+    response = client.post(
+        "/posts", json={"social_account_id": account_id, "text": "тест"}, headers=headers
+    )
+    body = response.json()
+    assert body["platform"] == "telegram"
+    assert body["account_label"] == "My Channel"
+
+
+def test_list_posts_includes_platform_and_account_label(client: TestClient, db: Session) -> None:
+    headers = _auth_headers(client)
+    account_id = _connected_account_id(client, headers, db)
+    client.post("/posts", json={"social_account_id": account_id, "text": "тест"}, headers=headers)
+
+    response = client.get("/posts", headers=headers)
+    body = response.json()
+    assert body[0]["platform"] == "telegram"
+    assert body[0]["account_label"] == "My Channel"
+
+
+def test_get_post_includes_platform_and_account_label(client: TestClient, db: Session) -> None:
+    headers = _auth_headers(client)
+    account_id = _connected_account_id(client, headers, db)
+    created = client.post(
+        "/posts", json={"social_account_id": account_id, "text": "тест"}, headers=headers
+    ).json()
+
+    response = client.get(f"/posts/{created['id']}", headers=headers)
+    body = response.json()
+    assert body["platform"] == "telegram"
+    assert body["account_label"] == "My Channel"
+
+
+def test_update_post_includes_platform_and_account_label(client: TestClient, db: Session) -> None:
+    headers = _auth_headers(client)
+    post = _scheduled_post(client, headers, db)
+
+    response = client.patch(
+        f"/posts/{post['id']}", json={"text": "новый текст"}, headers=headers
+    )
+    body = response.json()
+    assert body["platform"] == "telegram"
+    assert body["account_label"] == "My Channel"
+
+
 def test_reschedule_post_to_the_past_returns_400(client: TestClient, db: Session) -> None:
     headers = _auth_headers(client)
     post = _scheduled_post(client, headers, db)
