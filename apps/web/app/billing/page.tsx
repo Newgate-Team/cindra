@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ApiError, api } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
@@ -80,6 +80,13 @@ function UpgradeButton({
   useEffect(() => {
     if (!planId || !containerRef.current) return;
     let cancelled = false;
+    // Belt-and-suspenders against CIN-88: paypal.Buttons().render()
+    // appends to the container rather than replacing its content, so
+    // if this effect ever re-runs against an already-populated
+    // container (e.g. an unmemoized onConfirmed reference changing on
+    // every parent render) we'd otherwise get a second set of buttons
+    // stacked on top of the first.
+    containerRef.current.innerHTML = "";
 
     loadPayPalSdk()
       .then(() => {
@@ -130,14 +137,20 @@ function BillingSummary() {
   const [subscription, setSubscription] = useState<Subscription | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  function reload() {
+  // Memoized so it's a stable reference across renders (CIN-88) --
+  // UpgradeButton's useEffect depends on it, and an unmemoized
+  // function here would re-run that effect (and re-render the PayPal
+  // buttons on top of themselves) on every unrelated re-render of
+  // this component, not just when something the user did should
+  // actually refresh the subscription.
+  const reload = useCallback(() => {
     api
       .get<Subscription>("/billing/subscription", token)
       .then(setSubscription)
       .catch((err) => setError(err instanceof ApiError ? err.message : "Не удалось загрузить"));
-  }
+  }, [token]);
 
-  useEffect(reload, [token]);
+  useEffect(reload, [reload]);
 
   return (
     <>
