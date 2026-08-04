@@ -44,7 +44,11 @@ class SubscriptionStore(str, enum.Enum):
     none = "none"
     google_play = "google_play"
     app_store = "app_store"
+    # No longer used going forward (CIN-18, 2026-08-04: switched to
+    # PayPal) -- kept in the enum so historical rows/migrations stay
+    # valid, not wired to any code path anymore.
     cloudpayments = "cloudpayments"
+    paypal = "paypal"
 
 
 class UsageEventType(str, enum.Enum):
