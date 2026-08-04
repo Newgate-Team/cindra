@@ -157,6 +157,15 @@ class SocialAccountOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class ConfirmSubscriptionRequest(BaseModel):
+    """Sent by the frontend after the PayPal Buttons SDK's onApprove
+    fires (see CIN-87) -- just the subscription id, everything else
+    (status, plan, owner) is looked up server-side from PayPal itself
+    rather than trusted from the client."""
+
+    subscription_id: str = Field(min_length=1)
+
+
 class MetricsSummary(BaseModel):
     average_time_to_first_post_seconds: float | None
     retention_d7: float

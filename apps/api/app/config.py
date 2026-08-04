@@ -54,12 +54,22 @@ class Settings(BaseSettings):
     # domain) -- uploaded keys are appended to this to build the URL
     # returned to callers.
     r2_public_url_base: str = ""
-    # Empty until a real CloudPayments merchant account exists (see
-    # CIN-18/CIN-20). api_secret isn't used yet -- webhook signature
-    # verification isn't implemented (see cloudpayments.py), only
-    # declared here ahead of that follow-up.
-    cloudpayments_public_id: str = ""
-    cloudpayments_api_secret: str = ""
+    # CIN-18 (2026-08-04): provider switched from CloudPayments to
+    # PayPal -- see that ticket for the full reasoning (CloudPayments
+    # approval takes ~2 weeks; PayPal Business can be opened as a sole
+    # proprietor immediately, and its webhook-verification mechanism is
+    # actually publicly documented, unlike CloudPayments' -- see CIN-79
+    # history). client_credentials grant verified live against
+    # api-m.sandbox.paypal.com (see CIN-85) -- only real values are
+    # missing before this reaches production.
+    paypal_client_id: str = ""
+    paypal_client_secret: str = ""
+    paypal_mode: str = "sandbox"  # "sandbox" or "live"
+    # PayPal Plan IDs for each paid tier -- created via PayPal
+    # Dashboard/API (see CIN-87), not something this code can invent.
+    # Empty until CIN-87 creates the real Products/Plans.
+    paypal_pro_plan_id: str = ""
+    paypal_business_plan_id: str = ""
 
     model_config = {"env_file": ".env"}
 
