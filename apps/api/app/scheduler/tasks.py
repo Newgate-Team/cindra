@@ -1,8 +1,10 @@
+import subprocess
 from datetime import UTC, datetime
 
 from app.celery_app import celery_app
 from app.db import SessionLocal
 from app.models import Post, PostStatus, SocialAccount
+from app.scheduler import backup
 from app.scheduler.registry import get_publisher
 from app.social_integrations.errors import PermanentPublishError, TransientPublishError
 
@@ -81,3 +83,24 @@ def enqueue_due_posts() -> int:
             publish_post.delay(str(post.id))
 
         return len(due_posts)
+
+
+@celery_app.task(
+    bind=True,
+    # Retry on infra flakiness (DB/network hiccups mid-dump or mid-upload),
+    # not on bugs -- a bad pg_dump invocation or a malformed R2 request
+    # should surface as a failed task, not retry silently for 5 minutes.
+    autoretry_for=(subprocess.CalledProcessError, ConnectionError, OSError),
+    retry_backoff=True,
+    retry_backoff_max=300,
+    retry_kwargs={"max_retries": 3},
+)
+def backup_database(self) -> str:
+    """Periodic task (Celery beat, daily): dump Postgres, upload the
+    gzipped dump to R2, and drop old dumps beyond the retention window.
+    See CIN-91 -- Railway's Trial plan has no automated backups/PITR.
+    """
+    data = backup.dump_database()
+    key = backup.upload_backup(data)
+    backup.rotate_backups()
+    return key
