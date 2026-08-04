@@ -34,7 +34,7 @@ def test_sends_correct_request_shape_and_parses_response() -> None:
     assert "утренний кофе" in result["prompt"]
     assert captured["url"] == (
         "https://generativelanguage.googleapis.com/v1beta/models/"
-        "gemini-2.5-flash-lite:generateContent"
+        "gemini-3.5-flash-lite:generateContent"
     )
     assert "key" in captured["params"]
     body = json.loads(captured["body"])
