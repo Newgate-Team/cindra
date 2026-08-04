@@ -31,6 +31,55 @@ def get_access_token(client: httpx.Client | None = None) -> str:
     return response.json()["access_token"]
 
 
+def verify_webhook_signature(
+    *,
+    auth_algo: str,
+    cert_url: str,
+    transmission_id: str,
+    transmission_sig: str,
+    transmission_time: str,
+    webhook_event: dict[str, Any],
+    client: httpx.Client | None = None,
+) -> bool:
+    """POST /v1/notifications/verify-webhook-signature -- PayPal itself
+    checks the signature rather than us doing RSA verification by
+    hand. Request/response field names confirmed against PayPal's
+    official OpenAPI spec (notifications_webhooks_v1.json in
+    paypal/paypal-rest-api-specifications: `verify_webhook_signature`/
+    `verify_webhook_signature_response` schemas) and cross-checked
+    live against api-m.sandbox.paypal.com with a fabricated-but-
+    correctly-shaped payload (see CIN-86) -- got back a structured
+    `{"verification_status": ...}` response, not a 404/shape error.
+
+    Known sandbox quirk (documented by PayPal, not a bug here):
+    sandbox returns "SUCCESS" for well-formed requests regardless of
+    whether the signature is actually valid -- real rejection of a
+    forged signature can only be confirmed in live mode. This function
+    is still correct either way: it forwards PayPal's own verdict
+    rather than reimplementing the check.
+    """
+    settings = get_settings()
+    token = get_access_token(client)
+    url = f"{_base_url()}/v1/notifications/verify-webhook-signature"
+    post = client.post if client is not None else httpx.post
+    response = post(
+        url,
+        headers={"Authorization": f"Bearer {token}", "content-type": "application/json"},
+        json={
+            "auth_algo": auth_algo,
+            "cert_url": cert_url,
+            "transmission_id": transmission_id,
+            "transmission_sig": transmission_sig,
+            "transmission_time": transmission_time,
+            "webhook_id": settings.paypal_webhook_id,
+            "webhook_event": webhook_event,
+        },
+        timeout=15.0,
+    )
+    response.raise_for_status()
+    return response.json().get("verification_status") == "SUCCESS"
+
+
 def get_subscription(subscription_id: str, client: httpx.Client | None = None) -> dict[str, Any]:
     """GET /v1/billing/subscriptions/{id} -- used to verify a
     frontend-supplied subscription_id is real before trusting it
