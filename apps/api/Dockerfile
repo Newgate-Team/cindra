@@ -9,6 +9,15 @@ COPY app ./app
 COPY migrations ./migrations
 COPY alembic.ini ./
 
+# postgresql-client provides pg_dump for the CIN-91 backup task (Celery
+# beat, daily). Debian bookworm's default postgresql-client version may
+# lag Railway's Postgres server version -- pg_dump reading from a newer
+# server usually works within a few major versions but isn't guaranteed;
+# revisit if backups start failing after a Postgres major version bump.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends postgresql-client \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN pip install --no-cache-dir .
 
 # Railway/Render both inject PORT at runtime -- the shell form lets

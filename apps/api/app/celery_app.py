@@ -1,4 +1,5 @@
 from celery import Celery
+from celery.schedules import crontab
 
 from app.config import get_settings
 
@@ -18,6 +19,10 @@ celery_app.conf.update(
         "enqueue-due-posts": {
             "task": "app.scheduler.tasks.enqueue_due_posts",
             "schedule": 60.0,
+        },
+        "backup-database-daily": {
+            "task": "app.scheduler.tasks.backup_database",
+            "schedule": crontab(hour=3, minute=0),
         },
     },
 )

@@ -29,7 +29,7 @@ ruff check .
 |---|---|---|---|
 | API | `apps/api` | (по умолчанию из `Dockerfile`/`railway.toml`) | `alembic upgrade head` + uvicorn, healthcheck `/health` |
 | Worker | `apps/api` | `celery -A app.celery_app worker --loglevel=info` | тот же образ, Custom Start Command в Dashboard |
-| Beat | `apps/api` | `celery -A app.celery_app beat --loglevel=info` | тот же образ, Custom Start Command в Dashboard; **не может быть на засыпающем тарифе** -- отвечает за запланированные публикации |
+| Beat | `apps/api` | `celery -A app.celery_app beat --loglevel=info` | тот же образ, Custom Start Command в Dashboard; **не может быть на засыпающем тарифе** -- отвечает за запланированные публикации и ежедневный бэкап БД (см. "Бэкапы" ниже) |
 
 Плюс managed-аддоны Postgres и Redis (Railway создаёт `DATABASE_URL`/`REDIS_URL`-совместимые переменные автоматически при подключении аддона -- сверить с именами, которые ждёт `config.py`, при необходимости смэпить вручную).
 
@@ -61,3 +61,16 @@ PAYPAL_PRO_PLAN_ID
 PAYPAL_BUSINESS_PLAN_ID
 PAYPAL_WEBHOOK_ID             # регистрируется после первого деплоя, когда есть реальный URL
 ```
+
+## Бэкапы
+
+Railway Trial/Hobby не даёт автоматических бэкапов/PITR для managed Postgres (только на Pro). Вместо апгрейда -- см. CIN-91: `app.scheduler.tasks.backup_database`, Celery beat, ежедневно в 03:00 UTC. Дампает БД через `pg_dump`, гзипует и заливает в тот же R2-бакет, что и медиа (`backups/postgres/YYYY-MM-DD.sql.gz`), храня последние 14 дампов.
+
+Восстановление из дампа:
+
+```bash
+# скачать дамп конкретного дня из R2 (например через rclone/aws-cli, настроенный на R2-эндпоинт), затем:
+gunzip -c 2026-08-04.sql.gz | psql "$DATABASE_URL"
+```
+
+`DATABASE_URL` здесь -- обычный `postgresql://` (без `+psycopg`, это специфика SQLAlchemy-драйвера, `psql`/`pg_dump` его не понимают).
