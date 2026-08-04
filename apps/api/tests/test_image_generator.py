@@ -5,7 +5,7 @@ import httpx
 import pytest
 
 from app.content_pipeline.errors import TransientGenerationError
-from app.content_pipeline.image_generator import imagen_image_generator
+from app.content_pipeline.image_generator import nano_banana_image_generator
 
 
 def _client(handler) -> httpx.Client:
@@ -16,12 +16,20 @@ def test_sends_correct_request_shape_and_parses_response() -> None:
     captured = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
-        captured["url"] = str(request.url).split("?")[0]
-        captured["params"] = dict(request.url.params)
+        captured["url"] = str(request.url)
+        captured["headers"] = request.headers
         captured["body"] = request.content
         return httpx.Response(
             200,
-            json={"predictions": [{"bytesBase64Encoded": "ZmFrZS1pbWFnZQ=="}]},
+            json={
+                "id": "abc123",
+                "status": "completed",
+                "output_image": {
+                    "type": "image",
+                    "data": "ZmFrZS1pbWFnZQ==",
+                    "mime_type": "image/png",
+                },
+            },
         )
 
     payload = {"topic": "утренний кофе", "platform": "instagram"}
@@ -29,18 +37,16 @@ def test_sends_correct_request_shape_and_parses_response() -> None:
         "app.content_pipeline.image_generator.upload_bytes",
         return_value="https://media.cindra.example/abc.png",
     ) as upload:
-        result = imagen_image_generator(payload, client=_client(handler))
+        result = nano_banana_image_generator(payload, client=_client(handler))
 
     upload.assert_called_once_with(b"fake-image", "image/png", "png")
     assert result["image_url"] == "https://media.cindra.example/abc.png"
     assert "утренний кофе" in result["prompt"]
-    assert captured["url"] == (
-        "https://generativelanguage.googleapis.com/v1beta/models/"
-        "imagen-4.0-generate-001:predict"
-    )
-    assert "key" in captured["params"]
+    assert captured["url"] == "https://generativelanguage.googleapis.com/v1beta/interactions"
+    assert "x-goog-api-key" in captured["headers"]
     body = json.loads(captured["body"])
-    assert "утренний кофе" in body["instances"][0]["prompt"]
+    assert body["model"] == "gemini-2.5-flash-image"
+    assert "утренний кофе" in body["input"]
 
 
 def test_429_is_transient() -> None:
@@ -48,7 +54,7 @@ def test_429_is_transient() -> None:
         return httpx.Response(429, json={"error": {"status": "RESOURCE_EXHAUSTED"}})
 
     with pytest.raises(TransientGenerationError):
-        imagen_image_generator(
+        nano_banana_image_generator(
             {"topic": "x", "platform": "instagram"}, client=_client(handler)
         )
 
@@ -58,7 +64,7 @@ def test_5xx_is_transient() -> None:
         return httpx.Response(503, json={"error": {"status": "UNAVAILABLE"}})
 
     with pytest.raises(TransientGenerationError):
-        imagen_image_generator(
+        nano_banana_image_generator(
             {"topic": "x", "platform": "instagram"}, client=_client(handler)
         )
 
@@ -68,6 +74,6 @@ def test_400_is_not_transient() -> None:
         return httpx.Response(400, json={"error": {"status": "INVALID_ARGUMENT"}})
 
     with pytest.raises(httpx.HTTPStatusError):
-        imagen_image_generator(
+        nano_banana_image_generator(
             {"topic": "x", "platform": "instagram"}, client=_client(handler)
         )

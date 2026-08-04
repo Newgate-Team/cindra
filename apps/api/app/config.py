@@ -14,9 +14,14 @@ class Settings(BaseSettings):
     # (CIN-55) -- one Google AI Studio key for the whole stack.
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.5-flash-lite"
-    # Imagen 4 is deprecated by Google, shutting down 2026-08-17 --
-    # see gate ticket CIN-58, migration not done yet.
-    imagen_model: str = "imagen-4.0-generate-001"
+    # Imagen 4 (old imagen_model setting) was deprecated by Google,
+    # shut down 2026-08-17 -- migrated in CIN-58 to the Interactions
+    # API's Nano Banana family. gemini-2.5-flash-image (not
+    # gemini-3.1-flash-image/"Nano Banana 2") chosen: still officially
+    # supported (no deprecation date, unlike Imagen 4), and priced
+    # close to the old $0.04/image budget ($0.039/image vs 3.1's
+    # ~$0.045/image) -- see CIN-58 for the price comparison.
+    image_model: str = "gemini-2.5-flash-image"
     # Was "veo-3.0-fast-generate-001" (does not exist) until CIN-57
     # caught it -- see that ticket for how the bug slipped through
     # the earlier manual verification.
