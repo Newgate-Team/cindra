@@ -8,12 +8,31 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.models import Subscription, User
 
+_SIGNATURE_HEADERS = {
+    "paypal-auth-algo": "SHA256withRSA",
+    "paypal-cert-url": "https://api.sandbox.paypal.com/v1/notifications/certs/CERTFAKE",
+    "paypal-transmission-id": "fake-transmission-id",
+    "paypal-transmission-sig": "fake-sig",
+    "paypal-transmission-time": "2026-08-04T12:00:00Z",
+}
+
 
 def _auth_headers(client: TestClient) -> dict[str, str]:
     payload = {"email": "ada@cindra.dev", "password": "supersecret1"}
     client.post("/auth/register", json=payload)
     token = client.post("/auth/login", json=payload).json()["access_token"]
     return {"Authorization": f"Bearer {token}"}
+
+
+def _post_webhook(client: TestClient, event_type: str, custom_id: str):
+    with patch(
+        "app.billing_integrations.paypal.verify_webhook_signature", return_value=True
+    ):
+        return client.post(
+            "/billing/webhook/paypal",
+            json={"event_type": event_type, "resource": {"custom_id": custom_id}},
+            headers=_SIGNATURE_HEADERS,
+        )
 
 
 def test_register_creates_free_subscription(client: TestClient, db: Session) -> None:
@@ -136,13 +155,7 @@ def test_webhook_activated_sets_active(client: TestClient, db: Session) -> None:
     _auth_headers(client)
     user = db.scalar(select(User).where(User.email == "ada@cindra.dev"))
 
-    response = client.post(
-        "/billing/webhook/paypal",
-        json={
-            "event_type": "BILLING.SUBSCRIPTION.ACTIVATED",
-            "resource": {"custom_id": str(user.id)},
-        },
-    )
+    response = _post_webhook(client, "BILLING.SUBSCRIPTION.ACTIVATED", str(user.id))
     assert response.status_code == 200
 
     subscription = db.scalar(select(Subscription).where(Subscription.user_id == user.id))
@@ -154,13 +167,7 @@ def test_webhook_suspended_marks_past_due(client: TestClient, db: Session) -> No
     _auth_headers(client)
     user = db.scalar(select(User).where(User.email == "ada@cindra.dev"))
 
-    client.post(
-        "/billing/webhook/paypal",
-        json={
-            "event_type": "BILLING.SUBSCRIPTION.SUSPENDED",
-            "resource": {"custom_id": str(user.id)},
-        },
-    )
+    _post_webhook(client, "BILLING.SUBSCRIPTION.SUSPENDED", str(user.id))
 
     subscription = db.scalar(select(Subscription).where(Subscription.user_id == user.id))
     assert subscription.status == "past_due"
@@ -170,26 +177,14 @@ def test_webhook_cancelled_marks_canceled(client: TestClient, db: Session) -> No
     _auth_headers(client)
     user = db.scalar(select(User).where(User.email == "ada@cindra.dev"))
 
-    client.post(
-        "/billing/webhook/paypal",
-        json={
-            "event_type": "BILLING.SUBSCRIPTION.CANCELLED",
-            "resource": {"custom_id": str(user.id)},
-        },
-    )
+    _post_webhook(client, "BILLING.SUBSCRIPTION.CANCELLED", str(user.id))
 
     subscription = db.scalar(select(Subscription).where(Subscription.user_id == user.id))
     assert subscription.status == "canceled"
 
 
 def test_webhook_unknown_custom_id_still_returns_200(client: TestClient) -> None:
-    response = client.post(
-        "/billing/webhook/paypal",
-        json={
-            "event_type": "BILLING.SUBSCRIPTION.ACTIVATED",
-            "resource": {"custom_id": "does-not-exist"},
-        },
-    )
+    response = _post_webhook(client, "BILLING.SUBSCRIPTION.ACTIVATED", "does-not-exist")
     assert response.status_code == 200
 
 
@@ -199,8 +194,54 @@ def test_webhook_unknown_event_type_returns_200_without_error(
     _auth_headers(client)
     user = db.scalar(select(User).where(User.email == "ada@cindra.dev"))
 
+    response = _post_webhook(client, "SOME.OTHER.EVENT", str(user.id))
+    assert response.status_code == 200
+
+
+def test_webhook_missing_signature_header_returns_400(client: TestClient) -> None:
+    headers = dict(_SIGNATURE_HEADERS)
+    del headers["paypal-transmission-sig"]
+
     response = client.post(
         "/billing/webhook/paypal",
-        json={"event_type": "SOME.OTHER.EVENT", "resource": {"custom_id": str(user.id)}},
+        json={"event_type": "BILLING.SUBSCRIPTION.ACTIVATED", "resource": {"custom_id": "x"}},
+        headers=headers,
     )
-    assert response.status_code == 200
+    assert response.status_code == 400
+
+
+def test_webhook_failed_verification_returns_400(client: TestClient, db: Session) -> None:
+    _auth_headers(client)
+    user = db.scalar(select(User).where(User.email == "ada@cindra.dev"))
+
+    with patch(
+        "app.billing_integrations.paypal.verify_webhook_signature", return_value=False
+    ):
+        response = client.post(
+            "/billing/webhook/paypal",
+            json={
+                "event_type": "BILLING.SUBSCRIPTION.SUSPENDED",
+                "resource": {"custom_id": str(user.id)},
+            },
+            headers=_SIGNATURE_HEADERS,
+        )
+
+    assert response.status_code == 400
+    subscription = db.scalar(select(Subscription).where(Subscription.user_id == user.id))
+    # SUSPENDED would flip this to past_due if it went through -- still
+    # "active" proves the rejection happened before the DB write.
+    assert subscription.status == "active"
+
+
+def test_webhook_verification_error_returns_400(client: TestClient) -> None:
+    with patch(
+        "app.billing_integrations.paypal.verify_webhook_signature",
+        side_effect=RuntimeError("boom"),
+    ):
+        response = client.post(
+            "/billing/webhook/paypal",
+            json={"event_type": "BILLING.SUBSCRIPTION.ACTIVATED", "resource": {"custom_id": "x"}},
+            headers=_SIGNATURE_HEADERS,
+        )
+
+    assert response.status_code == 400

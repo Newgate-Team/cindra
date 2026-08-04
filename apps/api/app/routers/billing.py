@@ -86,6 +86,15 @@ def confirm_paypal_subscription(
     return subscription
 
 
+_SIGNATURE_HEADERS = {
+    "auth_algo": "paypal-auth-algo",
+    "cert_url": "paypal-cert-url",
+    "transmission_id": "paypal-transmission-id",
+    "transmission_sig": "paypal-transmission-sig",
+    "transmission_time": "paypal-transmission-time",
+}
+
+
 @router.post("/webhook/paypal")
 async def paypal_webhook(request: Request, db: Session = Depends(get_db)) -> dict[str, str]:
     """Receives BILLING.SUBSCRIPTION.* lifecycle notifications from
@@ -96,19 +105,38 @@ async def paypal_webhook(request: Request, db: Session = Depends(get_db)) -> dic
     user id set at subscription-creation time -- same lookup pattern
     the old CloudPayments handler used for AccountId.
 
-    SECURITY GAP (see CIN-86, blocks going live): does not verify the
-    notification's authenticity yet. PayPal's verification mechanism
-    (POST /v1/notifications/verify-webhook-signature) IS publicly
-    documented -- unlike CloudPayments' -- but implementing it is
-    scoped to CIN-86 rather than guessed in here. Anyone who knows this
-    URL can currently flip a user's subscription status; do not deploy
-    before CIN-86 is closed.
+    Verifies authenticity via PayPal's own verify-webhook-signature
+    endpoint (CIN-86) before touching anything -- fails closed (400) on
+    a missing header, unconfigured PAYPAL_WEBHOOK_ID, a failed PayPal
+    call, or a signature PayPal itself doesn't confirm. This closes the
+    gap the old CloudPayments handler explicitly could not close (see
+    CIN-79 history) -- PayPal's mechanism is publicly documented, so
+    there was no reason to ship it unverified the way CloudPayments was.
 
-    Always returns 200 (PayPal retries on non-2xx) even when the
-    account isn't found or the event type isn't one we track -- neither
-    is something retrying fixes.
+    Once verified, always returns 200 (PayPal retries on non-2xx) even
+    when the account isn't found or the event type isn't one we track
+    -- neither is something retrying fixes.
     """
     body = await request.json()
+    try:
+        headers = {
+            field: request.headers[header_name]
+            for field, header_name in _SIGNATURE_HEADERS.items()
+        }
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=f"Отсутствует заголовок {exc.args[0]}"
+        ) from None
+
+    try:
+        verified = paypal.verify_webhook_signature(webhook_event=body, **headers)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Не удалось проверить подпись вебхука"
+        ) from exc
+    if not verified:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Неверная подпись вебхука")
+
     event_type = body.get("event_type")
     resource = body.get("resource", {})
     custom_id = resource.get("custom_id")

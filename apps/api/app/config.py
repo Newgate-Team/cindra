@@ -65,6 +65,12 @@ class Settings(BaseSettings):
     paypal_client_id: str = ""
     paypal_client_secret: str = ""
     paypal_mode: str = "sandbox"  # "sandbox" or "live"
+    # Empty until a webhook is registered for a real public URL (see
+    # CIN-86) -- Apps & Credentials -> app -> Add Webhook in the PayPal
+    # Developer Dashboard. Required for verify_webhook_signature; the
+    # webhook handler fails closed (rejects) without it, it does not
+    # silently skip verification.
+    paypal_webhook_id: str = ""
     # PayPal Plan IDs for each paid tier -- created via PayPal
     # Dashboard/API (see CIN-87), not something this code can invent.
     # Empty until CIN-87 creates the real Products/Plans.
