@@ -98,6 +98,13 @@ class PostOut(BaseModel):
     error_message: str | None
     created_at: datetime
     published_at: datetime | None
+    # Denormalized from the related SocialAccount (CIN-83) -- the
+    # calendar list needs to show where a post goes without a second
+    # round-trip to /social-accounts. account_label is display_name
+    # with a fallback to external_account_id, computed by the router
+    # (not present on the Post ORM model itself).
+    platform: SocialPlatform
+    account_label: str
 
     model_config = {"from_attributes": True}
 

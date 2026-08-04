@@ -12,6 +12,37 @@ function formatDate(iso: string): string {
   return new Date(iso).toLocaleString("ru-RU");
 }
 
+const PLATFORM_LABELS: Record<Post["platform"], string> = {
+  telegram: "Telegram",
+  instagram: "Instagram",
+  facebook: "Facebook",
+};
+
+// Текст публикации обрезан в таблице до 80 символов -- иконка рядом
+// разворачивает/сворачивает полный текст прямо в строке (CIN-83).
+function PostText({ text }: { text: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const isTruncated = text.length > 80;
+  const preview = isTruncated ? `${text.slice(0, 80)}…` : text;
+
+  return (
+    <span>
+      {expanded ? text : preview}
+      {isTruncated && (
+        <button
+          type="button"
+          className="secondary"
+          onClick={() => setExpanded((v) => !v)}
+          aria-label={expanded ? "Свернуть текст публикации" : "Показать полный текст публикации"}
+          title={expanded ? "Свернуть текст публикации" : "Показать полный текст публикации"}
+        >
+          {expanded ? "🔼" : "🔍"}
+        </button>
+      )}
+    </span>
+  );
+}
+
 // datetime-local's `min` needs "yyyy-MM-ddTHH:mm" -- called fresh on
 // every render rather than a module-level constant, so it stays "now"
 // across a long-lived page instead of freezing at page load.
@@ -218,6 +249,8 @@ function CalendarList() {
           <thead>
             <tr>
               <th>Когда</th>
+              <th>Платформа</th>
+              <th>Аккаунт</th>
               <th>Текст</th>
               <th>Статус</th>
               <th></th>
@@ -227,7 +260,11 @@ function CalendarList() {
             {posts.map((post) => (
               <tr key={post.id}>
                 <td>{formatDate(post.scheduled_for)}</td>
-                <td>{post.text.length > 80 ? `${post.text.slice(0, 80)}…` : post.text}</td>
+                <td>{PLATFORM_LABELS[post.platform]}</td>
+                <td>{post.account_label}</td>
+                <td>
+                  <PostText text={post.text} />
+                </td>
                 <td>
                   <span className={`badge ${post.status}`}>{post.status}</span>
                   {post.status === "failed" && post.error_message && (
