@@ -23,13 +23,13 @@ ruff check .
 
 ## Деплой (Railway)
 
-Три сервиса из одного репозитория (Railway привязывает один конфиг-файл к одному сервису -- отдельного multi-service синтаксиса нет, см. `railway.toml`):
+Три сервиса из одного репозитория (Railway привязывает один конфиг-файл к одному Root Directory -- отдельного multi-service синтаксиса нет, см. `railway.toml`, читается всеми тремя):
 
 | Сервис | Root directory | Start Command | Примечание |
 |---|---|---|---|
-| API | `apps/api` | (по умолчанию из `Dockerfile`/`railway.toml`) | `alembic upgrade head` + uvicorn, healthcheck `/health` |
-| Worker | `apps/api` | `celery -A app.celery_app worker --loglevel=info` | тот же образ, Custom Start Command в Dashboard |
-| Beat | `apps/api` | `celery -A app.celery_app beat --loglevel=info` | тот же образ, Custom Start Command в Dashboard; **не может быть на засыпающем тарифе** -- отвечает за запланированные публикации и ежедневный бэкап БД (см. "Бэкапы" ниже) |
+| API | `apps/api` | (по умолчанию из `Dockerfile`/`railway.toml`) | `alembic upgrade head` + uvicorn. **Healthcheck Path `/health` -- задать вручную в Settings этого сервиса** (Dashboard-оверрайд, не в `railway.toml`, см. CIN-92: файл общий для всех трёх сервисов, worker/beat не слушают HTTP и падают на healthcheck, если он задан в файле) |
+| Worker | `apps/api` | `celery -A app.celery_app worker --loglevel=info` | тот же образ, Custom Start Command в Dashboard, healthcheck НЕ задавать |
+| Beat | `apps/api` | `celery -A app.celery_app beat --loglevel=info` | тот же образ, Custom Start Command в Dashboard, healthcheck НЕ задавать; **не может быть на засыпающем тарифе** -- отвечает за запланированные публикации и ежедневный бэкап БД (см. "Бэкапы" ниже) |
 
 Плюс managed-аддоны Postgres и Redis (Railway создаёт `DATABASE_URL`/`REDIS_URL`-совместимые переменные автоматически при подключении аддона -- сверить с именами, которые ждёт `config.py`, при необходимости смэпить вручную).
 
