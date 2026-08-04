@@ -1,0 +1,21 @@
+# Config for the primary API service. Railway ties one config file
+# to one service (confirmed via docs.railway.com/reference/config-as-code
+# -- no documented multi-service syntax in a single file), so the
+# Celery worker and beat processes are separate services added in the
+# Railway Dashboard pointing at this same repo/root directory, each
+# with its Start Command overridden (see apps/api/README.md):
+#   worker: celery -A app.celery_app worker --loglevel=info
+#   beat:   celery -A app.celery_app beat --loglevel=info
+# Both skip the Dockerfile's default CMD (which includes the Alembic
+# migration + uvicorn) since only the API service needs to serve HTTP
+# or run migrations.
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+healthcheckPath = "/health"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3

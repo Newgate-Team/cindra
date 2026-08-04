@@ -16,17 +16,17 @@ dependencies = [
     "celery[redis]>=5.4",
     "boto3>=1.35",
     "python-multipart>=0.0.18",
+    "httpx>=0.27",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.3",
-    "httpx>=0.27",
     "ruff>=0.8",
 ]
 
-[tool.setuptools]
-packages = ["app", "app.routers"]
+[tool.setuptools.packages.find]
+include = ["app*"]
 
 [tool.ruff]
 extend-exclude = ["migrations/versions"]
