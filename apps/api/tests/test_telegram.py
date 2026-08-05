@@ -1,6 +1,13 @@
+from datetime import UTC, datetime
+from unittest.mock import patch
+
 import httpx
 import pytest
+from sqlalchemy.orm import Session
 
+from app.models import Post, SocialPlatform, User
+from app.social_accounts import upsert_social_account
+from app.social_integrations import telegram
 from app.social_integrations.errors import PermanentPublishError, TransientPublishError
 from app.social_integrations.telegram import (
     get_chat,
@@ -89,3 +96,37 @@ def test_send_message_permanent_error_when_bot_not_admin() -> None:
 
     with pytest.raises(PermanentPublishError):
         send_message("-100123", "Привет!", "123:abc", client=_client(handler))
+
+
+def test_send_video_returns_result_on_success() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/bot123:abc/sendVideo"
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": 43}})
+
+    result = telegram.send_video(
+        "-100123", "https://example.com/x.mp4", "caption", "123:abc", client=_client(handler)
+    )
+    assert result == {"message_id": 43}
+
+
+def test_publish_with_video_url_sends_video(db: Session, user: User) -> None:
+    account = upsert_social_account(
+        db, user, SocialPlatform.telegram, "-100123", access_token="123:abc"
+    )
+    post = Post(
+        user_id=user.id,
+        social_account_id=account.id,
+        text="caption",
+        video_url="https://example.com/x.mp4",
+        scheduled_for=datetime.now(UTC),
+    )
+
+    with patch(
+        "app.social_integrations.telegram.send_video", return_value={"message_id": 44}
+    ) as send_video_mock:
+        result = telegram.publish(account, post)
+
+    send_video_mock.assert_called_once_with(
+        "-100123", "https://example.com/x.mp4", "caption", "123:abc"
+    )
+    assert result == {"message_id": 44}

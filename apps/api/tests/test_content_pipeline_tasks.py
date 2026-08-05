@@ -107,6 +107,14 @@ def test_transient_error_beyond_max_retries_gives_up(db: Session, user: User) ->
     # re-raises the original exception rather than a generic
     # MaxRetriesExceededError (that only happens when the exception
     # isn't known -- here it is, since it's what triggered the retry).
+    #
+    # On this last attempt the job must resolve to `failed` rather
+    # than being left in `processing` forever -- Celery's wrapper
+    # won't call run_generation_job again, so this is the only chance
+    # to record that the job actually gave up (see CIN-94: found live
+    # while verifying the network-timeout retry fix -- a job that
+    # exhausts its retry budget was staying "processing" indefinitely
+    # with no error_message, polled forever by the frontend).
     def _always_flaky(payload: dict) -> dict:
         raise TransientGenerationError("всегда недоступен")
 
@@ -117,7 +125,9 @@ def test_transient_error_beyond_max_retries_gives_up(db: Session, user: User) ->
         run_generation_job.apply(args=[str(job.id)], retries=3)
 
     db.refresh(job)
-    assert job.status == GenerationStatus.processing
+    assert job.status == GenerationStatus.failed
+    assert job.error_message == "всегда недоступен"
+    assert job.completed_at is not None
     assert job.attempts == 1  # this call's own single execution
 
 

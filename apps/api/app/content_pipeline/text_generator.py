@@ -44,11 +44,16 @@ def gemini_text_generator(
         "json": {"contents": [{"parts": [{"text": prompt}]}]},
         "timeout": 30.0,
     }
-    response = (
-        client.post(url, **request_kwargs)
-        if client is not None
-        else httpx.post(url, **request_kwargs)
-    )
+    try:
+        response = (
+            client.post(url, **request_kwargs)
+            if client is not None
+            else httpx.post(url, **request_kwargs)
+        )
+    except httpx.TransportError as exc:
+        # Network-level failure (timeout, connection reset, DNS) --
+        # distinct from an HTTP error response, and just as transient.
+        raise TransientGenerationError(f"Gemini API network error: {exc}") from exc
 
     if response.status_code in _RETRYABLE_STATUS_CODES:
         raise TransientGenerationError(

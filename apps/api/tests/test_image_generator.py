@@ -69,6 +69,16 @@ def test_5xx_is_transient() -> None:
         )
 
 
+def test_network_timeout_is_transient() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("The read operation timed out", request=request)
+
+    with pytest.raises(TransientGenerationError):
+        nano_banana_image_generator(
+            {"topic": "x", "platform": "instagram"}, client=_client(handler)
+        )
+
+
 def test_400_is_not_transient() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(400, json={"error": {"status": "INVALID_ARGUMENT"}})
