@@ -94,13 +94,30 @@ def send_photo(
     return _handle_response(response)
 
 
+def send_video(
+    chat_id: str, video_url: str, caption: str, bot_token: str, client: httpx.Client | None = None
+) -> dict[str, Any]:
+    """Publish a video with `caption` to `chat_id`. Real POST to .../sendVideo."""
+    url = f"{_TELEGRAM_API_BASE}/bot{bot_token}/sendVideo"
+    json_body = {"chat_id": chat_id, "video": video_url, "caption": caption}
+    response = (
+        client.post(url, json=json_body, timeout=15.0)
+        if client is not None
+        else httpx.post(url, json=json_body, timeout=15.0)
+    )
+    return _handle_response(response)
+
+
 def publish(account: SocialAccount, post: Post) -> dict[str, Any]:
     """Registered in app.scheduler.registry as the telegram publisher.
 
-    Unlike Instagram, Telegram doesn't require media -- an image_url
-    just switches sendMessage for sendPhoto+caption when present.
+    Unlike Instagram, Telegram doesn't require media -- video_url/
+    image_url just switch sendMessage for sendVideo/sendPhoto+caption
+    when present (a Post carries at most one of the two, see CIN-93).
     """
     bot_token = get_access_token(account)
+    if post.video_url:
+        return send_video(account.external_account_id, post.video_url, post.text, bot_token)
     if post.image_url:
         return send_photo(account.external_account_id, post.image_url, post.text, bot_token)
     return send_message(account.external_account_id, post.text, bot_token)

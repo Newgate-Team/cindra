@@ -20,6 +20,7 @@ def _post_out(post: Post, account: SocialAccount) -> PostOut:
         social_account_id=post.social_account_id,
         text=post.text,
         image_url=post.image_url,
+        video_url=post.video_url,
         content_kind=post.content_kind,
         status=post.status,
         scheduled_for=post.scheduled_for,
@@ -77,6 +78,7 @@ def create_post(
         generation_job_id=payload.generation_job_id,
         text=payload.text,
         image_url=payload.image_url,
+        video_url=payload.video_url,
         content_kind=payload.content_kind,
         scheduled_for=scheduled_for,
     )

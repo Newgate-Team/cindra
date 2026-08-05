@@ -4,7 +4,13 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 
 import { ApiError, api } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
-import type { GenerationJob, Post, SocialAccount, SocialPlatform } from "@/lib/types";
+import type {
+  GenerationContentType,
+  GenerationJob,
+  Post,
+  SocialAccount,
+  SocialPlatform,
+} from "@/lib/types";
 
 import { RequireAuth } from "../components/RequireAuth";
 
@@ -22,9 +28,19 @@ function minDatetimeLocal(): string {
 // completes, the raw text becomes an editable draft here rather than
 // a separate screen -- reviewing what you just generated is part of
 // the same flow, not a different destination.
-function ReviewAndPublish({ job, contentKind }: { job: GenerationJob; contentKind: string }) {
+function ReviewAndPublish({
+  job,
+  contentKind,
+  initialCaption,
+}: {
+  job: GenerationJob;
+  contentKind: string;
+  initialCaption: string;
+}) {
   const { token } = useAuth();
-  const [text, setText] = useState(job.output_payload?.text ?? "");
+  const imageUrl = job.output_payload?.image_url;
+  const videoUrl = job.output_payload?.video_url;
+  const [text, setText] = useState(job.output_payload?.text ?? initialCaption);
   const [accounts, setAccounts] = useState<SocialAccount[]>([]);
   const [accountId, setAccountId] = useState("");
   const [scheduledFor, setScheduledFor] = useState("");
@@ -49,6 +65,8 @@ function ReviewAndPublish({ job, contentKind }: { job: GenerationJob; contentKin
         {
           social_account_id: accountId,
           text,
+          image_url: imageUrl ?? null,
+          video_url: videoUrl ?? null,
           content_kind: contentKind,
           generation_job_id: job.id,
           scheduled_for: scheduledFor ? new Date(scheduledFor).toISOString() : null,
@@ -77,8 +95,13 @@ function ReviewAndPublish({ job, contentKind }: { job: GenerationJob; contentKin
 
   return (
     <form onSubmit={handlePublish}>
+      {imageUrl && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={imageUrl} alt="Сгенерированное изображение" style={{ maxWidth: "100%", borderRadius: 8 }} />
+      )}
+      {videoUrl && <video src={videoUrl} controls style={{ maxWidth: "100%", borderRadius: 8 }} />}
       <label>
-        Текст (можно отредактировать перед публикацией)
+        {imageUrl || videoUrl ? "Подпись (можно отредактировать перед публикацией)" : "Текст (можно отредактировать перед публикацией)"}
         <textarea rows={6} value={text} onChange={(e) => setText(e.target.value)} />
       </label>
       <label>
@@ -135,10 +158,25 @@ const CONTENT_KIND_OPTIONS: Record<SocialPlatform, { value: string; label: strin
   ],
 };
 
+const CONTENT_TYPE_LABELS: Record<GenerationContentType, string> = {
+  text: "Текст",
+  image: "Изображение",
+  video: "Видео",
+};
+
+// "Сценарий видео" -- это content_kind для ТЕКСТА (сценарий, который
+// человек потом сам снимает), не имеет смысла как приложение к
+// реально сгенерированному изображению/видео (CIN-93).
+function contentKindOptionsFor(platform: SocialPlatform, contentType: GenerationContentType) {
+  const options = CONTENT_KIND_OPTIONS[platform];
+  return contentType === "text" ? options : options.filter((o) => o.value !== "video_script");
+}
+
 function GenerateForm() {
   const { token } = useAuth();
   const [topic, setTopic] = useState("");
   const [platform, setPlatform] = useState<SocialPlatform>("telegram");
+  const [contentType, setContentType] = useState<GenerationContentType>("text");
   const [contentKind, setContentKind] = useState("post");
   const [brandGuide, setBrandGuide] = useState("");
   const [job, setJob] = useState<GenerationJob | null>(null);
@@ -175,7 +213,13 @@ function GenerateForm() {
     try {
       const created = await api.post<GenerationJob>(
         "/content/generate",
-        { topic, platform, content_kind: contentKind, brand_guide: brandGuide || null },
+        {
+          topic,
+          platform,
+          content_type: contentType,
+          content_kind: contentKind,
+          brand_guide: brandGuide || null,
+        },
         token
       );
       setJob(created);
@@ -212,7 +256,7 @@ function GenerateForm() {
             onChange={(e) => {
               const nextPlatform = e.target.value as SocialPlatform;
               setPlatform(nextPlatform);
-              const available = CONTENT_KIND_OPTIONS[nextPlatform].map((o) => o.value);
+              const available = contentKindOptionsFor(nextPlatform, contentType).map((o) => o.value);
               if (!available.includes(contentKind)) setContentKind("post");
             }}
           >
@@ -222,9 +266,27 @@ function GenerateForm() {
           </select>
         </label>
         <label>
+          Формат
+          <select
+            value={contentType}
+            onChange={(e) => {
+              const nextContentType = e.target.value as GenerationContentType;
+              setContentType(nextContentType);
+              const available = contentKindOptionsFor(platform, nextContentType).map((o) => o.value);
+              if (!available.includes(contentKind)) setContentKind("post");
+            }}
+          >
+            {(Object.keys(CONTENT_TYPE_LABELS) as GenerationContentType[]).map((value) => (
+              <option key={value} value={value}>
+                {CONTENT_TYPE_LABELS[value]}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
           Тип контента
           <select value={contentKind} onChange={(e) => setContentKind(e.target.value)}>
-            {CONTENT_KIND_OPTIONS[platform].map((option) => (
+            {contentKindOptionsFor(platform, contentType).map((option) => (
               <option key={option.value} value={option.value}>
                 {option.label}
               </option>
@@ -251,9 +313,10 @@ function GenerateForm() {
           <p>
             Статус генерации: <span className={`badge ${job.status}`}>{job.status}</span>
           </p>
-          {job.status === "completed" && job.output_payload?.text && (
-            <ReviewAndPublish job={job} contentKind={contentKind} />
-          )}
+          {job.status === "completed" &&
+            (job.output_payload?.text || job.output_payload?.image_url || job.output_payload?.video_url) && (
+              <ReviewAndPublish job={job} contentKind={contentKind} initialCaption={topic} />
+            )}
           {job.status === "failed" && <p className="error">{job.error_message}</p>}
           {job.status === "flagged" && (
             <p className="error">Отклонено модерацией: {job.error_message}</p>

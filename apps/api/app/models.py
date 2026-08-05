@@ -202,6 +202,10 @@ class Post(Base):
     # required for Instagram posts and optional for Telegram ones,
     # enforced by each platform's publisher, not at the schema level.
     image_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    # Set instead of image_url for a generated video post (CIN-93) --
+    # a Post carries at most one of the two, enforced by callers/
+    # publishers, not at the schema level (same as image_url).
+    video_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     # "post" / "story" / etc -- same loose string as GenerationRequest.
     # content_kind (see schemas.py), copied over at Post creation so
     # publishers (e.g. instagram.py, CIN-74) know whether to publish a

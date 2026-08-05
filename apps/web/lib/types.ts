@@ -23,7 +23,7 @@ export interface GenerationJob {
   id: string;
   content_type: GenerationContentType;
   status: GenerationStatus;
-  output_payload: { text?: string; prompt?: string } | null;
+  output_payload: { text?: string; image_url?: string; video_url?: string; prompt?: string } | null;
   error_message: string | null;
   created_at: string;
   completed_at: string | null;
@@ -43,6 +43,7 @@ export interface Post {
   social_account_id: string;
   text: string;
   image_url: string | null;
+  video_url: string | null;
   content_kind: string;
   status: PostStatus;
   scheduled_for: string;
