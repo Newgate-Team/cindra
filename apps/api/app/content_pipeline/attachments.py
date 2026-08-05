@@ -1,9 +1,26 @@
 import io
+import re
 from typing import Any
 
 import httpx
 from docx import Document
+from PIL import Image
 from pypdf import PdfReader
+
+# Gemini's tile count is aspect-ratio-driven, not size-driven, above
+# this threshold (crop_unit = floor(min(w,h)/1.5), tiles = ceil(w/
+# crop_unit) * ceil(h/crop_unit)) -- verified by hand: a 4000x3000
+# photo and the *same photo resized to 768x576* both come out to 4
+# tiles (1032 tokens), because the crop unit scales right along with
+# the image. The one documented flat rate is images with BOTH
+# dimensions <= 384px: exactly 258 tokens regardless of aspect ratio
+# (ai.google.dev/gemini-api/docs/image-understanding). That's the only
+# resize target that reliably lowers cost, so that's what this uses --
+# an unresized phone photo (often 3000-4000px, 3-6+ tiles) drops to a
+# guaranteed single tile, with no loss to what the model actually
+# needs for style/content understanding at this level.
+_MAX_IMAGE_DIMENSION = 384
+_IMAGE_JPEG_QUALITY = 85
 
 # File-size caps (CIN-97) -- enforced on the raw upload, not on duration,
 # since no video/audio duration probing (ffprobe or similar) is wired up
@@ -49,6 +66,38 @@ class AttachmentTooLargeError(Exception):
     """Raw upload exceeds the per-type size cap."""
 
 
+def downscale_image_for_context(data: bytes) -> tuple[bytes, str]:
+    """Resize an uploaded image attachment down to _MAX_IMAGE_DIMENSION
+    on its longest side before it's stored/sent to Gemini as context
+    (CIN-98). Images already at or under the bound pass through
+    untouched -- this only ever shrinks, never upscales. Always
+    re-encoded to JPEG: this attachment is read-only model context
+    (never redisplayed to the user, unlike Post.image_url), so
+    transparency/format fidelity doesn't matter, and JPEG compresses
+    better than the source formats we accept (PNG/WEBP/GIF).
+    """
+    try:
+        image = Image.open(io.BytesIO(data))
+        image.load()  # Image.open is lazy -- force decoding now to catch truncated/corrupt data here
+    except Exception as exc:
+        # mime_type is client-supplied and unverified against actual
+        # file content (same gap as the other attachment types) -- a
+        # spoofed/corrupt "image/*" upload should fail as a clean 400,
+        # not an unhandled 500 from deep inside PIL.
+        raise UnsupportedAttachmentError(f"Повреждённый или неподдерживаемый файл изображения: {exc}") from exc
+    width, height = image.size
+    if max(width, height) > _MAX_IMAGE_DIMENSION:
+        scale = _MAX_IMAGE_DIMENSION / max(width, height)
+        image = image.resize(
+            (round(width * scale), round(height * scale)), Image.Resampling.LANCZOS
+        )
+    if image.mode not in ("RGB", "L"):
+        image = image.convert("RGB")
+    buffer = io.BytesIO()
+    image.save(buffer, format="JPEG", quality=_IMAGE_JPEG_QUALITY)
+    return buffer.getvalue(), "image/jpeg"
+
+
 def classify_attachment(mime_type: str, size_bytes: int) -> str:
     """Validate an uploaded file and return its attachment_type
     (image/video/audio/document), or raise if the type is unsupported
@@ -78,7 +127,17 @@ def extract_document_text(data: bytes, mime_type: str) -> str:
         text = "\n".join(p.text for p in document.paragraphs)
     else:
         raise UnsupportedAttachmentError(f"Не текстовый документ: {mime_type}")
-    return text[:8000]
+    return _collapse_whitespace(text)[:8000]
+
+
+def _collapse_whitespace(text: str) -> str:
+    """PDF extraction in particular tends to leave runs of blank lines
+    and repeated spaces from page layout -- collapsing them before the
+    8000-char cap spends that budget on actual content, not formatting
+    artifacts (CIN-98)."""
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
 
 
 def fetch_attachment_bytes(url: str, client: httpx.Client | None = None) -> bytes:

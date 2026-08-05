@@ -4,15 +4,24 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 from docx import Document
+from PIL import Image
 
 from app.content_pipeline.attachments import (
     AttachmentTooLargeError,
     UnsupportedAttachmentError,
     build_attachment_context,
     classify_attachment,
+    downscale_image_for_context,
     extract_document_text,
     fetch_attachment_bytes,
 )
+
+
+def _png_bytes(width: int, height: int) -> bytes:
+    image = Image.new("RGB", (width, height), color=(200, 50, 50))
+    buf = io.BytesIO()
+    image.save(buf, format="PNG")
+    return buf.getvalue()
 
 
 def _client(handler) -> httpx.Client:
@@ -79,6 +88,41 @@ def test_extract_document_text_pdf() -> None:
 def test_extract_document_text_caps_length() -> None:
     text = extract_document_text(("x" * 20000).encode(), "text/plain")
     assert len(text) == 8000
+
+
+def test_extract_document_text_collapses_whitespace() -> None:
+    text = extract_document_text(
+        "Первая строка.\n\n\n\n\nВторая  строка   с   пробелами.\n\n\n".encode(), "text/plain"
+    )
+    assert text == "Первая строка.\n\nВторая строка с пробелами."
+
+
+def test_downscale_image_shrinks_oversized_image() -> None:
+    original = _png_bytes(2000, 1000)
+    resized, mime_type = downscale_image_for_context(original)
+    assert mime_type == "image/jpeg"
+    assert len(resized) < len(original)
+    with Image.open(io.BytesIO(resized)) as image:
+        # Both dimensions <= 384px is Gemini's one documented flat-rate
+        # tile bucket (258 tokens regardless of aspect ratio) -- a
+        # larger cap like 768 doesn't actually save anything, since the
+        # tile-count formula scales with the image itself above that
+        # point (verified by hand, see attachments.py).
+        assert image.size == (384, 192)
+        assert max(image.size) <= 384
+
+
+def test_downscale_image_rejects_corrupt_data() -> None:
+    with pytest.raises(UnsupportedAttachmentError):
+        downscale_image_for_context(b"not-actually-an-image")
+
+
+def test_downscale_image_leaves_small_image_dimensions_unchanged() -> None:
+    original = _png_bytes(200, 100)
+    resized, mime_type = downscale_image_for_context(original)
+    assert mime_type == "image/jpeg"
+    with Image.open(io.BytesIO(resized)) as image:
+        assert image.size == (200, 100)
 
 
 def test_extract_document_text_unsupported_mime_raises() -> None:
