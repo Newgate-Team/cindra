@@ -87,6 +87,16 @@ def test_start_429_is_transient() -> None:
         )
 
 
+def test_start_network_timeout_is_transient() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("The read operation timed out", request=request)
+
+    with pytest.raises(TransientGenerationError):
+        veo_video_generator(
+            {"topic": "x", "platform": "instagram"}, client=_client(handler), sleep=_no_sleep
+        )
+
+
 def test_start_400_is_not_transient() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(400, json={"error": {"status": "INVALID_ARGUMENT"}})

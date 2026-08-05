@@ -75,19 +75,24 @@ def veo_video_generator(
     params = {"key": settings.gemini_api_key}
 
     start_url = f"{_GEMINI_BASE_URL}/models/{settings.veo_model}:predictLongRunning"
-    start_response = post(
-        start_url,
-        params=params,
-        headers={"content-type": "application/json"},
-        json={
-            "instances": [{"prompt": prompt}],
-            "parameters": {
-                "durationSeconds": settings.veo_duration_seconds,
-                "resolution": settings.veo_resolution,
+    try:
+        start_response = post(
+            start_url,
+            params=params,
+            headers={"content-type": "application/json"},
+            json={
+                "instances": [{"prompt": prompt}],
+                "parameters": {
+                    "durationSeconds": settings.veo_duration_seconds,
+                    "resolution": settings.veo_resolution,
+                },
             },
-        },
-        timeout=30.0,
-    )
+            timeout=30.0,
+        )
+    except httpx.TransportError as exc:
+        # Network-level failure (timeout, connection reset, DNS) --
+        # distinct from an HTTP error response, and just as transient.
+        raise TransientGenerationError(f"Veo API network error: {exc}") from exc
     if start_response.status_code in _RETRYABLE_STATUS_CODES:
         raise TransientGenerationError(
             f"Veo API {start_response.status_code}: {start_response.text[:500]}"
@@ -98,7 +103,10 @@ def veo_video_generator(
     operation_url = f"{_GEMINI_BASE_URL}/{operation_name}"
     for _ in range(_MAX_POLL_ATTEMPTS):
         sleep(_POLL_INTERVAL_SECONDS)
-        poll_response = get(operation_url, params=params, timeout=30.0)
+        try:
+            poll_response = get(operation_url, params=params, timeout=30.0)
+        except httpx.TransportError as exc:
+            raise TransientGenerationError(f"Veo API network error: {exc}") from exc
         if poll_response.status_code in _RETRYABLE_STATUS_CODES:
             raise TransientGenerationError(
                 f"Veo API {poll_response.status_code}: {poll_response.text[:500]}"
@@ -113,9 +121,12 @@ def veo_video_generator(
 
         samples = operation["response"]["generateVideoResponse"]["generatedSamples"]
         video_uri = samples[0]["video"]["uri"]
-        download_response = get(
-            video_uri, headers={"x-goog-api-key": settings.gemini_api_key}, timeout=60.0
-        )
+        try:
+            download_response = get(
+                video_uri, headers={"x-goog-api-key": settings.gemini_api_key}, timeout=60.0
+            )
+        except httpx.TransportError as exc:
+            raise TransientGenerationError(f"Veo API network error: {exc}") from exc
         download_response.raise_for_status()
         video_url = upload_bytes(download_response.content, "video/mp4", "mp4")
         return {"video_url": video_url, "prompt": prompt}
