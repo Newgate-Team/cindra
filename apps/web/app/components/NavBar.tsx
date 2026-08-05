@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 
 export function NavBar() {
-  const { user, logout } = useAuth();
+  const { user, loading, logout } = useAuth();
   const router = useRouter();
 
   function handleLogout() {
@@ -26,7 +26,7 @@ export function NavBar() {
         </>
       )}
       <span className="spacer" />
-      {user ? (
+      {loading ? null : user ? (
         <>
           <span className="muted">{user.email}</span>
           <button className="secondary" onClick={handleLogout}>
