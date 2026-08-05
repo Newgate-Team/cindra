@@ -118,6 +118,19 @@ def test_image_attachment_becomes_multimodal_part() -> None:
     assert result["text"] == "Готово"
 
 
+def test_sets_max_output_tokens() -> None:
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(
+            200, json={"candidates": [{"content": {"parts": [{"text": "x"}]}}]}
+        )
+
+    gemini_text_generator({"topic": "x", "platform": "telegram"}, client=_client(handler))
+    assert captured["body"]["generationConfig"] == {"maxOutputTokens": 2048}
+
+
 def test_400_is_not_transient() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(400, json={"error": {"status": "INVALID_ARGUMENT"}})
