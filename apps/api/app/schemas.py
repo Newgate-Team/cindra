@@ -54,6 +54,17 @@ class GenerationRequest(BaseModel):
     content_type: GenerationContentType = GenerationContentType.text
     content_kind: str = "post"
     brand_guide: str | None = None
+    # Optional context file (CIN-97) -- set together by the client after
+    # a successful POST /content/attachment upload. attachment_type is
+    # one of image/video/audio/document (see content_pipeline/attachments.py).
+    attachment_url: str | None = None
+    attachment_type: str | None = None
+
+
+class AttachmentOut(BaseModel):
+    url: str
+    attachment_type: str
+    mime_type: str
 
 
 class GenerationJobOut(BaseModel):

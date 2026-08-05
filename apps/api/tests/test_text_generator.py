@@ -1,3 +1,4 @@
+import base64
 import json
 
 import httpx
@@ -69,6 +70,52 @@ def test_network_timeout_is_transient() -> None:
         gemini_text_generator(
             {"topic": "x", "platform": "telegram"}, client=_client(handler)
         )
+
+
+def test_document_attachment_adds_context_to_prompt() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "generativelanguage" in str(request.url):
+            body = json.loads(request.content)
+            assert "план запуска осенней коллекции" in body["contents"][0]["parts"][0]["text"]
+            assert len(body["contents"][0]["parts"]) == 1  # no extra multimodal part
+            return httpx.Response(
+                200, json={"candidates": [{"content": {"parts": [{"text": "Готово"}]}}]}
+            )
+        return httpx.Response(200, content="план запуска осенней коллекции".encode())
+
+    payload = {
+        "topic": "осенняя коллекция",
+        "platform": "telegram",
+        "attachment_url": "https://r2.example/brief.txt",
+        "attachment_type": "document",
+    }
+    result = gemini_text_generator(payload, client=_client(handler))
+    assert result["text"] == "Готово"
+
+
+def test_image_attachment_becomes_multimodal_part() -> None:
+    image_bytes = b"fake-image-bytes"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "generativelanguage" in str(request.url):
+            body = json.loads(request.content)
+            parts = body["contents"][0]["parts"]
+            assert len(parts) == 2
+            assert parts[1]["inline_data"]["mime_type"] == "image/png"
+            assert base64.b64decode(parts[1]["inline_data"]["data"]) == image_bytes
+            return httpx.Response(
+                200, json={"candidates": [{"content": {"parts": [{"text": "Готово"}]}}]}
+            )
+        return httpx.Response(200, content=image_bytes)
+
+    payload = {
+        "topic": "осенняя коллекция",
+        "platform": "telegram",
+        "attachment_url": "https://r2.example/reference.png",
+        "attachment_type": "image",
+    }
+    result = gemini_text_generator(payload, client=_client(handler))
+    assert result["text"] == "Готово"
 
 
 def test_400_is_not_transient() -> None:

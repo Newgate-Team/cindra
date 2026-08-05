@@ -5,6 +5,7 @@ from typing import Any
 import httpx
 
 from app.config import get_settings
+from app.content_pipeline.attachments import build_attachment_context
 from app.content_pipeline.errors import TransientGenerationError
 from app.content_pipeline.media_storage import upload_bytes
 
@@ -25,11 +26,13 @@ class VideoGenerationFailedError(Exception):
     """
 
 
-def _build_video_prompt(payload: dict[str, Any]) -> str:
+def _build_video_prompt(payload: dict[str, Any], attachment_text: str | None = None) -> str:
     lines = [f"Короткое видео на тему: {payload['topic']}."]
     brand_guide = payload.get("brand_guide")
     if brand_guide:
         lines.append(f"Стиль и бренд-гайд (соблюдать): {brand_guide}")
+    if attachment_text:
+        lines.append(f"Контекст из прикреплённого документа: {attachment_text}")
     return "\n".join(lines)
 
 
@@ -69,7 +72,20 @@ def veo_video_generator(
     generation actually completes.
     """
     settings = get_settings()
-    prompt = _build_video_prompt(payload)
+
+    # Optional context file (CIN-97): only a document's extracted text
+    # is used here -- Veo's predictLongRunning has no documented way to
+    # accept an arbitrary image/video/audio as generation context (only
+    # text-to-video), so image/video/audio attachments aren't applied
+    # when content_type is "video" rather than guessing at an
+    # unconfirmed request shape.
+    attachment_text = None
+    attachment_url = payload.get("attachment_url")
+    if attachment_url and payload["attachment_type"] == "document":
+        context = build_attachment_context(attachment_url, "document", client=client)
+        attachment_text = context["text"]
+
+    prompt = _build_video_prompt(payload, attachment_text=attachment_text)
     post = client.post if client is not None else httpx.post
     get = client.get if client is not None else httpx.get
     params = {"key": settings.gemini_api_key}

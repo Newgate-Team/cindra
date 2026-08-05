@@ -144,3 +144,75 @@ def test_never_finishing_operation_raises_after_poll_budget() -> None:
         veo_video_generator(
             {"topic": "x", "platform": "instagram"}, client=_client(handler), sleep=_no_sleep
         )
+
+
+def test_document_attachment_adds_context_to_prompt() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url).split("?")[0]
+        if url == "https://r2.example/brief.txt":
+            return httpx.Response(200, content="сценарий из ТЗ клиента".encode())
+        if request.method == "POST":
+            body = json.loads(request.content)
+            assert "сценарий из ТЗ клиента" in body["instances"][0]["prompt"]
+            return httpx.Response(200, json={"name": "operations/abc123"})
+        return httpx.Response(
+            200,
+            json={
+                "name": "operations/abc123",
+                "done": True,
+                "response": {
+                    "generateVideoResponse": {"generatedSamples": [{"video": {"uri": _VIDEO_URI}}]}
+                },
+            },
+        )
+
+    payload = {
+        "topic": "x",
+        "platform": "instagram",
+        "attachment_url": "https://r2.example/brief.txt",
+        "attachment_type": "document",
+    }
+    with patch(
+        "app.content_pipeline.video_generator.upload_bytes",
+        return_value="https://media.cindra.example/abc.mp4",
+    ):
+        veo_video_generator(payload, client=_client(handler), sleep=_no_sleep)
+
+
+def test_image_attachment_is_not_used() -> None:
+    # Veo has no documented way to take arbitrary image/video/audio
+    # context (only text-to-video) -- an image attachment shouldn't
+    # even trigger a fetch, let alone change the prompt.
+    fetched = {"called": False}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if str(request.url).startswith("https://r2.example"):
+            fetched["called"] = True
+            return httpx.Response(200, content=b"unused")
+        if request.method == "POST":
+            body = json.loads(request.content)
+            assert body["instances"][0]["prompt"] == "Короткое видео на тему: x."
+            return httpx.Response(200, json={"name": "operations/abc123"})
+        return httpx.Response(
+            200,
+            json={
+                "name": "operations/abc123",
+                "done": True,
+                "response": {
+                    "generateVideoResponse": {"generatedSamples": [{"video": {"uri": _VIDEO_URI}}]}
+                },
+            },
+        )
+
+    payload = {
+        "topic": "x",
+        "platform": "instagram",
+        "attachment_url": "https://r2.example/mood.jpg",
+        "attachment_type": "image",
+    }
+    with patch(
+        "app.content_pipeline.video_generator.upload_bytes",
+        return_value="https://media.cindra.example/abc.mp4",
+    ):
+        veo_video_generator(payload, client=_client(handler), sleep=_no_sleep)
+    assert fetched["called"] is False
