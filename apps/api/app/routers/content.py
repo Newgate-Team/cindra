@@ -5,6 +5,7 @@ from app.content_pipeline.attachments import (
     AttachmentTooLargeError,
     UnsupportedAttachmentError,
     classify_attachment,
+    downscale_image_for_context,
 )
 from app.content_pipeline.media_storage import upload_bytes
 from app.content_pipeline.tasks import run_generation_job
@@ -29,6 +30,9 @@ async def upload_attachment(
     data = await file.read()
     mime_type = file.content_type or "application/octet-stream"
     try:
+        # Size cap is enforced on the original upload, before any
+        # downscaling below -- otherwise it'd be trivial to dodge the
+        # cap with an image that only becomes small after resizing.
         attachment_type = classify_attachment(mime_type, len(data))
     except UnsupportedAttachmentError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
@@ -38,6 +42,15 @@ async def upload_attachment(
         ) from None
 
     extension = (file.filename or "").rsplit(".", 1)[-1].lower() if "." in (file.filename or "") else "bin"
+    if attachment_type == "image":
+        # CIN-98: shrink to Gemini's single-tile bound once here, at
+        # upload time, rather than on every later generation that
+        # reads this attachment back.
+        try:
+            data, mime_type = downscale_image_for_context(data)
+        except UnsupportedAttachmentError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
+        extension = "jpg"
     url = upload_bytes(data, mime_type, extension)
     return AttachmentOut(url=url, attachment_type=attachment_type, mime_type=mime_type)
 

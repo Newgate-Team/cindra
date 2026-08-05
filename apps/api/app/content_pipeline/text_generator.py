@@ -15,6 +15,14 @@ _GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 # key, 403 permission denied) won't fix itself on retry.
 _RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 
+# Output tokens cost 8.3x input on this model ($2.50 vs $0.30/1M) --
+# an explicit cap is a cheap backstop against paying for a rambling
+# response, with generous headroom above anything this app actually
+# asks for: the longest legitimate content_kind (video_script, shot-by
+# -shot with timecodes) still lands well under this for any supported
+# platform (CIN-98).
+_MAX_OUTPUT_TOKENS = 2048
+
 
 def gemini_text_generator(
     payload: dict[str, Any], client: httpx.Client | None = None
@@ -68,7 +76,10 @@ def gemini_text_generator(
     request_kwargs: dict[str, Any] = {
         "params": {"key": settings.gemini_api_key},
         "headers": {"content-type": "application/json"},
-        "json": {"contents": [{"parts": parts}]},
+        "json": {
+            "contents": [{"parts": parts}],
+            "generationConfig": {"maxOutputTokens": _MAX_OUTPUT_TOKENS},
+        },
         "timeout": 30.0,
     }
     try:

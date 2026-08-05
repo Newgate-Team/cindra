@@ -187,6 +187,47 @@ def test_upload_attachment_returns_url_and_type(client: TestClient) -> None:
     upload.assert_called_once_with(b"some context", "text/plain", "txt")
 
 
+def test_upload_attachment_downscales_and_reencodes_image(client: TestClient) -> None:
+    import io
+
+    from PIL import Image
+
+    headers = _auth_headers(client)
+    original = Image.new("RGB", (2000, 1000), color=(10, 20, 30))
+    buf = io.BytesIO()
+    original.save(buf, format="PNG")
+
+    with patch(
+        "app.routers.content.upload_bytes",
+        return_value="https://media.cindra.example/abc.jpg",
+    ) as upload:
+        response = client.post(
+            "/content/attachment",
+            files={"file": ("photo.png", buf.getvalue(), "image/png")},
+            headers=headers,
+        )
+    assert response.status_code == 201
+    body = response.json()
+    assert body["attachment_type"] == "image"
+    assert body["mime_type"] == "image/jpeg"
+
+    uploaded_bytes, uploaded_mime, uploaded_ext = upload.call_args[0]
+    assert uploaded_mime == "image/jpeg"
+    assert uploaded_ext == "jpg"
+    with Image.open(io.BytesIO(uploaded_bytes)) as resized:
+        assert resized.size == (384, 192)
+
+
+def test_upload_attachment_rejects_corrupt_image(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    response = client.post(
+        "/content/attachment",
+        files={"file": ("photo.jpg", b"not-actually-an-image", "image/jpeg")},
+        headers=headers,
+    )
+    assert response.status_code == 400
+
+
 def test_upload_attachment_rejects_unsupported_type(client: TestClient) -> None:
     headers = _auth_headers(client)
     response = client.post(
