@@ -41,6 +41,36 @@ async function request<T>(
   return (await response.json()) as T;
 }
 
+async function upload<T>(path: string, file: File, token?: string | null): Promise<T> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const headers: Record<string, string> = {
+    "ngrok-skip-browser-warning": "true",
+  };
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  // No "Content-Type" here on purpose -- the browser sets
+  // multipart/form-data with the right boundary itself; setting it
+  // manually (as `request()` above does for JSON) breaks the upload.
+  const response = await fetch(`${API_URL}${path}`, {
+    method: "POST",
+    body: formData,
+    headers,
+  });
+
+  if (!response.ok) {
+    let detail: string = response.statusText;
+    try {
+      const body = await response.json();
+      if (typeof body.detail === "string") detail = body.detail;
+    } catch {
+      // response body wasn't JSON -- fall back to statusText
+    }
+    throw new ApiError(response.status, detail);
+  }
+  return (await response.json()) as T;
+}
+
 export const api = {
   get: <T,>(path: string, token?: string | null) => request<T>(path, { method: "GET" }, token),
   post: <T,>(path: string, body?: unknown, token?: string | null) =>
@@ -49,4 +79,5 @@ export const api = {
     request<T>(path, { method: "PATCH", body: body ? JSON.stringify(body) : undefined }, token),
   delete: <T,>(path: string, token?: string | null) =>
     request<T>(path, { method: "DELETE" }, token),
+  upload,
 };

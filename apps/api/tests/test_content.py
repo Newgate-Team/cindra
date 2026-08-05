@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select, update
@@ -160,6 +162,54 @@ def test_generate_video_returns_402_on_free_tier(client: TestClient) -> None:
 def test_generate_requires_auth(client: TestClient) -> None:
     response = client.post(
         "/content/generate", json={"topic": "тема", "platform": "telegram"}
+    )
+    assert response.status_code == 401
+
+
+def test_upload_attachment_returns_url_and_type(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    with patch(
+        "app.routers.content.upload_bytes",
+        return_value="https://media.cindra.example/abc.txt",
+    ) as upload:
+        response = client.post(
+            "/content/attachment",
+            files={"file": ("notes.txt", b"some context", "text/plain")},
+            headers=headers,
+        )
+    assert response.status_code == 201
+    body = response.json()
+    assert body == {
+        "url": "https://media.cindra.example/abc.txt",
+        "attachment_type": "document",
+        "mime_type": "text/plain",
+    }
+    upload.assert_called_once_with(b"some context", "text/plain", "txt")
+
+
+def test_upload_attachment_rejects_unsupported_type(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    response = client.post(
+        "/content/attachment",
+        files={"file": ("virus.exe", b"x", "application/x-msdownload")},
+        headers=headers,
+    )
+    assert response.status_code == 400
+
+
+def test_upload_attachment_rejects_oversized_file(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    response = client.post(
+        "/content/attachment",
+        files={"file": ("big.jpg", b"x" * (11 * 1024 * 1024), "image/jpeg")},
+        headers=headers,
+    )
+    assert response.status_code == 413
+
+
+def test_upload_attachment_requires_auth(client: TestClient) -> None:
+    response = client.post(
+        "/content/attachment", files={"file": ("notes.txt", b"x", "text/plain")}
     )
     assert response.status_code == 401
 

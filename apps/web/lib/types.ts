@@ -1,6 +1,7 @@
 export type UserRole = "agency" | "solo";
 export type SocialPlatform = "telegram" | "instagram" | "facebook";
 export type GenerationContentType = "text" | "image" | "video";
+export type AttachmentType = "image" | "video" | "audio" | "document";
 export type GenerationStatus = "queued" | "processing" | "completed" | "failed" | "flagged";
 export type PostStatus = "scheduled" | "publishing" | "published" | "failed";
 export type SubscriptionTier = "free" | "pro" | "business";
@@ -27,6 +28,12 @@ export interface GenerationJob {
   error_message: string | null;
   created_at: string;
   completed_at: string | null;
+}
+
+export interface Attachment {
+  url: string;
+  attachment_type: AttachmentType;
+  mime_type: string;
 }
 
 export interface SocialAccount {

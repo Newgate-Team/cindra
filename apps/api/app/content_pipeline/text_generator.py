@@ -1,8 +1,10 @@
+import base64
 from typing import Any
 
 import httpx
 
 from app.config import get_settings
+from app.content_pipeline.attachments import build_attachment_context
 from app.content_pipeline.errors import TransientGenerationError
 from app.content_pipeline.prompts import build_text_prompt
 from app.models import SocialPlatform
@@ -30,18 +32,43 @@ def gemini_text_generator(
     always uses the default real client.
     """
     settings = get_settings()
+
+    # Optional context file (CIN-97): a document's extracted text folds
+    # into the prompt string; an image/video/audio attachment instead
+    # becomes an extra multimodal `parts` entry below -- Gemini reads it
+    # directly rather than us describing it in words.
+    attachment_text = None
+    attachment_part: dict[str, Any] | None = None
+    attachment_url = payload.get("attachment_url")
+    if attachment_url:
+        context = build_attachment_context(attachment_url, payload["attachment_type"], client=client)
+        if context["kind"] == "text":
+            attachment_text = context["text"]
+        else:
+            attachment_part = {
+                "inline_data": {
+                    "mime_type": context["mime_type"],
+                    "data": base64.b64encode(context["data"]).decode("ascii"),
+                }
+            }
+
     prompt = build_text_prompt(
         topic=payload["topic"],
         platform=SocialPlatform(payload["platform"]),
         content_kind=payload.get("content_kind", "post"),
         brand_guide=payload.get("brand_guide"),
+        attachment_text=attachment_text,
     )
+
+    parts: list[dict[str, Any]] = [{"text": prompt}]
+    if attachment_part:
+        parts.append(attachment_part)
 
     url = f"{_GEMINI_BASE_URL}/{settings.gemini_model}:generateContent"
     request_kwargs: dict[str, Any] = {
         "params": {"key": settings.gemini_api_key},
         "headers": {"content-type": "application/json"},
-        "json": {"contents": [{"parts": [{"text": prompt}]}]},
+        "json": {"contents": [{"parts": parts}]},
         "timeout": 30.0,
     }
     try:

@@ -79,6 +79,71 @@ def test_network_timeout_is_transient() -> None:
         )
 
 
+def test_image_attachment_becomes_reference_image_in_input_array() -> None:
+    reference_bytes = b"fake-reference-image"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "interactions" in str(request.url):
+            body = json.loads(request.content)
+            assert isinstance(body["input"], list)
+            assert body["input"][0] == {"type": "text", "text": body["input"][0]["text"]}
+            assert "утренний кофе" in body["input"][0]["text"]
+            assert body["input"][1]["type"] == "image"
+            assert body["input"][1]["mime_type"] == "image/jpeg"
+            import base64
+
+            assert base64.b64decode(body["input"][1]["data"]) == reference_bytes
+            return httpx.Response(
+                200,
+                json={
+                    "status": "completed",
+                    "output_image": {"data": "ZmFrZS1pbWFnZQ==", "mime_type": "image/png"},
+                },
+            )
+        return httpx.Response(200, content=reference_bytes)
+
+    payload = {
+        "topic": "утренний кофе",
+        "platform": "instagram",
+        "attachment_url": "https://r2.example/mood.jpg",
+        "attachment_type": "image",
+    }
+    with patch(
+        "app.content_pipeline.image_generator.upload_bytes",
+        return_value="https://media.cindra.example/abc.png",
+    ):
+        result = nano_banana_image_generator(payload, client=_client(handler))
+    assert result["image_url"] == "https://media.cindra.example/abc.png"
+
+
+def test_document_attachment_adds_context_without_changing_input_shape() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "interactions" in str(request.url):
+            body = json.loads(request.content)
+            assert isinstance(body["input"], str)
+            assert "бренд-гайд от клиента" in body["input"]
+            return httpx.Response(
+                200,
+                json={
+                    "status": "completed",
+                    "output_image": {"data": "ZmFrZS1pbWFnZQ==", "mime_type": "image/png"},
+                },
+            )
+        return httpx.Response(200, content="бренд-гайд от клиента".encode())
+
+    payload = {
+        "topic": "утренний кофе",
+        "platform": "instagram",
+        "attachment_url": "https://r2.example/brief.txt",
+        "attachment_type": "document",
+    }
+    with patch(
+        "app.content_pipeline.image_generator.upload_bytes",
+        return_value="https://media.cindra.example/abc.png",
+    ):
+        nano_banana_image_generator(payload, client=_client(handler))
+
+
 def test_400_is_not_transient() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(400, json={"error": {"status": "INVALID_ARGUMENT"}})

@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 
 import { ApiError, api } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import type {
+  Attachment,
   GenerationContentType,
   GenerationJob,
   Post,
@@ -164,6 +165,17 @@ const CONTENT_TYPE_LABELS: Record<GenerationContentType, string> = {
   video: "Видео",
 };
 
+// .doc (legacy binary Word) is deliberately excluded -- the backend
+// parser (python-docx) only reads the OOXML .docx format.
+const ATTACHMENT_ACCEPT = ".txt,.md,.pdf,.docx,image/*,video/*,audio/*";
+
+const ATTACHMENT_TYPE_LABELS: Record<Attachment["attachment_type"], string> = {
+  image: "фото",
+  video: "видео",
+  audio: "аудио",
+  document: "документ",
+};
+
 // "Сценарий видео" -- это content_kind для ТЕКСТА (сценарий, который
 // человек потом сам снимает), не имеет смысла как приложение к
 // реально сгенерированному изображению/видео (CIN-93).
@@ -179,10 +191,37 @@ function GenerateForm() {
   const [contentType, setContentType] = useState<GenerationContentType>("text");
   const [contentKind, setContentKind] = useState("post");
   const [brandGuide, setBrandGuide] = useState("");
+  const [attachment, setAttachment] = useState<Attachment | null>(null);
+  const [attachmentName, setAttachmentName] = useState("");
+  const [uploadingAttachment, setUploadingAttachment] = useState(false);
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [job, setJob] = useState<GenerationJob | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  async function handleAttachmentChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = ""; // allow re-selecting the same file later
+    if (!file) return;
+    setAttachmentError(null);
+    setUploadingAttachment(true);
+    try {
+      const uploaded = await api.upload<Attachment>("/content/attachment", file, token);
+      setAttachment(uploaded);
+      setAttachmentName(file.name);
+    } catch (err) {
+      setAttachmentError(err instanceof ApiError ? err.message : "Не удалось загрузить файл");
+    } finally {
+      setUploadingAttachment(false);
+    }
+  }
+
+  function removeAttachment() {
+    setAttachment(null);
+    setAttachmentName("");
+    setAttachmentError(null);
+  }
 
   useEffect(() => {
     return () => {
@@ -219,6 +258,8 @@ function GenerateForm() {
           content_type: contentType,
           content_kind: contentKind,
           brand_guide: brandGuide || null,
+          attachment_url: attachment?.url ?? null,
+          attachment_type: attachment?.attachment_type ?? null,
         },
         token
       );
@@ -302,8 +343,22 @@ function GenerateForm() {
             placeholder="тон и стиль, которых нужно придерживаться"
           />
         </label>
+        <label>
+          Прикрепить файл (необязательно)
+          <input type="file" accept={ATTACHMENT_ACCEPT} onChange={handleAttachmentChange} />
+        </label>
+        {uploadingAttachment && <p className="muted">Загружаем файл…</p>}
+        {attachmentError && <p className="error">{attachmentError}</p>}
+        {attachment && !uploadingAttachment && (
+          <p className="muted">
+            Прикреплено: {attachmentName} ({ATTACHMENT_TYPE_LABELS[attachment.attachment_type]}){" "}
+            <button type="button" className="secondary" onClick={removeAttachment}>
+              Убрать
+            </button>
+          </p>
+        )}
         {error && <p className="error">{error}</p>}
-        <button type="submit" disabled={submitting}>
+        <button type="submit" disabled={submitting || uploadingAttachment}>
           {submitting ? "Запускаем…" : "Сгенерировать"}
         </button>
       </form>
