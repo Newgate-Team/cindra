@@ -198,6 +198,106 @@ def test_publish_story_passes_stories_media_type(db: Session, user: User) -> Non
     )
 
 
+def test_create_media_container_video_defaults_to_reels() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert "video_url=" in str(request.url)
+        assert "media_type=REELS" in str(request.url)
+        assert "caption=" in str(request.url)
+        return httpx.Response(200, json={"id": "container-1"})
+
+    creation_id = instagram.create_media_container(
+        "ig-42",
+        None,
+        "caption",
+        "token",
+        client=_client(handler),
+        video_url="https://example.com/x.mp4",
+    )
+    assert creation_id == "container-1"
+
+
+def test_create_media_container_video_story_omits_caption() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert "video_url=" in str(request.url)
+        assert "media_type=STORIES" in str(request.url)
+        assert "caption=" not in str(request.url)
+        return httpx.Response(200, json={"id": "container-1"})
+
+    creation_id = instagram.create_media_container(
+        "ig-42",
+        None,
+        "caption",
+        "token",
+        media_type="STORIES",
+        client=_client(handler),
+        video_url="https://example.com/x.mp4",
+    )
+    assert creation_id == "container-1"
+
+
+def test_wait_for_video_container_ready_returns_when_finished() -> None:
+    poll_count = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        poll_count["n"] += 1
+        status = "IN_PROGRESS" if poll_count["n"] < 2 else "FINISHED"
+        return httpx.Response(200, json={"status_code": status})
+
+    instagram._wait_for_video_container_ready(
+        "container-1", "token", client=_client(handler), sleep=lambda _: None
+    )
+    assert poll_count["n"] == 2
+
+
+def test_wait_for_video_container_ready_error_status_is_permanent() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"status_code": "ERROR"})
+
+    with pytest.raises(PermanentPublishError):
+        instagram._wait_for_video_container_ready(
+            "container-1", "token", client=_client(handler), sleep=lambda _: None
+        )
+
+
+def test_wait_for_video_container_ready_never_finishing_is_permanent() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"status_code": "IN_PROGRESS"})
+
+    with pytest.raises(PermanentPublishError):
+        instagram._wait_for_video_container_ready(
+            "container-1", "token", client=_client(handler), sleep=lambda _: None
+        )
+
+
+def test_publish_with_video_url_polls_then_publishes(db: Session, user: User) -> None:
+    account = upsert_social_account(
+        db, user, SocialPlatform.instagram, "ig-42", access_token="token"
+    )
+    post = Post(
+        user_id=user.id,
+        social_account_id=account.id,
+        text="caption",
+        video_url="https://example.com/x.mp4",
+        scheduled_for=datetime.now(UTC),
+    )
+
+    with (
+        patch(
+            "app.social_integrations.instagram.create_media_container", return_value="container-1"
+        ) as create,
+        patch("app.social_integrations.instagram._wait_for_video_container_ready") as wait,
+        patch("app.social_integrations.instagram.publish_media", return_value={"id": "media-1"}) as pub,
+    ):
+        result = instagram.publish(account, post)
+
+    create.assert_called_once_with(
+        "ig-42", None, "caption", "token", None, video_url="https://example.com/x.mp4"
+    )
+    wait.assert_called_once_with("container-1", "token")
+    pub.assert_called_once_with("ig-42", "container-1", "token")
+    assert result == {"id": "media-1"}
+
+
 def test_create_media_container_stories_omits_caption() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert "media_type=STORIES" in str(request.url)

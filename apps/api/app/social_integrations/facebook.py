@@ -55,16 +55,40 @@ def publish_photo(
     return _handle_response(response)
 
 
+def publish_video(
+    page_id: str,
+    video_url: str,
+    description: str,
+    access_token: str,
+    client: httpx.Client | None = None,
+) -> dict[str, Any]:
+    """Video Page post -- POST /{page-id}/videos, published by URL (`file_url`,
+    Facebook fetches and processes the video itself, no upload needed on our
+    side). Unlike /photos, this endpoint's caption field is `description`,
+    not `caption`."""
+    url = f"{_GRAPH_API_BASE}/{page_id}/videos"
+    params = {"file_url": video_url, "description": description, "access_token": access_token}
+    response = (
+        client.post(url, params=params, timeout=30.0)
+        if client is not None
+        else httpx.post(url, params=params, timeout=30.0)
+    )
+    return _handle_response(response)
+
+
 def publish(account: SocialAccount, post: Post) -> dict[str, Any]:
     """Registered in app.scheduler.registry as the facebook publisher.
 
     Like Telegram (and unlike Instagram's Content Publishing API), a
-    Facebook Page feed post doesn't require media -- image_url just
-    switches /feed for /photos when present. access_token here is the
-    Page Access Token stored at connect time (see CIN-68), not a user
-    token.
+    Facebook Page feed post doesn't require media -- video_url/
+    image_url just switch /feed for /videos/ /photos when present (a
+    Post carries at most one of the two, see CIN-93). access_token
+    here is the Page Access Token stored at connect time (see CIN-68),
+    not a user token.
     """
     access_token = get_access_token(account)
+    if post.video_url:
+        return publish_video(account.external_account_id, post.video_url, post.text, access_token)
     if post.image_url:
         return publish_photo(account.external_account_id, post.image_url, post.text, access_token)
     return publish_text(account.external_account_id, post.text, access_token)

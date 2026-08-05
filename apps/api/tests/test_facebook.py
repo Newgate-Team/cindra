@@ -54,6 +54,19 @@ def test_rate_limit_is_transient() -> None:
         facebook.publish_text("page-1", "Привет!", "token", client=_client(handler))
 
 
+def test_publish_video_returns_result_on_success() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v21.0/page-1/videos"
+        assert "file_url=" in str(request.url)
+        assert "description=" in str(request.url)
+        return httpx.Response(200, json={"id": "video-1"})
+
+    result = facebook.publish_video(
+        "page-1", "https://example.com/x.mp4", "caption", "page-token", client=_client(handler)
+    )
+    assert result == {"id": "video-1"}
+
+
 def test_publish_without_image_url_posts_to_feed(db: Session, user: User) -> None:
     account = upsert_social_account(
         db, user, SocialPlatform.facebook, "page-1", access_token="page-token"
@@ -95,3 +108,26 @@ def test_publish_with_image_url_posts_to_photos(db: Session, user: User) -> None
         "page-1", "https://example.com/x.jpg", "caption", "page-token"
     )
     assert result == {"id": "photo-1"}
+
+
+def test_publish_with_video_url_posts_to_videos(db: Session, user: User) -> None:
+    account = upsert_social_account(
+        db, user, SocialPlatform.facebook, "page-1", access_token="page-token"
+    )
+    post = Post(
+        user_id=user.id,
+        social_account_id=account.id,
+        text="caption",
+        video_url="https://example.com/x.mp4",
+        scheduled_for=datetime.now(UTC),
+    )
+
+    with patch(
+        "app.social_integrations.facebook.publish_video", return_value={"id": "video-1"}
+    ) as publish_video:
+        result = facebook.publish(account, post)
+
+    publish_video.assert_called_once_with(
+        "page-1", "https://example.com/x.mp4", "caption", "page-token"
+    )
+    assert result == {"id": "video-1"}

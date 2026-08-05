@@ -66,6 +66,25 @@ def test_create_post_without_scheduled_for_publishes_immediately(
     assert body["platform_message_id"] == "7"
 
 
+def test_create_post_with_video_url_passes_it_through(
+    client: TestClient, db: Session
+) -> None:
+    headers = _auth_headers(client)
+    account_id = _connected_account_id(client, headers, db)
+
+    response = client.post(
+        "/posts",
+        json={
+            "social_account_id": account_id,
+            "text": "Готовое видео",
+            "video_url": "https://media.cindra.example/x.mp4",
+        },
+        headers=headers,
+    )
+    assert response.status_code == 201
+    assert response.json()["video_url"] == "https://media.cindra.example/x.mp4"
+
+
 def test_create_post_scheduled_in_future_stays_scheduled(
     client: TestClient, db: Session
 ) -> None:

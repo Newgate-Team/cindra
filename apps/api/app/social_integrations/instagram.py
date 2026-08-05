@@ -1,3 +1,5 @@
+import time
+from collections.abc import Callable
 from typing import Any
 
 import httpx
@@ -11,6 +13,14 @@ _GRAPH_API_BASE = "https://graph.facebook.com/v21.0"
 # 429/4 (rate limit) and 5xx are worth retrying; anything else (bad
 # token, permission revoked, malformed request) is permanent.
 _RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
+
+# Unlike an image container (ready immediately), a video/Reels
+# container processes asynchronously -- poll status_code until
+# FINISHED before media_publish, same budget class as Veo's own
+# generation poll in video_generator.py, just shorter (IG only
+# transcodes/validates, it doesn't render from scratch).
+_CONTAINER_POLL_INTERVAL_SECONDS = 5.0
+_CONTAINER_MAX_POLL_ATTEMPTS = 36  # ~3 minutes
 
 
 def _handle_response(response: httpx.Response) -> dict[str, Any]:
@@ -120,20 +130,29 @@ def discover_connected_accounts(
 
 def create_media_container(
     ig_user_id: str,
-    image_url: str,
+    image_url: str | None,
     caption: str,
     access_token: str,
     media_type: str | None = None,
     client: httpx.Client | None = None,
+    video_url: str | None = None,
 ) -> str:
     """`media_type="STORIES"` publishes a Story instead of a regular feed
-    post (CIN-74). Stories don't carry a caption in the Content
-    Publishing API -- `caption` is only sent for regular posts."""
+    post (CIN-74) -- image or video. `video_url` (CIN-93) publishes a
+    video instead of an image; its container defaults to
+    `media_type="REELS"` unless a Story is requested. Stories don't
+    carry a caption in the Content Publishing API -- `caption` is only
+    sent for feed posts (image or Reels)."""
     url = f"{_GRAPH_API_BASE}/{ig_user_id}/media"
-    params: dict[str, str] = {"image_url": image_url, "access_token": access_token}
-    if media_type == "STORIES":
-        params["media_type"] = media_type
+    params: dict[str, str] = {"access_token": access_token}
+    if video_url:
+        params["video_url"] = video_url
+        params["media_type"] = media_type or "REELS"
     else:
+        params["image_url"] = image_url or ""
+        if media_type:
+            params["media_type"] = media_type
+    if params.get("media_type") != "STORIES":
         params["caption"] = caption
     response = (
         client.post(url, params=params, timeout=30.0)
@@ -141,6 +160,31 @@ def create_media_container(
         else httpx.post(url, params=params, timeout=30.0)
     )
     return _handle_response(response)["id"]
+
+
+def _wait_for_video_container_ready(
+    container_id: str,
+    access_token: str,
+    client: httpx.Client | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+) -> None:
+    """Video/Reels containers process asynchronously (unlike image
+    containers, ready immediately) -- media_publish fails if called
+    before status_code reaches FINISHED."""
+    get = client.get if client is not None else httpx.get
+    url = f"{_GRAPH_API_BASE}/{container_id}"
+    for _ in range(_CONTAINER_MAX_POLL_ATTEMPTS):
+        response = get(url, params={"fields": "status_code", "access_token": access_token}, timeout=15.0)
+        body = _handle_response(response)
+        status_code = body.get("status_code")
+        if status_code == "FINISHED":
+            return
+        if status_code == "ERROR":
+            raise PermanentPublishError("Instagram: обработка видео завершилась с ошибкой")
+        sleep(_CONTAINER_POLL_INTERVAL_SECONDS)
+    raise PermanentPublishError(
+        f"Instagram: обработка видео не завершилась за {_CONTAINER_MAX_POLL_ATTEMPTS} попыток"
+    )
 
 
 def publish_media(
@@ -161,17 +205,28 @@ def publish(account: SocialAccount, post: Post) -> dict[str, Any]:
 
     Unlike Telegram, Instagram's Content Publishing API has no
     text-only post -- every post needs media, so this is a permanent
-    (not transient) failure when image_url is missing rather than
-    something retrying would fix.
+    (not transient) failure when neither video_url nor image_url is
+    set, rather than something retrying would fix.
     """
-    if not post.image_url:
+    if not post.video_url and not post.image_url:
         raise PermanentPublishError(
-            "Instagram требует изображение: у Post нет image_url "
-            "(текстовые посты не поддерживаются Content Publishing API)"
+            "Instagram требует изображение или видео: у Post нет ни image_url, ни "
+            "video_url (текстовые посты не поддерживаются Content Publishing API)"
         )
     access_token = get_access_token(account)
     media_type = "STORIES" if post.content_kind == "story" else None
-    creation_id = create_media_container(
-        account.external_account_id, post.image_url, post.text, access_token, media_type
-    )
+    if post.video_url:
+        creation_id = create_media_container(
+            account.external_account_id,
+            None,
+            post.text,
+            access_token,
+            media_type,
+            video_url=post.video_url,
+        )
+        _wait_for_video_container_ready(creation_id, access_token)
+    else:
+        creation_id = create_media_container(
+            account.external_account_id, post.image_url, post.text, access_token, media_type
+        )
     return publish_media(account.external_account_id, creation_id, access_token)
