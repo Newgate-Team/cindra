@@ -2,6 +2,7 @@ import "./globals.css";
 
 import { AuthProvider } from "@/lib/auth-context";
 
+import { Footer } from "./components/Footer";
 import { NavBar } from "./components/NavBar";
 
 export const metadata = {
@@ -20,6 +21,7 @@ export default function RootLayout({
         <AuthProvider>
           <NavBar />
           <main>{children}</main>
+          <Footer />
         </AuthProvider>
       </body>
     </html>
