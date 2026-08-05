@@ -1,14 +1,45 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
+from app.content_pipeline.attachments import (
+    AttachmentTooLargeError,
+    UnsupportedAttachmentError,
+    classify_attachment,
+)
+from app.content_pipeline.media_storage import upload_bytes
 from app.content_pipeline.tasks import run_generation_job
 from app.db import get_db
 from app.deps import get_current_user
 from app.models import GenerationJob, UsageEventType, User
-from app.schemas import GenerationJobOut, GenerationRequest
+from app.schemas import AttachmentOut, GenerationJobOut, GenerationRequest
 from app.usage import enforce_and_record_usage
 
 router = APIRouter(prefix="/content", tags=["content"])
+
+
+@router.post("/attachment", response_model=AttachmentOut, status_code=status.HTTP_201_CREATED)
+async def upload_attachment(
+    file: UploadFile, current_user: User = Depends(get_current_user)
+) -> AttachmentOut:
+    """Upload an optional context file (CIN-97) for a later /content/generate
+    call -- separate from generation itself (which is async/queued) since
+    upload validation and the R2 PUT are both fast, synchronous operations.
+    Free on every tier: this isn't a metered UsageEvent, just storage.
+    """
+    data = await file.read()
+    mime_type = file.content_type or "application/octet-stream"
+    try:
+        attachment_type = classify_attachment(mime_type, len(data))
+    except UnsupportedAttachmentError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
+    except AttachmentTooLargeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail=str(exc)
+        ) from None
+
+    extension = (file.filename or "").rsplit(".", 1)[-1].lower() if "." in (file.filename or "") else "bin"
+    url = upload_bytes(data, mime_type, extension)
+    return AttachmentOut(url=url, attachment_type=attachment_type, mime_type=mime_type)
 
 
 @router.post(

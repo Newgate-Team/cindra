@@ -4,6 +4,7 @@ from typing import Any
 import httpx
 
 from app.config import get_settings
+from app.content_pipeline.attachments import build_attachment_context
 from app.content_pipeline.errors import TransientGenerationError
 from app.content_pipeline.media_storage import upload_bytes
 
@@ -14,11 +15,13 @@ _INTERACTIONS_URL = "https://generativelanguage.googleapis.com/v1beta/interactio
 _RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 
 
-def _build_image_prompt(payload: dict[str, Any]) -> str:
+def _build_image_prompt(payload: dict[str, Any], attachment_text: str | None = None) -> str:
     lines = [f"Фотореалистичное изображение на тему: {payload['topic']}."]
     brand_guide = payload.get("brand_guide")
     if brand_guide:
         lines.append(f"Стиль и бренд-гайд (соблюдать): {brand_guide}")
+    if attachment_text:
+        lines.append(f"Контекст из прикреплённого документа: {attachment_text}")
     lines.append("Без текста, надписей и водяных знаков на изображении.")
     return "\n".join(lines)
 
@@ -56,14 +59,43 @@ def nano_banana_image_generator(
     Post.image_url.
     """
     settings = get_settings()
-    prompt = _build_image_prompt(payload)
+
+    # Optional context file (CIN-97): a document's extracted text folds
+    # into the prompt; an attached image becomes a reference image via
+    # the Interactions API's array `input` form (image-to-image/edit,
+    # ai.google.dev/gemini-api/docs/image-generation). Video/audio
+    # attachments aren't usable here -- the Interactions API only
+    # documents image reference input, not video/audio -- so they're
+    # silently not applied when content_type is "image".
+    attachment_text = None
+    attachment_image_b64: str | None = None
+    attachment_mime: str | None = None
+    attachment_url = payload.get("attachment_url")
+    if attachment_url:
+        context = build_attachment_context(attachment_url, payload["attachment_type"], client=client)
+        if context["kind"] == "text":
+            attachment_text = context["text"]
+        elif payload["attachment_type"] == "image":
+            attachment_image_b64 = base64.b64encode(context["data"]).decode("ascii")
+            attachment_mime = context["mime_type"]
+
+    prompt = _build_image_prompt(payload, attachment_text=attachment_text)
+
+    input_field: Any
+    if attachment_image_b64:
+        input_field = [
+            {"type": "text", "text": prompt},
+            {"type": "image", "mime_type": attachment_mime, "data": attachment_image_b64},
+        ]
+    else:
+        input_field = prompt
 
     request_kwargs: dict[str, Any] = {
         "headers": {
             "x-goog-api-key": settings.gemini_api_key,
             "content-type": "application/json",
         },
-        "json": {"model": settings.image_model, "input": prompt},
+        "json": {"model": settings.image_model, "input": input_field},
         "timeout": 60.0,
     }
     try:
