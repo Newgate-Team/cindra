@@ -281,9 +281,10 @@ function GenerateForm() {
       <h1>Генерация контента</h1>
       <form onSubmit={handleSubmit}>
         <label>
-          Тема
-          <input
+          Запрос
+          <textarea
             required
+            rows={4}
             maxLength={500}
             value={topic}
             onChange={(e) => setTopic(e.target.value)}

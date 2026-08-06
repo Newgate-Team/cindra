@@ -5,6 +5,7 @@ import httpx
 from app.models import Post, SocialAccount
 from app.social_accounts import get_access_token
 from app.social_integrations.errors import PermanentPublishError, TransientPublishError
+from app.social_integrations.text_formatting import strip_markdown
 
 _GRAPH_API_BASE = "https://graph.facebook.com/v21.0"
 
@@ -25,9 +26,14 @@ def _handle_response(response: httpx.Response) -> dict[str, Any]:
 def publish_text(
     page_id: str, message: str, access_token: str, client: httpx.Client | None = None
 ) -> dict[str, Any]:
-    """Text-only Page feed post -- POST /{page-id}/feed."""
+    """Text-only Page feed post -- POST /{page-id}/feed.
+
+    Facebook renders the message as plain text -- no caption formatting
+    support -- so markdown emphasis markers are stripped rather than
+    left as literal asterisks/underscores (CIN-102).
+    """
     url = f"{_GRAPH_API_BASE}/{page_id}/feed"
-    params = {"message": message, "access_token": access_token}
+    params = {"message": strip_markdown(message), "access_token": access_token}
     response = (
         client.post(url, params=params, timeout=30.0)
         if client is not None
@@ -46,7 +52,7 @@ def publish_photo(
     """Photo Page post -- POST /{page-id}/photos, published by URL (Facebook
     fetches the image itself, no upload needed on our side)."""
     url = f"{_GRAPH_API_BASE}/{page_id}/photos"
-    params = {"url": image_url, "caption": caption, "access_token": access_token}
+    params = {"url": image_url, "caption": strip_markdown(caption), "access_token": access_token}
     response = (
         client.post(url, params=params, timeout=30.0)
         if client is not None
@@ -67,7 +73,11 @@ def publish_video(
     side). Unlike /photos, this endpoint's caption field is `description`,
     not `caption`."""
     url = f"{_GRAPH_API_BASE}/{page_id}/videos"
-    params = {"file_url": video_url, "description": description, "access_token": access_token}
+    params = {
+        "file_url": video_url,
+        "description": strip_markdown(description),
+        "access_token": access_token,
+    }
     response = (
         client.post(url, params=params, timeout=30.0)
         if client is not None

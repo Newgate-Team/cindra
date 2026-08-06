@@ -90,8 +90,8 @@ function SocialAccountsManager() {
 
       <h2>Подключить Telegram-канал</h2>
       <p className="muted">
-        Бот должен быть добавлен администратором канала. Введите @username канала или его
-        числовой chat_id.
+        Бот @CindraPublish_bot должен быть добавлен администратором канала. Введите @username
+        канала или его числовой chat_id.
       </p>
       <form onSubmit={handleConnectTelegram}>
         <label>
