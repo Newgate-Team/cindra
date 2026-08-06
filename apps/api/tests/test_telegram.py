@@ -87,6 +87,20 @@ def test_send_message_returns_result_on_success() -> None:
     assert result == {"message_id": 42}
 
 
+def test_send_message_converts_markdown_and_sets_parse_mode() -> None:
+    import json
+
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": 42}})
+
+    send_message("-100123", "**Осенний латте** уже в продаже!", "123:abc", client=_client(handler))
+    assert captured["body"]["parse_mode"] == "MarkdownV2"
+    assert captured["body"]["text"] == "*Осенний латте* уже в продаже\\!"
+
+
 def test_send_message_permanent_error_when_bot_not_admin() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
@@ -107,6 +121,38 @@ def test_send_video_returns_result_on_success() -> None:
         "-100123", "https://example.com/x.mp4", "caption", "123:abc", client=_client(handler)
     )
     assert result == {"message_id": 43}
+
+
+def test_send_photo_converts_markdown_and_sets_parse_mode() -> None:
+    import json
+
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": 45}})
+
+    telegram.send_photo(
+        "-100123", "https://example.com/x.jpg", "**жирная** подпись", "123:abc", client=_client(handler)
+    )
+    assert captured["body"]["parse_mode"] == "MarkdownV2"
+    assert captured["body"]["caption"] == "*жирная* подпись"
+
+
+def test_send_video_converts_markdown_and_sets_parse_mode() -> None:
+    import json
+
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": 46}})
+
+    telegram.send_video(
+        "-100123", "https://example.com/x.mp4", "**жирная** подпись", "123:abc", client=_client(handler)
+    )
+    assert captured["body"]["parse_mode"] == "MarkdownV2"
+    assert captured["body"]["caption"] == "*жирная* подпись"
 
 
 def test_publish_with_video_url_sends_video(db: Session, user: User) -> None:
