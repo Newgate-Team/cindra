@@ -7,6 +7,7 @@ import httpx
 from app.models import Post, SocialAccount
 from app.social_accounts import get_access_token
 from app.social_integrations.errors import PermanentPublishError, TransientPublishError
+from app.social_integrations.text_formatting import strip_markdown
 
 _GRAPH_API_BASE = "https://graph.facebook.com/v21.0"
 
@@ -153,7 +154,10 @@ def create_media_container(
         if media_type:
             params["media_type"] = media_type
     if params.get("media_type") != "STORIES":
-        params["caption"] = caption
+        # Instagram captions render as plain text -- no formatting
+        # support -- so markdown emphasis markers are stripped rather
+        # than left as literal asterisks/underscores (CIN-102).
+        params["caption"] = strip_markdown(caption)
     response = (
         client.post(url, params=params, timeout=30.0)
         if client is not None

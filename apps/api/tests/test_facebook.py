@@ -38,6 +38,43 @@ def test_publish_photo_returns_result_on_success() -> None:
     assert result == {"id": "photo-1", "post_id": "page-1_222"}
 
 
+def test_publish_photo_strips_markdown_from_caption() -> None:
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["caption"] = dict(request.url.params)["caption"]
+        return httpx.Response(200, json={"id": "photo-1"})
+
+    facebook.publish_photo(
+        "page-1", "https://example.com/x.jpg", "**жирный** текст", "page-token", client=_client(handler)
+    )
+    assert captured["caption"] == "жирный текст"
+
+
+def test_publish_video_strips_markdown_from_description() -> None:
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["description"] = dict(request.url.params)["description"]
+        return httpx.Response(200, json={"id": "video-1"})
+
+    facebook.publish_video(
+        "page-1", "https://example.com/x.mp4", "**жирный** текст", "page-token", client=_client(handler)
+    )
+    assert captured["description"] == "жирный текст"
+
+
+def test_publish_text_strips_markdown() -> None:
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["message"] = dict(request.url.params)["message"]
+        return httpx.Response(200, json={"id": "page-1_111"})
+
+    facebook.publish_text("page-1", "**Осенний** латте", "page-token", client=_client(handler))
+    assert captured["message"] == "Осенний латте"
+
+
 def test_permanent_error_on_bad_token() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(400, json={"error": {"message": "Invalid OAuth access token"}})

@@ -124,6 +124,19 @@ def test_create_and_publish_media() -> None:
     assert result == {"id": "media-1"}
 
 
+def test_create_media_container_strips_markdown_from_caption() -> None:
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["caption"] = dict(request.url.params)["caption"]
+        return httpx.Response(200, json={"id": "container-1"})
+
+    instagram.create_media_container(
+        "ig-42", "https://example.com/x.jpg", "**жирный** текст", "token", client=_client(handler)
+    )
+    assert captured["caption"] == "жирный текст"
+
+
 def test_rate_limit_is_transient() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(429, json={"error": {"message": "rate limited"}})

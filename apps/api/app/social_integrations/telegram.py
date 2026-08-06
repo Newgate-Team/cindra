@@ -5,6 +5,7 @@ import httpx
 from app.models import Post, SocialAccount
 from app.social_accounts import get_access_token
 from app.social_integrations.errors import PermanentPublishError, TransientPublishError
+from app.social_integrations.text_formatting import to_telegram_markdown_v2
 
 _TELEGRAM_API_BASE = "https://api.telegram.org"
 
@@ -69,9 +70,20 @@ def get_chat_member(
 def send_message(
     chat_id: str, text: str, bot_token: str, client: httpx.Client | None = None
 ) -> dict[str, Any]:
-    """Publish `text` to `chat_id`. Real POST to api.telegram.org/bot<token>/sendMessage."""
+    """Publish `text` to `chat_id`. Real POST to api.telegram.org/bot<token>/sendMessage.
+
+    Sent with parse_mode=MarkdownV2 (CIN-102) so Gemini's **bold**
+    output actually renders as bold instead of showing the literal
+    asterisks -- to_telegram_markdown_v2 both converts CommonMark's
+    double-asterisk to Telegram's single-asterisk syntax and escapes
+    everything else MarkdownV2 treats as special.
+    """
     url = f"{_TELEGRAM_API_BASE}/bot{bot_token}/sendMessage"
-    json_body = {"chat_id": chat_id, "text": text}
+    json_body = {
+        "chat_id": chat_id,
+        "text": to_telegram_markdown_v2(text),
+        "parse_mode": "MarkdownV2",
+    }
     response = (
         client.post(url, json=json_body, timeout=15.0)
         if client is not None
@@ -85,7 +97,12 @@ def send_photo(
 ) -> dict[str, Any]:
     """Publish a photo with `caption` to `chat_id`. Real POST to .../sendPhoto."""
     url = f"{_TELEGRAM_API_BASE}/bot{bot_token}/sendPhoto"
-    json_body = {"chat_id": chat_id, "photo": photo_url, "caption": caption}
+    json_body = {
+        "chat_id": chat_id,
+        "photo": photo_url,
+        "caption": to_telegram_markdown_v2(caption),
+        "parse_mode": "MarkdownV2",
+    }
     response = (
         client.post(url, json=json_body, timeout=15.0)
         if client is not None
@@ -99,7 +116,12 @@ def send_video(
 ) -> dict[str, Any]:
     """Publish a video with `caption` to `chat_id`. Real POST to .../sendVideo."""
     url = f"{_TELEGRAM_API_BASE}/bot{bot_token}/sendVideo"
-    json_body = {"chat_id": chat_id, "video": video_url, "caption": caption}
+    json_body = {
+        "chat_id": chat_id,
+        "video": video_url,
+        "caption": to_telegram_markdown_v2(caption),
+        "parse_mode": "MarkdownV2",
+    }
     response = (
         client.post(url, json=json_body, timeout=15.0)
         if client is not None
