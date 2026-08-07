@@ -49,7 +49,7 @@ class SubscriptionOut(BaseModel):
 
 
 class GenerationRequest(BaseModel):
-    topic: str = Field(min_length=1, max_length=500)
+    topic: str = Field(min_length=1, max_length=5000)
     platform: SocialPlatform
     content_type: GenerationContentType = GenerationContentType.text
     content_kind: str = "post"
