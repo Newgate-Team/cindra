@@ -5,7 +5,10 @@ import httpx
 import pytest
 
 from app.content_pipeline.errors import TransientGenerationError
-from app.content_pipeline.image_generator import nano_banana_image_generator
+from app.content_pipeline.image_generator import (
+    ImageGenerationFailedError,
+    nano_banana_image_generator,
+)
 
 
 def _client(handler) -> httpx.Client:
@@ -152,3 +155,18 @@ def test_400_is_not_transient() -> None:
         nano_banana_image_generator(
             {"topic": "x", "platform": "instagram"}, client=_client(handler)
         )
+
+
+def test_missing_output_image_raises_clear_error_not_keyerror() -> None:
+    # Gemini can respond 200 with no output_image at all -- e.g. it
+    # declined to generate an image for this request. Blindly indexing
+    # body["output_image"] used to crash with a bare, unhelpful
+    # KeyError("output_image") that got shown to the end user verbatim.
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"id": "abc123", "status": "completed"})
+
+    with pytest.raises(ImageGenerationFailedError) as exc_info:
+        nano_banana_image_generator(
+            {"topic": "x", "platform": "instagram"}, client=_client(handler)
+        )
+    assert "output_image" not in str(exc_info.value)
