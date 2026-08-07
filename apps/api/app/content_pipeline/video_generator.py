@@ -20,9 +20,17 @@ _MAX_POLL_ATTEMPTS = 36  # ~6 minutes, generous for a Fast-tier video
 
 
 class VideoGenerationFailedError(Exception):
-    """Raised when Veo reports the operation as done but failed, or it
-    never finishes within the poll budget. Not transient -- retrying
-    would just pay for a whole new (paid) generation.
+    """Raised when Veo reports the operation as done but failed, it
+    never finishes within the poll budget, or a call returns a
+    non-retryable HTTP error. Not transient -- retrying would just pay
+    for a whole new (paid) generation.
+
+    Deliberately never raised via httpx.HTTPStatusError/
+    raise_for_status() for the predictLongRunning/poll calls -- that
+    exception's message includes the full request URL, and those calls
+    authenticate via a `?key=` query param (CIN-111), so the raw API
+    key would leak into job.error_message and straight into the UI
+    otherwise.
     """
 
 
@@ -68,9 +76,11 @@ def veo_video_generator(
     (`response.generateVideoResponse.generatedSamples[0].video.uri`)
     is cross-checked against Google's documented request/response
     examples (see CIN-57), but still not verified against a real
-    successful response -- only auth-layer errors are reachable
-    without a paid key. Re-verify once a real key lands and the first
-    generation actually completes.
+    successful response -- a real production call with a valid, paid
+    key reached predictLongRunning and got a 400 (request-validation
+    error, not an auth error), so the request shape itself needs
+    re-checking against the current Veo API spec (CIN-111) before this
+    note can be considered resolved.
     """
     settings = get_settings()
 
@@ -114,7 +124,10 @@ def veo_video_generator(
         raise TransientGenerationError(
             f"Veo API {start_response.status_code}: {start_response.text[:500]}"
         )
-    start_response.raise_for_status()
+    if start_response.status_code >= 400:
+        raise VideoGenerationFailedError(
+            f"Veo API {start_response.status_code}: {start_response.text[:500]}"
+        )
     operation_name = start_response.json()["name"]
 
     operation_url = f"{_GEMINI_BASE_URL}/{operation_name}"
@@ -128,7 +141,10 @@ def veo_video_generator(
             raise TransientGenerationError(
                 f"Veo API {poll_response.status_code}: {poll_response.text[:500]}"
             )
-        poll_response.raise_for_status()
+        if poll_response.status_code >= 400:
+            raise VideoGenerationFailedError(
+                f"Veo API {poll_response.status_code}: {poll_response.text[:500]}"
+            )
         operation = poll_response.json()
         if not operation.get("done"):
             continue
@@ -144,7 +160,15 @@ def veo_video_generator(
             )
         except httpx.TransportError as exc:
             raise TransientGenerationError(f"Veo API network error: {exc}") from exc
-        download_response.raise_for_status()
+        if download_response.status_code >= 400:
+            # video_uri is a Google-signed temporary download link, not
+            # our own credential, but still not something to echo
+            # whole into a user-facing error message (same defensive
+            # posture as the key-bearing calls above, CIN-111).
+            raise VideoGenerationFailedError(
+                f"Veo video download {download_response.status_code}: "
+                f"{download_response.text[:500]}"
+            )
         video_url = upload_bytes(download_response.content, "video/mp4", "mp4")
         return {"video_url": video_url, "prompt": prompt}
 
