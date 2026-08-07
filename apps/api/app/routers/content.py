@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.content_pipeline.attachments import (
@@ -8,10 +9,14 @@ from app.content_pipeline.attachments import (
     downscale_image_for_context,
 )
 from app.content_pipeline.media_storage import upload_bytes
+from app.content_pipeline.publish_matrix import (
+    InvalidGenerationTargetError,
+    validate_generation_target,
+)
 from app.content_pipeline.tasks import run_generation_job
 from app.db import get_db
 from app.deps import get_current_user
-from app.models import GenerationJob, UsageEventType, User
+from app.models import GenerationJob, SocialAccount, UsageEventType, User
 from app.schemas import AttachmentOut, GenerationJobOut, GenerationRequest
 from app.usage import enforce_and_record_usage
 
@@ -63,6 +68,26 @@ def generate_content(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> GenerationJob:
+    # Target accounts are chosen up front (CIN-106) -- content_type/
+    # content_kind must be publishable to all of them at once, checked
+    # here (before spending any generation budget) rather than only
+    # failing later at actual publish time.
+    accounts = db.scalars(
+        select(SocialAccount).where(SocialAccount.id.in_(payload.target_account_ids))
+    ).all()
+    found_ids = {a.id for a in accounts}
+    missing = set(payload.target_account_ids) - found_ids
+    if missing or any(a.user_id != current_user.id for a in accounts):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Соцаккаунт не найден"
+        )
+
+    platforms = {a.platform for a in accounts}
+    try:
+        validate_generation_target(platforms, payload.content_type, payload.content_kind)
+    except InvalidGenerationTargetError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
+
     # content_type defaults to text. All three content types now have
     # real generators registered (text: CIN-53, image: CIN-54, video:
     # CIN-55) -- nothing about this endpoint or the queue needed to
@@ -73,10 +98,19 @@ def generate_content(
         db, current_user, UsageEventType.generation, payload.content_type
     )
 
+    input_payload = payload.model_dump(mode="json")
+    # Text generation's tone/format guidance is keyed by a single
+    # platform (see prompts.py); image/video generation don't read
+    # platform at all. Rather than the bigger scope of generating a
+    # distinct text variant per target platform, tone is derived from
+    # the first-selected target account.
+    first_account = min(accounts, key=lambda a: payload.target_account_ids.index(a.id))
+    input_payload["platform"] = first_account.platform.value
+
     job = GenerationJob(
         user_id=current_user.id,
         content_type=payload.content_type,
-        input_payload=payload.model_dump(mode="json"),
+        input_payload=input_payload,
     )
     db.add(job)
     db.commit()

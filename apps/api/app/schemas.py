@@ -50,7 +50,12 @@ class SubscriptionOut(BaseModel):
 
 class GenerationRequest(BaseModel):
     topic: str = Field(min_length=1, max_length=5000)
-    platform: SocialPlatform
+    # Target accounts are chosen up front (CIN-106), before generation --
+    # content_type/content_kind are validated against the intersection of
+    # what all of them can actually publish (see publish_matrix.py), so
+    # e.g. an Instagram target rules out content_type=text before
+    # anything gets generated, not after, at publish time.
+    target_account_ids: list[uuid.UUID] = Field(min_length=1, max_length=10)
     content_type: GenerationContentType = GenerationContentType.text
     content_kind: str = "post"
     brand_guide: str | None = None
@@ -80,7 +85,10 @@ class GenerationJobOut(BaseModel):
 
 
 class PostCreate(BaseModel):
-    social_account_id: uuid.UUID
+    # Fan-out publish (CIN-106): one generated piece of content can go
+    # to several accounts/platforms at once -- one Post row gets
+    # created per id, all sharing generation_job_id.
+    social_account_ids: list[uuid.UUID] = Field(min_length=1, max_length=10)
     text: str = Field(min_length=1, max_length=4096)
     image_url: str | None = None  # required for Instagram, optional for Telegram
     video_url: str | None = None  # mutually exclusive with image_url -- see Post.video_url
