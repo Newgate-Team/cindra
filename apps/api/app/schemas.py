@@ -104,16 +104,19 @@ class GenerationJobOut(BaseModel):
 class FeedItemOut(BaseModel):
     """A shared, cross-user feed item (CIN-109) -- deliberately excludes
     the generating user's identity, error_message, and brand_guide.
-    `topic` is the user's own prompt (input_payload), not
-    output_payload["prompt"]: image_generator.py folds brand_guide
-    straight into the stored prompt string, so showing that would leak
-    another user's brand-guide text indirectly."""
+    `caption` is the generated caption (CIN-114's output_payload["text"],
+    the same text a user would publish alongside the media -- not a
+    privacy concern beyond publishing itself), falling back to the raw
+    prompt (input_payload["topic"]) when a caption wasn't generated
+    (CIN-114 is best-effort). Deliberately NOT output_payload["prompt"]:
+    image_generator.py folds brand_guide straight into that string, so
+    showing it would leak another user's brand-guide text indirectly."""
 
     id: uuid.UUID
     content_type: GenerationContentType
     image_url: str | None
     video_url: str | None
-    topic: str
+    caption: str
     created_at: datetime
 
 

@@ -50,12 +50,12 @@ function FeedList() {
               <div key={item.id} className="card">
                 {item.image_url && (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={item.image_url} alt={item.topic} style={{ maxWidth: "100%", borderRadius: 8 }} />
+                  <img src={item.image_url} alt={item.caption} style={{ maxWidth: "100%", borderRadius: 8 }} />
                 )}
                 {item.video_url && (
                   <video src={item.video_url} controls style={{ maxWidth: "100%", borderRadius: 8 }} />
                 )}
-                <p>{item.topic}</p>
+                <p>{item.caption}</p>
                 <p className="muted">{formatDate(item.created_at)}</p>
               </div>
             ))}
