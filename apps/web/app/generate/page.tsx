@@ -284,8 +284,8 @@ function GenerateForm() {
           Запрос
           <textarea
             required
-            rows={4}
-            maxLength={500}
+            rows={6}
+            maxLength={5000}
             value={topic}
             onChange={(e) => setTopic(e.target.value)}
             placeholder="например, осенняя коллекция кофе"
