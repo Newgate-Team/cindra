@@ -13,7 +13,7 @@ from app.models import (
     UsageEventType,
     User,
 )
-from app.usage import enforce_and_record_usage
+from app.usage import enforce_and_record_usage, enforce_and_record_usage_bulk
 
 
 def _usage_count(db: Session, user: User) -> int:
@@ -145,3 +145,26 @@ def test_publication_and_generation_limits_are_independent(db: Session, user: Us
     # image generation is exhausted, but publication has its own counter
     enforce_and_record_usage(db, user, UsageEventType.publication)
     assert _usage_count(db, user) == 4
+
+
+def test_bulk_records_count_events_at_once(db: Session, user: User) -> None:
+    enforce_and_record_usage_bulk(db, user, UsageEventType.publication, count=3)
+    assert _usage_count(db, user) == 3
+
+
+def test_bulk_raises_402_when_the_whole_batch_would_exceed_the_limit(
+    db: Session, user: User
+) -> None:
+    # Free tier's publication limit is 10/month (see app/plans.py).
+    enforce_and_record_usage_bulk(db, user, UsageEventType.publication, count=9)
+
+    with pytest.raises(HTTPException) as exc_info:
+        enforce_and_record_usage_bulk(db, user, UsageEventType.publication, count=2)
+    assert exc_info.value.status_code == 402
+    # Nothing from the rejected batch of 2 got recorded -- all or nothing.
+    assert _usage_count(db, user) == 9
+
+
+def test_bulk_exactly_at_the_limit_succeeds(db: Session, user: User) -> None:
+    enforce_and_record_usage_bulk(db, user, UsageEventType.publication, count=10)
+    assert _usage_count(db, user) == 10

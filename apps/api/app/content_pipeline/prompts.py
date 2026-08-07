@@ -9,7 +9,12 @@ _PLATFORM_GUIDANCE = {
         "Формат: подпись к посту Instagram. Первая строка — самая цепляющая (видна "
         "в свёрнутом виде), в конце — 3-5 релевантных хэштегов."
     ),
+    SocialPlatform.facebook: (
+        "Формат: пост на странице Facebook. Обычный абзацный текст, эмодзи уместны "
+        "по смыслу, хэштеги не обязательны."
+    ),
 }
+_DEFAULT_PLATFORM_GUIDANCE = "Формат: обычный пост в соцсети."
 
 _CONTENT_KIND_GUIDANCE = {
     "post": "Обычный пост.",
@@ -36,7 +41,7 @@ def build_text_prompt(
     """
     lines = [
         f"Тема: {topic}",
-        _PLATFORM_GUIDANCE[platform],
+        _PLATFORM_GUIDANCE.get(platform, _DEFAULT_PLATFORM_GUIDANCE),
         _CONTENT_KIND_GUIDANCE.get(content_kind, _CONTENT_KIND_GUIDANCE["post"]),
     ]
     if brand_guide:

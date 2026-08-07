@@ -74,10 +74,10 @@ function CreatePostForm({ onCreated }: { onCreated: () => void }) {
     setError(null);
     setSubmitting(true);
     try {
-      await api.post<Post>(
+      await api.post<Post[]>(
         "/posts",
         {
-          social_account_id: accountId,
+          social_account_ids: [accountId],
           text,
           scheduled_for: scheduledFor ? new Date(scheduledFor).toISOString() : null,
         },
