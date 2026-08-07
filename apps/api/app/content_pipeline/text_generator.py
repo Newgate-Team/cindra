@@ -1,4 +1,5 @@
 import base64
+import logging
 from typing import Any
 
 import httpx
@@ -8,6 +9,8 @@ from app.content_pipeline.attachments import build_attachment_context
 from app.content_pipeline.errors import TransientGenerationError
 from app.content_pipeline.prompts import build_text_prompt
 from app.models import SocialPlatform
+
+logger = logging.getLogger(__name__)
 
 _GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 
@@ -120,3 +123,20 @@ def gemini_text_generator(
         if "text" in part
     )
     return {"text": text, "prompt": prompt}
+
+
+def generate_caption(payload: dict[str, Any], client: httpx.Client | None = None) -> str | None:
+    """Best-effort caption for an image/video job (CIN-114) -- reuses
+    the same text-generation pipeline a plain text post would use, so
+    "Подпись" shows a real generated caption instead of the raw topic.
+
+    Deliberately swallows any failure and returns None rather than
+    letting a caption hiccup fail an already-successful, already-paid-
+    for image/video generation -- callers fall back to their own
+    default (the raw topic) when this returns None.
+    """
+    try:
+        return gemini_text_generator(payload, client=client)["text"]
+    except Exception:
+        logger.warning("Caption generation failed, falling back to no caption", exc_info=True)
+        return None
