@@ -19,20 +19,26 @@ def test_sends_correct_request_shape_and_parses_response() -> None:
     captured = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
-        captured["url"] = str(request.url)
-        captured["headers"] = request.headers
-        captured["body"] = request.content
-        return httpx.Response(
-            200,
-            json={
-                "id": "abc123",
-                "status": "completed",
-                "output_image": {
-                    "type": "image",
-                    "data": "ZmFrZS1pbWFnZQ==",
-                    "mime_type": "image/png",
+        if "interactions" in str(request.url):
+            captured["url"] = str(request.url)
+            captured["headers"] = request.headers
+            captured["body"] = request.content
+            return httpx.Response(
+                200,
+                json={
+                    "id": "abc123",
+                    "status": "completed",
+                    "output_image": {
+                        "type": "image",
+                        "data": "ZmFrZS1pbWFnZQ==",
+                        "mime_type": "image/png",
+                    },
                 },
-            },
+            )
+        # CIN-114: nano_banana_image_generator also generates a caption
+        # via a separate generateContent call after the image succeeds.
+        return httpx.Response(
+            200, json={"candidates": [{"content": {"parts": [{"text": "Подпись"}]}}]}
         )
 
     payload = {"topic": "утренний кофе", "platform": "instagram"}
@@ -219,3 +225,50 @@ def test_missing_output_image_logs_raw_response_for_diagnosis(caplog: pytest.Log
     message = caplog.records[0].getMessage()
     assert "status=completed" in message
     assert '"steps"' in message
+
+
+def test_successful_generation_includes_generated_caption() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "interactions" in str(request.url):
+            return httpx.Response(
+                200,
+                json={
+                    "status": "completed",
+                    "output_image": {"data": "ZmFrZS1pbWFnZQ==", "mime_type": "image/png"},
+                },
+            )
+        return httpx.Response(
+            200, json={"candidates": [{"content": {"parts": [{"text": "Отличная подпись"}]}}]}
+        )
+
+    payload = {"topic": "утренний кофе", "platform": "instagram"}
+    with patch(
+        "app.content_pipeline.image_generator.upload_bytes",
+        return_value="https://media.cindra.example/abc.png",
+    ):
+        result = nano_banana_image_generator(payload, client=_client(handler))
+    assert result["text"] == "Отличная подпись"
+
+
+def test_caption_failure_does_not_fail_the_image_generation() -> None:
+    # CIN-114: a caption is best-effort -- if it fails, the successful
+    # (already paid-for) image must still be returned, just without "text".
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "interactions" in str(request.url):
+            return httpx.Response(
+                200,
+                json={
+                    "status": "completed",
+                    "output_image": {"data": "ZmFrZS1pbWFnZQ==", "mime_type": "image/png"},
+                },
+            )
+        return httpx.Response(500, json={"error": {"status": "INTERNAL"}})
+
+    payload = {"topic": "утренний кофе", "platform": "instagram"}
+    with patch(
+        "app.content_pipeline.image_generator.upload_bytes",
+        return_value="https://media.cindra.example/abc.png",
+    ):
+        result = nano_banana_image_generator(payload, client=_client(handler))
+    assert result["image_url"] == "https://media.cindra.example/abc.png"
+    assert "text" not in result

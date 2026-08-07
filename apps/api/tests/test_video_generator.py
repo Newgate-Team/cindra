@@ -28,6 +28,14 @@ def test_starts_operation_polls_downloads_and_returns_video_url() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         url = str(request.url).split("?")[0]
         captured["requests"].append((request.method, url))
+
+        # CIN-114: a caption is generated via a separate generateContent
+        # call after the video succeeds -- must not be confused with
+        # the video's own predictLongRunning POST below.
+        if "generateContent" in url:
+            return httpx.Response(
+                200, json={"candidates": [{"content": {"parts": [{"text": "caption"}]}}]}
+            )
         if request.method == "POST":
             captured["start_body"] = request.content
             return httpx.Response(200, json={"name": "operations/abc123"})
@@ -79,6 +87,47 @@ def test_starts_operation_polls_downloads_and_returns_video_url() -> None:
     assert body["parameters"]["durationSeconds"] == 8
     assert isinstance(body["parameters"]["durationSeconds"], int)
     assert body["parameters"]["resolution"] == "1080p"
+
+
+def test_download_follows_redirect_to_get_real_video_bytes() -> None:
+    # CIN-113: a real production download hit a 302 from video_uri --
+    # httpx doesn't follow redirects by default, so the un-followed
+    # response's body (a small JSON error/redirect stub, not real
+    # video bytes) got uploaded as if it were the video. Confirmed by
+    # inspecting the actual corrupted file: 95 bytes of
+    # {"error": {"code": 302, ...}} instead of an MP4.
+    _REDIRECT_TARGET = "https://storage.googleapis.com/actual-video-bytes"
+    real_video_bytes = b"real-mp4-bytes-not-a-redirect-stub"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            return httpx.Response(200, json={"name": "operations/abc123"})
+        if str(request.url) == _VIDEO_URI:
+            return httpx.Response(302, headers={"location": _REDIRECT_TARGET})
+        if str(request.url) == _REDIRECT_TARGET:
+            return httpx.Response(200, content=real_video_bytes)
+        return httpx.Response(
+            200,
+            json={
+                "name": "operations/abc123",
+                "done": True,
+                "response": {
+                    "generateVideoResponse": {
+                        "generatedSamples": [{"video": {"uri": _VIDEO_URI}}]
+                    }
+                },
+            },
+        )
+
+    with patch(
+        "app.content_pipeline.video_generator.upload_bytes",
+        return_value="https://media.cindra.example/abc.mp4",
+    ) as upload:
+        veo_video_generator(
+            {"topic": "x", "platform": "instagram"}, client=_client(handler), sleep=_no_sleep
+        )
+
+    upload.assert_called_once_with(real_video_bytes, "video/mp4", "mp4")
 
 
 def test_start_429_is_transient() -> None:
@@ -228,15 +277,21 @@ def test_document_attachment_adds_context_to_prompt() -> None:
         veo_video_generator(payload, client=_client(handler), sleep=_no_sleep)
 
 
-def test_image_attachment_is_not_used() -> None:
-    # Veo has no documented way to take arbitrary image/video/audio
-    # context (only text-to-video) -- an image attachment shouldn't
-    # even trigger a fetch, let alone change the prompt.
-    fetched = {"called": False}
-
+def test_image_attachment_is_not_used_in_the_video_prompt() -> None:
+    # Veo's own video-generation call has no documented way to take
+    # arbitrary image/video/audio context (only text-to-video) -- an
+    # image attachment must not change that request's prompt/body.
+    # The caption sub-call (CIN-114) is a separate concern: it DOES use
+    # image attachments as multimodal context, by design (same as a
+    # plain text generation would) -- so it legitimately fetches the
+    # attachment; this test only asserts the *video* request stays clean.
     def handler(request: httpx.Request) -> httpx.Response:
-        if str(request.url).startswith("https://r2.example"):
-            fetched["called"] = True
+        url = str(request.url)
+        if "generateContent" in url:
+            return httpx.Response(
+                200, json={"candidates": [{"content": {"parts": [{"text": "caption"}]}}]}
+            )
+        if url.startswith("https://r2.example"):
             return httpx.Response(200, content=b"unused")
         if request.method == "POST":
             body = json.loads(request.content)
@@ -262,8 +317,10 @@ def test_image_attachment_is_not_used() -> None:
         "app.content_pipeline.video_generator.upload_bytes",
         return_value="https://media.cindra.example/abc.mp4",
     ):
+        # The handler's own assertion (body["instances"][0]["prompt"])
+        # is the real check here -- it fails loudly if the video
+        # request ever picks up image content.
         veo_video_generator(payload, client=_client(handler), sleep=_no_sleep)
-    assert fetched["called"] is False
 
 
 def test_two_document_attachments_are_both_included() -> None:
@@ -303,3 +360,68 @@ def test_two_document_attachments_are_both_included() -> None:
         return_value="https://media.cindra.example/abc.mp4",
     ):
         veo_video_generator(payload, client=_client(handler), sleep=_no_sleep)
+
+
+def test_successful_generation_includes_generated_caption() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if "generateContent" in url:
+            return httpx.Response(
+                200, json={"candidates": [{"content": {"parts": [{"text": "Видео-подпись"}]}}]}
+            )
+        if request.method == "POST":
+            return httpx.Response(200, json={"name": "operations/abc123"})
+        if url == _VIDEO_URI:
+            return httpx.Response(200, content=b"fake-video-bytes")
+        return httpx.Response(
+            200,
+            json={
+                "name": "operations/abc123",
+                "done": True,
+                "response": {
+                    "generateVideoResponse": {"generatedSamples": [{"video": {"uri": _VIDEO_URI}}]}
+                },
+            },
+        )
+
+    with patch(
+        "app.content_pipeline.video_generator.upload_bytes",
+        return_value="https://media.cindra.example/abc.mp4",
+    ):
+        result = veo_video_generator(
+            {"topic": "x", "platform": "instagram"}, client=_client(handler), sleep=_no_sleep
+        )
+    assert result["text"] == "Видео-подпись"
+
+
+def test_caption_failure_does_not_fail_the_video_generation() -> None:
+    # CIN-114: a caption is best-effort -- if it fails, the successful
+    # (already paid-for) video must still be returned, just without "text".
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if "generateContent" in url:
+            return httpx.Response(500, json={"error": {"status": "INTERNAL"}})
+        if request.method == "POST":
+            return httpx.Response(200, json={"name": "operations/abc123"})
+        if url == _VIDEO_URI:
+            return httpx.Response(200, content=b"fake-video-bytes")
+        return httpx.Response(
+            200,
+            json={
+                "name": "operations/abc123",
+                "done": True,
+                "response": {
+                    "generateVideoResponse": {"generatedSamples": [{"video": {"uri": _VIDEO_URI}}]}
+                },
+            },
+        )
+
+    with patch(
+        "app.content_pipeline.video_generator.upload_bytes",
+        return_value="https://media.cindra.example/abc.mp4",
+    ):
+        result = veo_video_generator(
+            {"topic": "x", "platform": "instagram"}, client=_client(handler), sleep=_no_sleep
+        )
+    assert result["video_url"] == "https://media.cindra.example/abc.mp4"
+    assert "text" not in result

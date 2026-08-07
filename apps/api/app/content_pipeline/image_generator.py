@@ -8,6 +8,7 @@ from app.config import get_settings
 from app.content_pipeline.attachments import build_attachment_context
 from app.content_pipeline.errors import TransientGenerationError
 from app.content_pipeline.media_storage import upload_bytes
+from app.content_pipeline.text_generator import generate_caption
 
 logger = logging.getLogger(__name__)
 
@@ -156,4 +157,12 @@ def nano_banana_image_generator(
     mime_type = output_image["mime_type"]
     extension = mime_type.split("/")[-1]
     image_url = upload_bytes(image_bytes, mime_type, extension)
-    return {"image_url": image_url, "prompt": prompt}
+
+    result: dict[str, Any] = {"image_url": image_url, "prompt": prompt}
+    # CIN-114: a real caption, not just the raw topic, for the "Подпись"
+    # field on the review-and-publish screen -- best-effort, never
+    # fails the (already successful, already paid-for) image itself.
+    caption = generate_caption(payload, client=client)
+    if caption:
+        result["text"] = caption
+    return result
