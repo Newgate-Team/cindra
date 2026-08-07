@@ -160,12 +160,51 @@ def test_list_posts_scoped_to_owner(client: TestClient, db: Session) -> None:
 
     response = client.get("/posts", headers=headers)
     assert response.status_code == 200
-    texts = [p["text"] for p in response.json()]
+    body = response.json()
+    assert body["total"] == 1
+    texts = [p["text"] for p in body["items"]]
     assert texts == ["мой пост"]
 
 
 def test_list_posts_requires_auth(client: TestClient) -> None:
     assert client.get("/posts").status_code == 401
+
+
+def test_list_posts_is_paginated(client: TestClient, db: Session) -> None:
+    headers = _auth_headers(client)
+    account_id = _connected_account_id(client, headers, db)
+    for i in range(5):
+        client.post(
+            "/posts", json={"social_account_ids": [account_id], "text": f"пост {i}"}, headers=headers
+        )
+
+    response = client.get("/posts?limit=2&offset=0", headers=headers)
+    body = response.json()
+    assert body["total"] == 5
+    assert body["limit"] == 2
+    assert body["offset"] == 0
+    assert len(body["items"]) == 2
+
+    response = client.get("/posts?limit=2&offset=4", headers=headers)
+    body = response.json()
+    assert len(body["items"]) == 1  # only 1 left at offset 4 of 5
+
+
+def test_list_posts_default_limit_is_20(client: TestClient, db: Session) -> None:
+    headers = _auth_headers(client)
+    account_id = _connected_account_id(client, headers, db)
+    client.post("/posts", json={"social_account_ids": [account_id], "text": "тест"}, headers=headers)
+
+    response = client.get("/posts", headers=headers)
+    body = response.json()
+    assert body["limit"] == 20
+    assert body["offset"] == 0
+
+
+def test_list_posts_rejects_limit_over_max(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    response = client.get("/posts?limit=101", headers=headers)
+    assert response.status_code == 422
 
 
 def test_create_post_requires_auth(client: TestClient) -> None:
@@ -381,8 +420,8 @@ def test_list_posts_includes_platform_and_account_label(client: TestClient, db: 
 
     response = client.get("/posts", headers=headers)
     body = response.json()
-    assert body[0]["platform"] == "telegram"
-    assert body[0]["account_label"] == "My Channel"
+    assert body["items"][0]["platform"] == "telegram"
+    assert body["items"][0]["account_label"] == "My Channel"
 
 
 def test_get_post_includes_platform_and_account_label(client: TestClient, db: Session) -> None:
