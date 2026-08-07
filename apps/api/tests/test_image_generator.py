@@ -272,3 +272,33 @@ def test_caption_failure_does_not_fail_the_image_generation() -> None:
         result = nano_banana_image_generator(payload, client=_client(handler))
     assert result["image_url"] == "https://media.cindra.example/abc.png"
     assert "text" not in result
+
+
+def test_prompt_does_not_forbid_text_on_the_image() -> None:
+    # CIN-117: a real production request ("покажи наш логотип на экране
+    # ноутбука") failed because this hard-coded instruction directly
+    # contradicted what the user asked for -- the same request succeeds
+    # in AI Studio, which has no such instruction. Removed entirely;
+    # whether text belongs on the image is now up to topic/brand_guide.
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "interactions" in str(request.url):
+            captured["body"] = json.loads(request.content)
+            return httpx.Response(
+                200,
+                json={
+                    "status": "completed",
+                    "output_image": {"data": "ZmFrZS1pbWFnZQ==", "mime_type": "image/png"},
+                },
+            )
+        return httpx.Response(500, json={"error": {"status": "INTERNAL"}})
+
+    payload = {"topic": "логотип на экране ноутбука", "platform": "instagram"}
+    with patch(
+        "app.content_pipeline.image_generator.upload_bytes",
+        return_value="https://media.cindra.example/abc.png",
+    ):
+        nano_banana_image_generator(payload, client=_client(handler))
+    assert "текста" not in captured["body"]["input"]
+    assert "запрещ" not in captured["body"]["input"]
