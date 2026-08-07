@@ -21,6 +21,7 @@ export function NavBar() {
         <>
           <Link href="/generate">Генерация</Link>
           <Link href="/calendar">Календарь</Link>
+          <Link href="/feed">Лента</Link>
           <Link href="/social-accounts">Соцсети</Link>
           <Link href="/billing">Тариф</Link>
         </>

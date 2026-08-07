@@ -129,6 +129,17 @@ td {
   margin-bottom: 16px;
 }
 
+.feed-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.feed-grid .card {
+  margin-bottom: 0;
+}
+
 .badge {
   display: inline-block;
   padding: 2px 8px;
