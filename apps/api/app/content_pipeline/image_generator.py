@@ -15,6 +15,15 @@ _INTERACTIONS_URL = "https://generativelanguage.googleapis.com/v1beta/interactio
 _RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 
 
+class ImageGenerationFailedError(Exception):
+    """Raised when the Interactions API responds 200 but declines to
+    produce an image (no output_image field) -- e.g. the model judged
+    the request unsafe, or gave a text-only reply instead. Not
+    retryable: the same prompt would very likely get the same non-answer
+    again, so this is treated as a permanent failure like
+    VideoGenerationFailedError in video_generator.py."""
+
+
 def _build_image_prompt(payload: dict[str, Any], attachment_text: str | None = None) -> str:
     lines = [f"Фотореалистичное изображение на тему: {payload['topic']}."]
     brand_guide = payload.get("brand_guide")
@@ -116,6 +125,13 @@ def nano_banana_image_generator(
     response.raise_for_status()
 
     body = response.json()
+    if "output_image" not in body:
+        raise ImageGenerationFailedError(
+            f"Gemini не сгенерировал изображение по этому запросу (status={body.get('status')}). "
+            "Возможно, бренд-гайд или запрос противоречат требованиям к изображению "
+            "(например, просят добавить текст, хотя он на изображениях запрещён), "
+            "либо запрос был отклонён как небезопасный. Попробуйте переформулировать запрос."
+        )
     output_image = body["output_image"]
     image_bytes = base64.b64decode(output_image["data"])
     mime_type = output_image["mime_type"]
