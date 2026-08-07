@@ -35,7 +35,10 @@ class Settings(BaseSettings):
     # caught it -- see that ticket for how the bug slipped through
     # the earlier manual verification.
     veo_model: str = "veo-3.1-fast-generate-preview"
-    veo_duration_seconds: str = "8"
+    # Must be a JSON number in the request body, not a string -- Veo's
+    # predictLongRunning rejects a string durationSeconds with a 400
+    # (confirmed against a real, paid production call, CIN-112).
+    veo_duration_seconds: int = 8
     veo_resolution: str = "1080p"
     # Empty until CIN-51 is resolved -- see that gate ticket.
     telegram_bot_token: str = ""
