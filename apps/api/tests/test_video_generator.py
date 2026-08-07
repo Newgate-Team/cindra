@@ -81,6 +81,47 @@ def test_starts_operation_polls_downloads_and_returns_video_url() -> None:
     assert body["parameters"]["resolution"] == "1080p"
 
 
+def test_download_follows_redirect_to_get_real_video_bytes() -> None:
+    # CIN-113: a real production download hit a 302 from video_uri --
+    # httpx doesn't follow redirects by default, so the un-followed
+    # response's body (a small JSON error/redirect stub, not real
+    # video bytes) got uploaded as if it were the video. Confirmed by
+    # inspecting the actual corrupted file: 95 bytes of
+    # {"error": {"code": 302, ...}} instead of an MP4.
+    _REDIRECT_TARGET = "https://storage.googleapis.com/actual-video-bytes"
+    real_video_bytes = b"real-mp4-bytes-not-a-redirect-stub"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            return httpx.Response(200, json={"name": "operations/abc123"})
+        if str(request.url) == _VIDEO_URI:
+            return httpx.Response(302, headers={"location": _REDIRECT_TARGET})
+        if str(request.url) == _REDIRECT_TARGET:
+            return httpx.Response(200, content=real_video_bytes)
+        return httpx.Response(
+            200,
+            json={
+                "name": "operations/abc123",
+                "done": True,
+                "response": {
+                    "generateVideoResponse": {
+                        "generatedSamples": [{"video": {"uri": _VIDEO_URI}}]
+                    }
+                },
+            },
+        )
+
+    with patch(
+        "app.content_pipeline.video_generator.upload_bytes",
+        return_value="https://media.cindra.example/abc.mp4",
+    ) as upload:
+        veo_video_generator(
+            {"topic": "x", "platform": "instagram"}, client=_client(handler), sleep=_no_sleep
+        )
+
+    upload.assert_called_once_with(real_video_bytes, "video/mp4", "mp4")
+
+
 def test_start_429_is_transient() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(429, json={"error": {"status": "RESOURCE_EXHAUSTED"}})
