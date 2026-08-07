@@ -61,6 +61,19 @@ def _build_image_prompt(payload: dict[str, Any], attachment_texts: list[str] | N
     # text belongs on the image is now entirely up to the user's own
     # topic/brand_guide.
     lines = [f"Фотореалистичное изображение на тему: {payload['topic']}."]
+    # CIN-125: image models are structurally unreliable at rendering
+    # long text correctly (confirmed in production -- real generated
+    # photos with a full Russian sentence baked in came back with
+    # actual spelling/grammar errors, e.g. "хочошо"/"рабюто" instead of
+    # "хочу"/"работать"). Not asking to omit text (CIN-117 already
+    # covered why that's wrong) -- just nudging toward the length/
+    # correctness regime these models handle far more reliably: short
+    # phrases, checked before rendering.
+    lines.append(
+        "Если по смыслу на изображении должен быть текст (надпись, лозунг, текст на "
+        "баннере/экране и т.п.) -- используй короткую фразу, не длиннее 4-6 слов, и "
+        "напиши её без орфографических и грамматических ошибок."
+    )
     brand_guide = payload.get("brand_guide")
     if brand_guide:
         lines.append(f"Стиль и бренд-гайд (соблюдать): {brand_guide}")

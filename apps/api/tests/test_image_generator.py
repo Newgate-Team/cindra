@@ -304,6 +304,36 @@ def test_prompt_does_not_forbid_text_on_the_image() -> None:
     assert "запрещ" not in captured["body"]["input"]
 
 
+def test_prompt_nudges_toward_short_correctly_spelled_text() -> None:
+    # CIN-125: real generated photos came back with actual spelling/
+    # grammar errors baked into on-image text for longer phrases (e.g.
+    # "хочошо"/"рабюто" instead of "хочу"/"работать") -- nudge toward
+    # the length/correctness regime image models handle more reliably,
+    # without re-introducing CIN-117's blanket "no text" restriction.
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "interactions" in str(request.url):
+            captured["body"] = json.loads(request.content)
+            return httpx.Response(
+                200,
+                json={
+                    "status": "completed",
+                    "output_image": {"data": "ZmFrZS1pbWFnZQ==", "mime_type": "image/png"},
+                },
+            )
+        return httpx.Response(500, json={"error": {"status": "INTERNAL"}})
+
+    payload = {"topic": "мотивационный плакат", "platform": "instagram"}
+    with patch(
+        "app.content_pipeline.image_generator.upload_bytes",
+        return_value="https://media.cindra.example/abc.png",
+    ):
+        nano_banana_image_generator(payload, client=_client(handler))
+    assert "4-6 слов" in captured["body"]["input"]
+    assert "без орфографических и грамматических ошибок" in captured["body"]["input"]
+
+
 def test_image_found_in_steps_is_used_when_output_image_is_missing() -> None:
     # CIN-118: a real production response had status=completed and a
     # genuinely generated image, but no top-level output_image at all
