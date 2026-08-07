@@ -101,6 +101,22 @@ class GenerationJobOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class FeedItemOut(BaseModel):
+    """A shared, cross-user feed item (CIN-109) -- deliberately excludes
+    the generating user's identity, error_message, and brand_guide.
+    `topic` is the user's own prompt (input_payload), not
+    output_payload["prompt"]: image_generator.py folds brand_guide
+    straight into the stored prompt string, so showing that would leak
+    another user's brand-guide text indirectly."""
+
+    id: uuid.UUID
+    content_type: GenerationContentType
+    image_url: str | None
+    video_url: str | None
+    topic: str
+    created_at: datetime
+
+
 class PostCreate(BaseModel):
     # Fan-out publish (CIN-106): one generated piece of content can go
     # to several accounts/platforms at once -- one Post row gets
