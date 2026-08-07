@@ -1,3 +1,5 @@
+import logging
+
 from app.content_pipeline.image_generator import nano_banana_image_generator
 from app.content_pipeline.registry import register_generator
 from app.content_pipeline.text_generator import gemini_text_generator
@@ -24,3 +26,11 @@ def bootstrap() -> None:
     register_publisher(SocialPlatform.telegram, telegram.publish)
     register_publisher(SocialPlatform.instagram, instagram.publish)
     register_publisher(SocialPlatform.facebook, facebook.publish)
+
+    # CIN-121: the Celery worker runs with --loglevel=info (railway.toml),
+    # which sets the root logger to INFO -- httpx's own request logger
+    # inherits that and logs every outbound request's full URL, including
+    # query-string credentials (Graph API's access_token, Gemini's key
+    # param). Explicitly capping it to WARNING here keeps that off the
+    # logs without touching the app's own INFO-level logging.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
