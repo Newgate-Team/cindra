@@ -73,7 +73,11 @@ def test_starts_operation_polls_downloads_and_returns_video_url() -> None:
     )
     body = json.loads(captured["start_body"])
     assert "утренний кофе" in body["instances"][0]["prompt"]
-    assert body["parameters"]["durationSeconds"] == "8"
+    # Must be a JSON number, not a string -- Veo rejects a string
+    # durationSeconds with a 400 (confirmed against a real production
+    # call, CIN-112).
+    assert body["parameters"]["durationSeconds"] == 8
+    assert isinstance(body["parameters"]["durationSeconds"], int)
     assert body["parameters"]["resolution"] == "1080p"
 
 
@@ -126,7 +130,7 @@ def test_start_400_does_not_leak_api_key_in_message() -> None:
             "app.content_pipeline.video_generator.get_settings",
             return_value=SimpleNamespace(
                 veo_model="fake-veo-model",
-                veo_duration_seconds="8",
+                veo_duration_seconds=8,
                 veo_resolution="1080p",
                 gemini_api_key=fake_key,
             ),
