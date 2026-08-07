@@ -1,3 +1,4 @@
+import uuid
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -85,40 +86,69 @@ def create_post(
         )
 
     _reject_if_in_the_past(payload.scheduled_for)
-    enforce_and_record_usage_bulk(
-        db, current_user, UsageEventType.publication, count=len(payload.social_account_ids)
-    )
 
-    scheduled_for = payload.scheduled_for or datetime.now(UTC)
-    posts = [
-        Post(
-            user_id=current_user.id,
-            social_account_id=account_id,
-            generation_job_id=payload.generation_job_id,
-            text=payload.text,
-            image_url=payload.image_url,
-            video_url=payload.video_url,
-            content_kind=payload.content_kind,
-            scheduled_for=scheduled_for,
-        )
-        for account_id in payload.social_account_ids
+    # CIN-122: idempotent retry. A dropped HTTP response after a
+    # successful create (CIN-120 -- e.g. a mid-request backend restart)
+    # is indistinguishable client-side from a failed request, so a
+    # retry looks identical to the first attempt -- confirmed in
+    # production, one Story published 4x from 4 retries of the same
+    # generated content. When this publish is tied to a generation job,
+    # (generation_job_id, social_account_id) uniquely identifies "this
+    # exact generated content, published to this exact account" --
+    # reuse whatever's already there for that pair instead of creating
+    # (and re-charging, re-dispatching) a duplicate.
+    existing_by_account: dict[uuid.UUID, Post] = {}
+    if payload.generation_job_id is not None:
+        existing = db.scalars(
+            select(Post).where(
+                Post.generation_job_id == payload.generation_job_id,
+                Post.social_account_id.in_(payload.social_account_ids),
+            )
+        ).all()
+        existing_by_account = {p.social_account_id: p for p in existing}
+
+    new_account_ids = [
+        account_id for account_id in payload.social_account_ids if account_id not in existing_by_account
     ]
-    db.add_all(posts)
-    db.commit()
-    for post in posts:
-        db.refresh(post)
 
-    if scheduled_for <= datetime.now(UTC):
-        # Due now rather than in the future -- dispatch immediately
-        # instead of waiting for the next beat tick (up to 60s away,
-        # see celery_app.conf.beat_schedule). Each dispatch is fully
-        # independent by post_id (see scheduler/tasks.py), so one
-        # target failing doesn't affect the others.
-        for post in posts:
-            publish_post.delay(str(post.id))
-        for post in posts:
+    new_posts: list[Post] = []
+    if new_account_ids:
+        enforce_and_record_usage_bulk(
+            db, current_user, UsageEventType.publication, count=len(new_account_ids)
+        )
+
+        scheduled_for = payload.scheduled_for or datetime.now(UTC)
+        new_posts = [
+            Post(
+                user_id=current_user.id,
+                social_account_id=account_id,
+                generation_job_id=payload.generation_job_id,
+                text=payload.text,
+                image_url=payload.image_url,
+                video_url=payload.video_url,
+                content_kind=payload.content_kind,
+                scheduled_for=scheduled_for,
+            )
+            for account_id in new_account_ids
+        ]
+        db.add_all(new_posts)
+        db.commit()
+        for post in new_posts:
             db.refresh(post)
 
+        if scheduled_for <= datetime.now(UTC):
+            # Due now rather than in the future -- dispatch immediately
+            # instead of waiting for the next beat tick (up to 60s away,
+            # see celery_app.conf.beat_schedule). Each dispatch is fully
+            # independent by post_id (see scheduler/tasks.py), so one
+            # target failing doesn't affect the others.
+            for post in new_posts:
+                publish_post.delay(str(post.id))
+            for post in new_posts:
+                db.refresh(post)
+
+    posts_by_account = {**existing_by_account, **{p.social_account_id: p for p in new_posts}}
+    posts = [posts_by_account[account_id] for account_id in payload.social_account_ids]
     return [_post_out(post, accounts_by_id[post.social_account_id]) for post in posts]
 
 
