@@ -29,6 +29,13 @@ class ImageGenerationFailedError(Exception):
 
 
 def _build_image_prompt(payload: dict[str, Any], attachment_texts: list[str] | None = None) -> str:
+    # No hard-coded "no text on the image" instruction (CIN-117, removed
+    # after it was proven to be the actual cause of real generation
+    # failures -- users legitimately ask for logos/text in the image,
+    # e.g. "показать наш логотип на экране ноутбука", and the same
+    # request succeeds in AI Studio without this instruction). Whether
+    # text belongs on the image is now entirely up to the user's own
+    # topic/brand_guide.
     lines = [f"Фотореалистичное изображение на тему: {payload['topic']}."]
     brand_guide = payload.get("brand_guide")
     if brand_guide:
@@ -36,7 +43,6 @@ def _build_image_prompt(payload: dict[str, Any], attachment_texts: list[str] | N
     for i, text in enumerate(attachment_texts or [], start=1):
         label = "Контекст из прикреплённого документа" if len(attachment_texts) == 1 else f"Контекст из документа {i}"
         lines.append(f"{label}: {text}")
-    lines.append("Без текста, надписей и водяных знаков на изображении.")
     return "\n".join(lines)
 
 
@@ -148,9 +154,8 @@ def nano_banana_image_generator(
         )
         raise ImageGenerationFailedError(
             f"Gemini не сгенерировал изображение по этому запросу (status={body.get('status')}). "
-            "Возможно, бренд-гайд или запрос противоречат требованиям к изображению "
-            "(например, просят добавить текст, хотя он на изображениях запрещён), "
-            "либо запрос был отклонён как небезопасный. Попробуйте переформулировать запрос."
+            "Возможно, запрос был отклонён как небезопасный, либо модель не смогла "
+            "выполнить какую-то часть запроса. Попробуйте переформулировать запрос."
         )
     output_image = body["output_image"]
     image_bytes = base64.b64decode(output_image["data"])
