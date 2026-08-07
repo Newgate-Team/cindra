@@ -9,6 +9,7 @@ from app.content_pipeline.text_generator import (
     TextGenerationFailedError,
     gemini_text_generator,
     generate_caption,
+    generate_story_overlay_text,
 )
 
 
@@ -216,3 +217,31 @@ def test_generate_caption_returns_none_on_failure_instead_of_raising() -> None:
 
     caption = generate_caption({"topic": "x", "platform": "telegram"}, client=_client(handler))
     assert caption is None
+
+
+def test_generate_story_overlay_text_returns_short_phrase_on_success() -> None:
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(
+            200, json={"candidates": [{"content": {"parts": [{"text": "Свежий кофе"}]}}]}
+        )
+
+    text = generate_story_overlay_text(
+        {"topic": "утренний кофе", "platform": "instagram"}, client=_client(handler)
+    )
+    assert text == "Свежий кофе"
+    prompt = captured["body"]["contents"][0]["parts"][0]["text"]
+    assert "утренний кофе" in prompt
+    assert "поверх фото" in prompt
+
+
+def test_generate_story_overlay_text_returns_none_on_failure_instead_of_raising() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, json={"error": {"status": "INTERNAL"}})
+
+    text = generate_story_overlay_text(
+        {"topic": "x", "platform": "instagram"}, client=_client(handler)
+    )
+    assert text is None
