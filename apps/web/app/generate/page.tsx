@@ -92,8 +92,16 @@ function ReviewAndPublish({
     } catch (err) {
       if (err instanceof ApiError && err.status === 402) {
         setError("Лимит публикаций по тарифу исчерпан.");
+      } else if (err instanceof ApiError) {
+        setError(err.message);
       } else {
-        setError(err instanceof ApiError ? err.message : "Не удалось опубликовать");
+        // Not an ApiError -- the request never got a proper response at
+        // all (network failure, CORS, backend restart mid-request), as
+        // opposed to every other publish failure in this app, which
+        // comes back as a specific backend detail message (CIN-120).
+        // Surface the real message instead of a generic string so the
+        // next report is diagnosable without a live repro.
+        setError(err instanceof Error ? `Не удалось опубликовать: ${err.message}` : "Не удалось опубликовать");
       }
     } finally {
       setPublishing(false);
