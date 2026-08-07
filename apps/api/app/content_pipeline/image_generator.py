@@ -1,4 +1,5 @@
 import base64
+import logging
 from typing import Any
 
 import httpx
@@ -7,6 +8,8 @@ from app.config import get_settings
 from app.content_pipeline.attachments import build_attachment_context
 from app.content_pipeline.errors import TransientGenerationError
 from app.content_pipeline.media_storage import upload_bytes
+
+logger = logging.getLogger(__name__)
 
 _INTERACTIONS_URL = "https://generativelanguage.googleapis.com/v1beta/interactions"
 
@@ -70,10 +73,11 @@ def nano_banana_image_generator(
     """
     settings = get_settings()
 
-    # Optional context files (CIN-97, up to 2 reference images since
-    # CIN-107): each document's extracted text folds into the prompt;
-    # each attached image becomes a reference image via the
-    # Interactions API's array `input` form (image-to-image/edit,
+    # Optional context files (CIN-97, up to 5 total since CIN-107, no
+    # per-attachment cap on images specifically): each document's
+    # extracted text folds into the prompt; each attached image becomes
+    # a reference image via the Interactions API's array `input` form
+    # (image-to-image/edit,
     # ai.google.dev/gemini-api/docs/image-generation). Video/audio
     # attachments aren't usable here -- the Interactions API only
     # documents image reference input, not video/audio -- so they're
@@ -130,6 +134,17 @@ def nano_banana_image_generator(
 
     body = response.json()
     if "output_image" not in body:
+        # The user-facing message below stays generic (no raw API
+        # internals) -- this is the diagnostic trail for us: without it,
+        # there's no way to tell *why* Gemini declined (safety, a
+        # prompt/reference-image conflict, etc.) after the fact, only
+        # that it did (CIN-110, following the same real case CIN-105
+        # left unconfirmed).
+        logger.warning(
+            "Gemini Interactions API returned no output_image (status=%s): %s",
+            body.get("status"),
+            response.text[:2000],
+        )
         raise ImageGenerationFailedError(
             f"Gemini не сгенерировал изображение по этому запросу (status={body.get('status')}). "
             "Возможно, бренд-гайд или запрос противоречат требованиям к изображению "
