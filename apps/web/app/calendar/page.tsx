@@ -4,7 +4,7 @@ import { useEffect, useState, type FormEvent } from "react";
 
 import { ApiError, api } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
-import type { Post, SocialAccount } from "@/lib/types";
+import type { Page, Post, SocialAccount } from "@/lib/types";
 
 import { RequireAuth } from "../components/RequireAuth";
 
@@ -224,19 +224,28 @@ function PostActions({ post, onChanged }: { post: Post; onChanged: () => void })
   );
 }
 
+const PAGE_SIZE = 20;
+
 function CalendarList() {
   const { token } = useAuth();
-  const [posts, setPosts] = useState<Post[] | null>(null);
+  const [page, setPage] = useState<Page<Post> | null>(null);
+  const [pageIndex, setPageIndex] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
   function reload() {
     api
-      .get<Post[]>("/posts", token)
-      .then(setPosts)
+      .get<Page<Post>>(`/posts?limit=${PAGE_SIZE}&offset=${pageIndex * PAGE_SIZE}`, token)
+      .then(setPage)
       .catch((err) => setError(err instanceof ApiError ? err.message : "Не удалось загрузить"));
   }
 
-  useEffect(reload, [token]);
+  useEffect(reload, [token, pageIndex]);
+
+  const posts = page?.items ?? null;
+  const total = page?.total ?? 0;
+  const rangeStart = total === 0 ? 0 : pageIndex * PAGE_SIZE + 1;
+  const rangeEnd = Math.min(total, (pageIndex + 1) * PAGE_SIZE);
+  const hasNextPage = rangeEnd < total;
 
   return (
     <>
@@ -245,43 +254,69 @@ function CalendarList() {
       {posts === null && !error && <p className="muted">Загрузка…</p>}
       {posts?.length === 0 && <p className="muted">Публикаций пока нет.</p>}
       {posts && posts.length > 0 && (
-        <table>
-          <thead>
-            <tr>
-              <th>Когда</th>
-              <th>Платформа</th>
-              <th>Аккаунт</th>
-              <th>Текст</th>
-              <th>Статус</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {posts.map((post) => (
-              <tr key={post.id}>
-                <td>{formatDate(post.scheduled_for)}</td>
-                <td>{PLATFORM_LABELS[post.platform]}</td>
-                <td>{post.account_label}</td>
-                <td>
-                  <PostText text={post.text} />
-                </td>
-                <td>
-                  <span className={`badge ${post.status}`}>{post.status}</span>
-                  {post.status === "failed" && post.error_message && (
-                    <div className="muted">{post.error_message}</div>
-                  )}
-                </td>
-                <td>
-                  <PostActions post={post} onChanged={reload} />
-                </td>
+        <>
+          <table>
+            <thead>
+              <tr>
+                <th>Когда</th>
+                <th>Платформа</th>
+                <th>Аккаунт</th>
+                <th>Текст</th>
+                <th>Статус</th>
+                <th></th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {posts.map((post) => (
+                <tr key={post.id}>
+                  <td>{formatDate(post.scheduled_for)}</td>
+                  <td>{PLATFORM_LABELS[post.platform]}</td>
+                  <td>{post.account_label}</td>
+                  <td>
+                    <PostText text={post.text} />
+                  </td>
+                  <td>
+                    <span className={`badge ${post.status}`}>{post.status}</span>
+                    {post.status === "failed" && post.error_message && (
+                      <div className="muted">{post.error_message}</div>
+                    )}
+                  </td>
+                  <td>
+                    <PostActions post={post} onChanged={reload} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div>
+            <button type="button" disabled={pageIndex === 0} onClick={() => setPageIndex((p) => p - 1)}>
+              Назад
+            </button>
+            <span>
+              {" "}
+              показано {rangeStart}–{rangeEnd} из {total}{" "}
+            </span>
+            <button type="button" disabled={!hasNextPage} onClick={() => setPageIndex((p) => p + 1)}>
+              Вперёд
+            </button>
+          </div>
+        </>
       )}
 
       <h2>Запланировать публикацию</h2>
-      <CreatePostForm onCreated={reload} />
+      <CreatePostForm
+        onCreated={() => {
+          // setPageIndex(0) only re-triggers the [token, pageIndex]
+          // effect below when the index actually changes -- if we're
+          // already on page 0, that effect won't fire, so reload()
+          // has to be called directly to pick up the new post.
+          if (pageIndex === 0) {
+            reload();
+          } else {
+            setPageIndex(0);
+          }
+        }}
+      />
     </>
   );
 }

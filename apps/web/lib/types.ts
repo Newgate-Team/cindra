@@ -45,6 +45,13 @@ export interface SocialAccount {
   created_at: string;
 }
 
+export interface Page<T> {
+  items: T[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 export interface Post {
   id: string;
   social_account_id: string;
