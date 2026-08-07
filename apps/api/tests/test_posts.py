@@ -290,6 +290,135 @@ def test_create_post_fan_out_limit_check_is_atomic_for_whole_batch(
     assert db.query(Post).filter(Post.text == "не влезет").count() == 0
 
 
+def _generation_job_id(db: Session, user: User) -> str:
+    from app.models import GenerationContentType, GenerationJob, GenerationStatus
+
+    job = GenerationJob(
+        user_id=user.id,
+        content_type=GenerationContentType.image,
+        status=GenerationStatus.completed,
+        input_payload={"topic": "тест"},
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    return str(job.id)
+
+
+def test_create_post_retry_with_same_generation_job_and_account_is_not_duplicated(
+    client: TestClient, db: Session
+) -> None:
+    # CIN-122: a retry after a dropped response (CIN-120) must not
+    # publish the same generated content twice to the same account.
+    headers = _auth_headers(client)
+    account_id = _connected_account_id(client, headers, db)
+    owner = db.query(User).filter(User.email == "ada@cindra.dev").one()
+    job_id = _generation_job_id(db, owner)
+    payload = {
+        "social_account_ids": [account_id],
+        "text": "сторис",
+        "generation_job_id": job_id,
+    }
+
+    first = client.post("/posts", json=payload, headers=headers)
+    second = client.post("/posts", json=payload, headers=headers)
+
+    assert first.status_code == 201
+    assert second.status_code == 201
+    assert first.json()[0]["id"] == second.json()[0]["id"]
+    assert db.query(Post).filter(Post.generation_job_id == job_id).count() == 1
+
+
+def test_create_post_retry_does_not_double_charge_usage_limit(
+    client: TestClient, db: Session
+) -> None:
+    from app.models import UsageEvent
+
+    headers = _auth_headers(client)
+    account_id = _connected_account_id(client, headers, db)
+    owner = db.query(User).filter(User.email == "ada@cindra.dev").one()
+    job_id = _generation_job_id(db, owner)
+    payload = {
+        "social_account_ids": [account_id],
+        "text": "сторис",
+        "generation_job_id": job_id,
+    }
+
+    client.post("/posts", json=payload, headers=headers)
+    client.post("/posts", json=payload, headers=headers)
+    client.post("/posts", json=payload, headers=headers)
+
+    assert db.query(UsageEvent).filter(UsageEvent.user_id == owner.id).count() == 1
+
+
+def test_create_post_retry_only_dispatches_publish_once(client: TestClient, db: Session) -> None:
+    calls = []
+    register_publisher(SocialPlatform.telegram, lambda account, post: calls.append(post.id) or {"message_id": 7})
+
+    headers = _auth_headers(client)
+    account_id = _connected_account_id(client, headers, db)
+    owner = db.query(User).filter(User.email == "ada@cindra.dev").one()
+    job_id = _generation_job_id(db, owner)
+    payload = {
+        "social_account_ids": [account_id],
+        "text": "сторис",
+        "generation_job_id": job_id,
+    }
+
+    client.post("/posts", json=payload, headers=headers)
+    client.post("/posts", json=payload, headers=headers)
+
+    assert len(calls) == 1
+
+
+def test_create_post_fan_out_retry_only_creates_missing_accounts(
+    client: TestClient, db: Session
+) -> None:
+    # A retry that adds a new target account alongside ones already
+    # published for this job should only create/dispatch the new one.
+    headers = _auth_headers(client)
+    account_id = _connected_account_id(client, headers, db)
+    owner = db.query(User).filter(User.email == "ada@cindra.dev").one()
+    second_account = upsert_social_account(db, owner, SocialPlatform.telegram, "-201", access_token="t2")
+    job_id = _generation_job_id(db, owner)
+
+    first = client.post(
+        "/posts",
+        json={"social_account_ids": [account_id], "text": "сторис", "generation_job_id": job_id},
+        headers=headers,
+    )
+    second = client.post(
+        "/posts",
+        json={
+            "social_account_ids": [account_id, str(second_account.id)],
+            "text": "сторис",
+            "generation_job_id": job_id,
+        },
+        headers=headers,
+    )
+
+    assert first.status_code == 201
+    assert second.status_code == 201
+    assert first.json()[0]["id"] in {p["id"] for p in second.json()}
+    assert db.query(Post).filter(Post.generation_job_id == job_id).count() == 2
+
+
+def test_create_post_without_generation_job_id_is_never_deduped(
+    client: TestClient, db: Session
+) -> None:
+    # Manual posts (Calendar's create form) have no generation_job_id --
+    # the CIN-122 dedup only applies to generated content, not this
+    # separate flow.
+    headers = _auth_headers(client)
+    account_id = _connected_account_id(client, headers, db)
+    payload = {"social_account_ids": [account_id], "text": "ручной пост"}
+
+    client.post("/posts", json=payload, headers=headers)
+    client.post("/posts", json=payload, headers=headers)
+
+    assert db.query(Post).filter(Post.text == "ручной пост").count() == 2
+
+
 def _scheduled_post(client: TestClient, headers: dict[str, str], db: Session) -> dict:
     account_id = _connected_account_id(client, headers, db)
     future = (datetime.now(UTC) + timedelta(hours=2)).isoformat()
