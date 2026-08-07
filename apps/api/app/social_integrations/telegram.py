@@ -114,18 +114,32 @@ def send_photo(
 def send_video(
     chat_id: str, video_url: str, caption: str, bot_token: str, client: httpx.Client | None = None
 ) -> dict[str, Any]:
-    """Publish a video with `caption` to `chat_id`. Real POST to .../sendVideo."""
+    """Publish a video with `caption` to `chat_id`. Real POST to .../sendVideo.
+
+    Uploads the video as multipart/form-data rather than passing
+    `video_url` as a URL string (CIN-115): when Telegram fetches the
+    file itself from a URL, it enforces a 20MB cap and fails with
+    "Bad Request: failed to get HTTP URL content" above that -- a real
+    generated video (1080p, 8s) reliably exceeds it. Direct file
+    upload has a much higher 50MB limit for bots, comfortably covering
+    our videos.
+    """
+    video_bytes = (
+        client.get(video_url, timeout=30.0)
+        if client is not None
+        else httpx.get(video_url, timeout=30.0)
+    ).content
     url = f"{_TELEGRAM_API_BASE}/bot{bot_token}/sendVideo"
-    json_body = {
+    data = {
         "chat_id": chat_id,
-        "video": video_url,
         "caption": to_telegram_markdown_v2(caption),
         "parse_mode": "MarkdownV2",
     }
+    files = {"video": ("video.mp4", video_bytes, "video/mp4")}
     response = (
-        client.post(url, json=json_body, timeout=15.0)
+        client.post(url, data=data, files=files, timeout=60.0)
         if client is not None
-        else httpx.post(url, json=json_body, timeout=15.0)
+        else httpx.post(url, data=data, files=files, timeout=60.0)
     )
     return _handle_response(response)
 
