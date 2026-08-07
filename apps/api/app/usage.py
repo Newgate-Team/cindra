@@ -19,23 +19,9 @@ def _current_period_start() -> datetime:
     return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
 
-def enforce_and_record_usage(
-    db: Session,
-    user: User,
-    event_type: UsageEventType,
-    content_type: GenerationContentType | None = None,
+def _check_limit(
+    db: Session, user: User, event_type: UsageEventType, content_type: GenerationContentType | None, count: int
 ) -> None:
-    """Raise 402 if `user` is over their tier's limit for `event_type`
-    (and, for generations, `content_type` -- text/image/video are
-    limited independently, see app/plans.py) this billing period,
-    otherwise record the event.
-
-    "This billing period" is the calendar month -- Subscription
-    doesn't track a real period_start yet (no payment provider, see
-    gate ticket CIN-18/CIN-20), so there's nothing more precise to
-    anchor it to. Tier limit numbers are fixed in CIN-59; this only
-    owns the enforcement mechanism.
-    """
     subscription = db.scalar(select(Subscription).where(Subscription.user_id == user.id))
     limit = limit_for(subscription.tier, event_type, content_type)
 
@@ -53,7 +39,7 @@ def enforce_and_record_usage(
         if content_type is not None:
             query = query.where(UsageEvent.content_type == content_type)
         current_usage = db.scalar(query)
-        if current_usage >= limit:
+        if current_usage + count > limit:
             kind = event_type.value if content_type is None else f"{content_type.value} {event_type.value}"
             raise HTTPException(
                 status_code=status.HTTP_402_PAYMENT_REQUIRED,
@@ -63,5 +49,45 @@ def enforce_and_record_usage(
                 ),
             )
 
+
+def enforce_and_record_usage(
+    db: Session,
+    user: User,
+    event_type: UsageEventType,
+    content_type: GenerationContentType | None = None,
+) -> None:
+    """Raise 402 if `user` is over their tier's limit for `event_type`
+    (and, for generations, `content_type` -- text/image/video are
+    limited independently, see app/plans.py) this billing period,
+    otherwise record the event.
+
+    "This billing period" is the calendar month -- Subscription
+    doesn't track a real period_start yet (no payment provider, see
+    gate ticket CIN-18/CIN-20), so there's nothing more precise to
+    anchor it to. Tier limit numbers are fixed in CIN-59; this only
+    owns the enforcement mechanism.
+    """
+    _check_limit(db, user, event_type, content_type, count=1)
     db.add(UsageEvent(user_id=user.id, event_type=event_type, content_type=content_type))
+    db.commit()
+
+
+def enforce_and_record_usage_bulk(
+    db: Session,
+    user: User,
+    event_type: UsageEventType,
+    count: int,
+    content_type: GenerationContentType | None = None,
+) -> None:
+    """Same as `enforce_and_record_usage`, but for a fan-out publish
+    (CIN-106) where one request creates `count` events at once (one
+    per target account). The whole batch is checked as a single unit
+    against the remaining limit -- either all `count` events fit, or
+    none of them are recorded, rather than silently publishing some
+    prefix of the requested targets and dropping the rest.
+    """
+    _check_limit(db, user, event_type, content_type, count=count)
+    db.add_all(
+        [UsageEvent(user_id=user.id, event_type=event_type, content_type=content_type) for _ in range(count)]
+    )
     db.commit()

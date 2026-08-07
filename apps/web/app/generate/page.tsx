@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "r
 
 import { ApiError, api } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
+import { CONTENT_KIND_LABELS, allowedContentKindsFor, allowedContentTypesFor } from "@/lib/publish-matrix";
 import type {
   Attachment,
   GenerationContentType,
@@ -20,51 +21,64 @@ const POLL_INTERVAL_MS = 2000;
 
 // datetime-local's `min` needs "yyyy-MM-ddTHH:mm" -- called fresh on
 // every render rather than a module-level constant, so it stays "now"
-// across a long-lived page instead of freezing at page load.
+// across a long-lived page instance instead of freezing at page load.
 function minDatetimeLocal(): string {
   return new Date().toISOString().slice(0, 16);
+}
+
+function platformsFor(ids: string[], accounts: SocialAccount[]): SocialPlatform[] {
+  const set = new Set<SocialPlatform>();
+  for (const id of ids) {
+    const account = accounts.find((a) => a.id === id);
+    if (account) set.add(account.platform);
+  }
+  return [...set];
 }
 
 // The review/edit-before-publish step (CIN-38): once generation
 // completes, the raw text becomes an editable draft here rather than
 // a separate screen -- reviewing what you just generated is part of
 // the same flow, not a different destination.
+//
+// Target accounts are no longer chosen here (CIN-106) -- they were
+// locked in before generation, since content_type/content_kind were
+// already validated against what those specific accounts can publish.
+// Changing targets after the fact could land on an invalid combo
+// without regenerating, so this just fans the same content out to
+// every target account picked earlier.
 function ReviewAndPublish({
   job,
   contentKind,
   initialCaption,
+  accounts,
+  targetAccountIds,
 }: {
   job: GenerationJob;
   contentKind: string;
   initialCaption: string;
+  accounts: SocialAccount[];
+  targetAccountIds: string[];
 }) {
   const { token } = useAuth();
   const imageUrl = job.output_payload?.image_url;
   const videoUrl = job.output_payload?.video_url;
   const [text, setText] = useState(job.output_payload?.text ?? initialCaption);
-  const [accounts, setAccounts] = useState<SocialAccount[]>([]);
-  const [accountId, setAccountId] = useState("");
   const [scheduledFor, setScheduledFor] = useState("");
-  const [post, setPost] = useState<Post | null>(null);
+  const [posts, setPosts] = useState<Post[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [publishing, setPublishing] = useState(false);
 
-  useEffect(() => {
-    api.get<SocialAccount[]>("/social-accounts", token).then((list) => {
-      setAccounts(list);
-      if (list.length > 0) setAccountId(list[0].id);
-    });
-  }, [token]);
+  const targetAccounts = accounts.filter((a) => targetAccountIds.includes(a.id));
 
   async function handlePublish(event: FormEvent) {
     event.preventDefault();
     setError(null);
     setPublishing(true);
     try {
-      const created = await api.post<Post>(
+      const created = await api.post<Post[]>(
         "/posts",
         {
-          social_account_id: accountId,
+          social_account_ids: targetAccountIds,
           text,
           image_url: imageUrl ?? null,
           video_url: videoUrl ?? null,
@@ -74,7 +88,7 @@ function ReviewAndPublish({
         },
         token
       );
-      setPost(created);
+      setPosts(created);
     } catch (err) {
       if (err instanceof ApiError && err.status === 402) {
         setError("Лимит публикаций по тарифу исчерпан.");
@@ -84,14 +98,6 @@ function ReviewAndPublish({
     } finally {
       setPublishing(false);
     }
-  }
-
-  if (accounts.length === 0) {
-    return (
-      <p className="muted">
-        Чтобы опубликовать, сначала подключите соцсеть на странице «Соцсети».
-      </p>
-    );
   }
 
   return (
@@ -105,16 +111,10 @@ function ReviewAndPublish({
         {imageUrl || videoUrl ? "Подпись (можно отредактировать перед публикацией)" : "Текст (можно отредактировать перед публикацией)"}
         <textarea rows={6} value={text} onChange={(e) => setText(e.target.value)} />
       </label>
-      <label>
-        Куда опубликовать
-        <select value={accountId} onChange={(e) => setAccountId(e.target.value)}>
-          {accounts.map((a) => (
-            <option key={a.id} value={a.id}>
-              {a.platform} — {a.display_name ?? a.external_account_id}
-            </option>
-          ))}
-        </select>
-      </label>
+      <p>
+        Куда опубликовать:{" "}
+        {targetAccounts.map((a) => `${a.platform} — ${a.display_name ?? a.external_account_id}`).join(", ")}
+      </p>
       <label>
         Запланировать на (необязательно — иначе публикуем сразу)
         <input
@@ -128,36 +128,21 @@ function ReviewAndPublish({
       <button type="submit" disabled={publishing}>
         {publishing ? "Публикуем…" : scheduledFor ? "Запланировать" : "Опубликовать сейчас"}
       </button>
-      {post && (
-        <p>
-          Статус публикации: <span className={`badge ${post.status}`}>{post.status}</span>
-          {post.status === "failed" && post.error_message && (
-            <span className="error"> — {post.error_message}</span>
-          )}
-        </p>
+      {posts && (
+        <ul>
+          {posts.map((post) => (
+            <li key={post.id}>
+              {post.platform} — {post.account_label}: <span className={`badge ${post.status}`}>{post.status}</span>
+              {post.status === "failed" && post.error_message && (
+                <span className="error"> — {post.error_message}</span>
+              )}
+            </li>
+          ))}
+        </ul>
       )}
     </form>
   );
 }
-
-// "Сторис" сегодня реально публикуется только для Instagram (CIN-74)
-// -- у Telegram/Facebook нет своего эквивалента в нашем пайплайне, не
-// показываем эту опцию там, чтобы не обещать то, чего нет.
-const CONTENT_KIND_OPTIONS: Record<SocialPlatform, { value: string; label: string }[]> = {
-  telegram: [
-    { value: "post", label: "Пост" },
-    { value: "video_script", label: "Сценарий видео" },
-  ],
-  instagram: [
-    { value: "post", label: "Пост" },
-    { value: "story", label: "Сторис" },
-    { value: "video_script", label: "Сценарий видео" },
-  ],
-  facebook: [
-    { value: "post", label: "Пост" },
-    { value: "video_script", label: "Сценарий видео" },
-  ],
-};
 
 const CONTENT_TYPE_LABELS: Record<GenerationContentType, string> = {
   text: "Текст",
@@ -176,23 +161,34 @@ const ATTACHMENT_TYPE_LABELS: Record<Attachment["attachment_type"], string> = {
   document: "документ",
 };
 
-// "Сценарий видео" -- это content_kind для ТЕКСТА (сценарий, который
-// человек потом сам снимает), не имеет смысла как приложение к
-// реально сгенерированному изображению/видео (CIN-93).
-function contentKindOptionsFor(platform: SocialPlatform, contentType: GenerationContentType) {
-  const options = CONTENT_KIND_OPTIONS[platform];
-  return contentType === "text" ? options : options.filter((o) => o.value !== "video_script");
+// Mirrors app/content_pipeline/attachments.py's validate_attachment_set
+// (CIN-107): up to 5 attachments total, any mix of document/image, but
+// video and audio are capped at 1 each below that total.
+const MAX_TOTAL_ATTACHMENTS = 5;
+const PER_TYPE_ATTACHMENT_CAPS: Partial<Record<Attachment["attachment_type"], number>> = {
+  video: 1,
+  audio: 1,
+};
+
+type NamedAttachment = Attachment & { name: string };
+
+function attachmentCapReached(attachments: NamedAttachment[], attachmentType: Attachment["attachment_type"]): boolean {
+  if (attachments.length >= MAX_TOTAL_ATTACHMENTS) return true;
+  const perTypeCap = PER_TYPE_ATTACHMENT_CAPS[attachmentType];
+  if (perTypeCap === undefined) return false;
+  return attachments.filter((a) => a.attachment_type === attachmentType).length >= perTypeCap;
 }
 
 function GenerateForm() {
   const { token } = useAuth();
+  const [accounts, setAccounts] = useState<SocialAccount[]>([]);
+  const [accountsLoaded, setAccountsLoaded] = useState(false);
+  const [targetAccountIds, setTargetAccountIds] = useState<string[]>([]);
   const [topic, setTopic] = useState("");
-  const [platform, setPlatform] = useState<SocialPlatform>("telegram");
   const [contentType, setContentType] = useState<GenerationContentType>("text");
   const [contentKind, setContentKind] = useState("post");
   const [brandGuide, setBrandGuide] = useState("");
-  const [attachment, setAttachment] = useState<Attachment | null>(null);
-  const [attachmentName, setAttachmentName] = useState("");
+  const [attachments, setAttachments] = useState<NamedAttachment[]>([]);
   const [uploadingAttachment, setUploadingAttachment] = useState(false);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [job, setJob] = useState<GenerationJob | null>(null);
@@ -200,16 +196,49 @@ function GenerateForm() {
   const [submitting, setSubmitting] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  useEffect(() => {
+    api.get<SocialAccount[]>("/social-accounts", token).then((list) => {
+      setAccounts(list);
+      setAccountsLoaded(true);
+    });
+  }, [token]);
+
+  function toggleTargetAccount(accountId: string, checked: boolean) {
+    const next = checked ? [...targetAccountIds, accountId] : targetAccountIds.filter((id) => id !== accountId);
+    setTargetAccountIds(next);
+
+    const nextPlatforms = platformsFor(next, accounts);
+    const allowedTypes = allowedContentTypesFor(nextPlatforms);
+    const nextContentType = allowedTypes.length > 0 && !allowedTypes.includes(contentType) ? allowedTypes[0] : contentType;
+    if (nextContentType !== contentType) setContentType(nextContentType);
+
+    const allowedKinds = allowedContentKindsFor(nextPlatforms, nextContentType);
+    if (!allowedKinds.includes(contentKind)) setContentKind(allowedKinds[0] ?? "post");
+  }
+
+  const selectedPlatforms = platformsFor(targetAccountIds, accounts);
+  const allowedContentTypes = allowedContentTypesFor(selectedPlatforms);
+  const allowedContentKinds = allowedContentKindsFor(selectedPlatforms, contentType);
+
   async function handleAttachmentChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     event.target.value = ""; // allow re-selecting the same file later
     if (!file) return;
     setAttachmentError(null);
+    if (attachments.length >= MAX_TOTAL_ATTACHMENTS) {
+      setAttachmentError(`Максимум ${MAX_TOTAL_ATTACHMENTS} вложений за генерацию`);
+      return;
+    }
     setUploadingAttachment(true);
     try {
       const uploaded = await api.upload<Attachment>("/content/attachment", file, token);
-      setAttachment(uploaded);
-      setAttachmentName(file.name);
+      if (attachmentCapReached(attachments, uploaded.attachment_type)) {
+        setAttachmentError(
+          `Достигнут лимит для типа «${ATTACHMENT_TYPE_LABELS[uploaded.attachment_type]}»`
+        );
+        return;
+      }
+      setAttachments((prev) => [...prev, { ...uploaded, name: file.name }]);
     } catch (err) {
       setAttachmentError(err instanceof ApiError ? err.message : "Не удалось загрузить файл");
     } finally {
@@ -217,9 +246,8 @@ function GenerateForm() {
     }
   }
 
-  function removeAttachment() {
-    setAttachment(null);
-    setAttachmentName("");
+  function removeAttachment(index: number) {
+    setAttachments((prev) => prev.filter((_, i) => i !== index));
     setAttachmentError(null);
   }
 
@@ -254,12 +282,11 @@ function GenerateForm() {
         "/content/generate",
         {
           topic,
-          platform,
+          target_account_ids: targetAccountIds,
           content_type: contentType,
           content_kind: contentKind,
           brand_guide: brandGuide || null,
-          attachment_url: attachment?.url ?? null,
-          attachment_type: attachment?.attachment_type ?? null,
+          attachments: attachments.map((a) => ({ url: a.url, attachment_type: a.attachment_type })),
         },
         token
       );
@@ -276,10 +303,32 @@ function GenerateForm() {
     }
   }
 
+  if (accountsLoaded && accounts.length === 0) {
+    return (
+      <>
+        <h1>Генерация контента</h1>
+        <p className="muted">Чтобы начать генерацию, сначала подключите соцсеть на странице «Соцсети».</p>
+      </>
+    );
+  }
+
   return (
     <>
       <h1>Генерация контента</h1>
       <form onSubmit={handleSubmit}>
+        <fieldset>
+          <legend>Куда опубликовать</legend>
+          {accounts.map((a) => (
+            <label key={a.id} style={{ display: "block", fontWeight: "normal" }}>
+              <input
+                type="checkbox"
+                checked={targetAccountIds.includes(a.id)}
+                onChange={(e) => toggleTargetAccount(a.id, e.target.checked)}
+              />{" "}
+              {a.platform} — {a.display_name ?? a.external_account_id}
+            </label>
+          ))}
+        </fieldset>
         <label>
           Запрос
           <textarea
@@ -292,33 +341,18 @@ function GenerateForm() {
           />
         </label>
         <label>
-          Платформа
-          <select
-            value={platform}
-            onChange={(e) => {
-              const nextPlatform = e.target.value as SocialPlatform;
-              setPlatform(nextPlatform);
-              const available = contentKindOptionsFor(nextPlatform, contentType).map((o) => o.value);
-              if (!available.includes(contentKind)) setContentKind("post");
-            }}
-          >
-            <option value="telegram">Telegram</option>
-            <option value="instagram">Instagram</option>
-            <option value="facebook">Facebook</option>
-          </select>
-        </label>
-        <label>
           Формат
           <select
             value={contentType}
+            disabled={targetAccountIds.length === 0}
             onChange={(e) => {
               const nextContentType = e.target.value as GenerationContentType;
               setContentType(nextContentType);
-              const available = contentKindOptionsFor(platform, nextContentType).map((o) => o.value);
-              if (!available.includes(contentKind)) setContentKind("post");
+              const available = allowedContentKindsFor(selectedPlatforms, nextContentType);
+              if (!available.includes(contentKind)) setContentKind(available[0] ?? "post");
             }}
           >
-            {(Object.keys(CONTENT_TYPE_LABELS) as GenerationContentType[]).map((value) => (
+            {allowedContentTypes.map((value) => (
               <option key={value} value={value}>
                 {CONTENT_TYPE_LABELS[value]}
               </option>
@@ -327,10 +361,14 @@ function GenerateForm() {
         </label>
         <label>
           Тип контента
-          <select value={contentKind} onChange={(e) => setContentKind(e.target.value)}>
-            {contentKindOptionsFor(platform, contentType).map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
+          <select
+            value={contentKind}
+            disabled={targetAccountIds.length === 0}
+            onChange={(e) => setContentKind(e.target.value)}
+          >
+            {allowedContentKinds.map((value) => (
+              <option key={value} value={value}>
+                {CONTENT_KIND_LABELS[value] ?? value}
               </option>
             ))}
           </select>
@@ -345,21 +383,30 @@ function GenerateForm() {
           />
         </label>
         <label>
-          Прикрепить файл (необязательно)
-          <input type="file" accept={ATTACHMENT_ACCEPT} onChange={handleAttachmentChange} />
+          Прикрепить файлы (необязательно, до {MAX_TOTAL_ATTACHMENTS}: видео и аудио — не больше 1 каждого)
+          <input
+            type="file"
+            accept={ATTACHMENT_ACCEPT}
+            onChange={handleAttachmentChange}
+            disabled={uploadingAttachment || attachments.length >= MAX_TOTAL_ATTACHMENTS}
+          />
         </label>
         {uploadingAttachment && <p className="muted">Загружаем файл…</p>}
         {attachmentError && <p className="error">{attachmentError}</p>}
-        {attachment && !uploadingAttachment && (
-          <p className="muted">
-            Прикреплено: {attachmentName} ({ATTACHMENT_TYPE_LABELS[attachment.attachment_type]}){" "}
-            <button type="button" className="secondary" onClick={removeAttachment}>
-              Убрать
-            </button>
-          </p>
+        {attachments.length > 0 && (
+          <ul>
+            {attachments.map((a, index) => (
+              <li key={`${a.url}-${index}`} className="muted">
+                {a.name} ({ATTACHMENT_TYPE_LABELS[a.attachment_type]}){" "}
+                <button type="button" className="secondary" onClick={() => removeAttachment(index)}>
+                  Убрать
+                </button>
+              </li>
+            ))}
+          </ul>
         )}
         {error && <p className="error">{error}</p>}
-        <button type="submit" disabled={submitting || uploadingAttachment}>
+        <button type="submit" disabled={submitting || uploadingAttachment || targetAccountIds.length === 0}>
           {submitting ? "Запускаем…" : "Сгенерировать"}
         </button>
       </form>
@@ -371,7 +418,13 @@ function GenerateForm() {
           </p>
           {job.status === "completed" &&
             (job.output_payload?.text || job.output_payload?.image_url || job.output_payload?.video_url) && (
-              <ReviewAndPublish job={job} contentKind={contentKind} initialCaption={topic} />
+              <ReviewAndPublish
+                job={job}
+                contentKind={contentKind}
+                initialCaption={topic}
+                accounts={accounts}
+                targetAccountIds={targetAccountIds}
+              />
             )}
           {job.status === "failed" && <p className="error">{job.error_message}</p>}
           {job.status === "flagged" && (

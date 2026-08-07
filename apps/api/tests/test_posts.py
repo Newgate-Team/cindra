@@ -1,3 +1,4 @@
+import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -57,13 +58,14 @@ def test_create_post_without_scheduled_for_publishes_immediately(
 
     response = client.post(
         "/posts",
-        json={"social_account_id": account_id, "text": "Готовый пост"},
+        json={"social_account_ids": [account_id], "text": "Готовый пост"},
         headers=headers,
     )
     assert response.status_code == 201
     body = response.json()
-    assert body["status"] == "published"
-    assert body["platform_message_id"] == "7"
+    assert len(body) == 1
+    assert body[0]["status"] == "published"
+    assert body[0]["platform_message_id"] == "7"
 
 
 def test_create_post_with_video_url_passes_it_through(
@@ -75,14 +77,14 @@ def test_create_post_with_video_url_passes_it_through(
     response = client.post(
         "/posts",
         json={
-            "social_account_id": account_id,
+            "social_account_ids": [account_id],
             "text": "Готовое видео",
             "video_url": "https://media.cindra.example/x.mp4",
         },
         headers=headers,
     )
     assert response.status_code == 201
-    assert response.json()["video_url"] == "https://media.cindra.example/x.mp4"
+    assert response.json()[0]["video_url"] == "https://media.cindra.example/x.mp4"
 
 
 def test_create_post_scheduled_in_future_stays_scheduled(
@@ -94,11 +96,11 @@ def test_create_post_scheduled_in_future_stays_scheduled(
 
     response = client.post(
         "/posts",
-        json={"social_account_id": account_id, "text": "Пост на потом", "scheduled_for": future},
+        json={"social_account_ids": [account_id], "text": "Пост на потом", "scheduled_for": future},
         headers=headers,
     )
     assert response.status_code == 201
-    assert response.json()["status"] == "scheduled"
+    assert response.json()[0]["status"] == "scheduled"
 
 
 def test_create_post_for_someone_elses_account_returns_404(
@@ -114,7 +116,7 @@ def test_create_post_for_someone_elses_account_returns_404(
     headers = _auth_headers(client)
     response = client.post(
         "/posts",
-        json={"social_account_id": str(other_account.id), "text": "тест"},
+        json={"social_account_ids": [str(other_account.id)], "text": "тест"},
         headers=headers,
     )
     assert response.status_code == 404
@@ -124,8 +126,8 @@ def test_get_post(client: TestClient, db: Session) -> None:
     headers = _auth_headers(client)
     account_id = _connected_account_id(client, headers, db)
     created = client.post(
-        "/posts", json={"social_account_id": account_id, "text": "тест"}, headers=headers
-    ).json()
+        "/posts", json={"social_account_ids": [account_id], "text": "тест"}, headers=headers
+    ).json()[0]
 
     response = client.get(f"/posts/{created['id']}", headers=headers)
     assert response.status_code == 200
@@ -136,7 +138,7 @@ def test_list_posts_scoped_to_owner(client: TestClient, db: Session) -> None:
     headers = _auth_headers(client)
     account_id = _connected_account_id(client, headers, db)
     client.post(
-        "/posts", json={"social_account_id": account_id, "text": "мой пост"}, headers=headers
+        "/posts", json={"social_account_ids": [account_id], "text": "мой пост"}, headers=headers
     )
 
     other = User(email="eve2@cindra.dev", hashed_password="x")
@@ -158,7 +160,9 @@ def test_list_posts_scoped_to_owner(client: TestClient, db: Session) -> None:
 
     response = client.get("/posts", headers=headers)
     assert response.status_code == 200
-    texts = [p["text"] for p in response.json()]
+    body = response.json()
+    assert body["total"] == 1
+    texts = [p["text"] for p in body["items"]]
     assert texts == ["мой пост"]
 
 
@@ -166,8 +170,45 @@ def test_list_posts_requires_auth(client: TestClient) -> None:
     assert client.get("/posts").status_code == 401
 
 
+def test_list_posts_is_paginated(client: TestClient, db: Session) -> None:
+    headers = _auth_headers(client)
+    account_id = _connected_account_id(client, headers, db)
+    for i in range(5):
+        client.post(
+            "/posts", json={"social_account_ids": [account_id], "text": f"пост {i}"}, headers=headers
+        )
+
+    response = client.get("/posts?limit=2&offset=0", headers=headers)
+    body = response.json()
+    assert body["total"] == 5
+    assert body["limit"] == 2
+    assert body["offset"] == 0
+    assert len(body["items"]) == 2
+
+    response = client.get("/posts?limit=2&offset=4", headers=headers)
+    body = response.json()
+    assert len(body["items"]) == 1  # only 1 left at offset 4 of 5
+
+
+def test_list_posts_default_limit_is_20(client: TestClient, db: Session) -> None:
+    headers = _auth_headers(client)
+    account_id = _connected_account_id(client, headers, db)
+    client.post("/posts", json={"social_account_ids": [account_id], "text": "тест"}, headers=headers)
+
+    response = client.get("/posts", headers=headers)
+    body = response.json()
+    assert body["limit"] == 20
+    assert body["offset"] == 0
+
+
+def test_list_posts_rejects_limit_over_max(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    response = client.get("/posts?limit=101", headers=headers)
+    assert response.status_code == 422
+
+
 def test_create_post_requires_auth(client: TestClient) -> None:
-    response = client.post("/posts", json={"social_account_id": "x", "text": "тест"})
+    response = client.post("/posts", json={"social_account_ids": ["x"], "text": "тест"})
     assert response.status_code == 401
 
 
@@ -179,14 +220,74 @@ def test_create_post_returns_402_once_publication_limit_reached(
 
     for _ in range(10):  # free tier limit, see app/plans.py
         response = client.post(
-            "/posts", json={"social_account_id": account_id, "text": "тест"}, headers=headers
+            "/posts", json={"social_account_ids": [account_id], "text": "тест"}, headers=headers
         )
         assert response.status_code == 201
 
     response = client.post(
-        "/posts", json={"social_account_id": account_id, "text": "тест"}, headers=headers
+        "/posts", json={"social_account_ids": [account_id], "text": "тест"}, headers=headers
     )
     assert response.status_code == 402
+
+
+def test_create_post_fans_out_to_multiple_accounts(client: TestClient, db: Session) -> None:
+    headers = _auth_headers(client)
+    account_id = _connected_account_id(client, headers, db)
+    second_account = upsert_social_account(
+        db,
+        db.query(User).filter(User.email == "ada@cindra.dev").one(),
+        SocialPlatform.telegram,
+        "-200",
+        access_token="t2",
+    )
+
+    response = client.post(
+        "/posts",
+        json={"social_account_ids": [account_id, str(second_account.id)], "text": "фан-аут"},
+        headers=headers,
+    )
+    assert response.status_code == 201
+    body = response.json()
+    assert len(body) == 2
+    assert {p["status"] for p in body} == {"published"}
+    assert body[0]["id"] != body[1]["id"]
+
+    # Both rows share generation_job_id when provided -- checked via DB
+    # directly since generation_job_id isn't in PostOut.
+    posts = db.query(Post).filter(Post.text == "фан-аут").all()
+    assert len(posts) == 2
+    assert {p.social_account_id for p in posts} == {uuid.UUID(account_id), second_account.id}
+
+
+def test_create_post_fan_out_limit_check_is_atomic_for_whole_batch(
+    client: TestClient, db: Session
+) -> None:
+    # Free tier's publication limit is 10/month (see app/plans.py).
+    # Use up 9, then try to fan out to 2 accounts at once -- neither
+    # should be created, since the batch can't fully fit.
+    headers = _auth_headers(client)
+    account_id = _connected_account_id(client, headers, db)
+    second_account = upsert_social_account(
+        db,
+        db.query(User).filter(User.email == "ada@cindra.dev").one(),
+        SocialPlatform.telegram,
+        "-200",
+        access_token="t2",
+    )
+
+    for _ in range(9):
+        response = client.post(
+            "/posts", json={"social_account_ids": [account_id], "text": "тест"}, headers=headers
+        )
+        assert response.status_code == 201
+
+    response = client.post(
+        "/posts",
+        json={"social_account_ids": [account_id, str(second_account.id)], "text": "не влезет"},
+        headers=headers,
+    )
+    assert response.status_code == 402
+    assert db.query(Post).filter(Post.text == "не влезет").count() == 0
 
 
 def _scheduled_post(client: TestClient, headers: dict[str, str], db: Session) -> dict:
@@ -194,9 +295,9 @@ def _scheduled_post(client: TestClient, headers: dict[str, str], db: Session) ->
     future = (datetime.now(UTC) + timedelta(hours=2)).isoformat()
     return client.post(
         "/posts",
-        json={"social_account_id": account_id, "text": "черновик", "scheduled_for": future},
+        json={"social_account_ids": [account_id], "text": "черновик", "scheduled_for": future},
         headers=headers,
-    ).json()
+    ).json()[0]
 
 
 def test_update_post_changes_text_and_scheduled_for(client: TestClient, db: Session) -> None:
@@ -232,8 +333,8 @@ def test_update_already_published_post_returns_400(client: TestClient, db: Sessi
     headers = _auth_headers(client)
     account_id = _connected_account_id(client, headers, db)
     published = client.post(
-        "/posts", json={"social_account_id": account_id, "text": "уже вышел"}, headers=headers
-    ).json()
+        "/posts", json={"social_account_ids": [account_id], "text": "уже вышел"}, headers=headers
+    ).json()[0]
     assert published["status"] == "published"
 
     response = client.patch(
@@ -279,8 +380,8 @@ def test_cancel_already_published_post_returns_400(client: TestClient, db: Sessi
     headers = _auth_headers(client)
     account_id = _connected_account_id(client, headers, db)
     published = client.post(
-        "/posts", json={"social_account_id": account_id, "text": "уже вышел"}, headers=headers
-    ).json()
+        "/posts", json={"social_account_ids": [account_id], "text": "уже вышел"}, headers=headers
+    ).json()[0]
 
     response = client.delete(f"/posts/{published['id']}", headers=headers)
     assert response.status_code == 400
@@ -293,7 +394,7 @@ def test_create_post_with_past_scheduled_for_returns_400(client: TestClient, db:
 
     response = client.post(
         "/posts",
-        json={"social_account_id": account_id, "text": "тест", "scheduled_for": past},
+        json={"social_account_ids": [account_id], "text": "тест", "scheduled_for": past},
         headers=headers,
     )
     assert response.status_code == 400
@@ -305,9 +406,9 @@ def test_create_post_includes_platform_and_account_label(client: TestClient, db:
     account_id = _connected_account_id(client, headers, db)
 
     response = client.post(
-        "/posts", json={"social_account_id": account_id, "text": "тест"}, headers=headers
+        "/posts", json={"social_account_ids": [account_id], "text": "тест"}, headers=headers
     )
-    body = response.json()
+    body = response.json()[0]
     assert body["platform"] == "telegram"
     assert body["account_label"] == "My Channel"
 
@@ -315,20 +416,20 @@ def test_create_post_includes_platform_and_account_label(client: TestClient, db:
 def test_list_posts_includes_platform_and_account_label(client: TestClient, db: Session) -> None:
     headers = _auth_headers(client)
     account_id = _connected_account_id(client, headers, db)
-    client.post("/posts", json={"social_account_id": account_id, "text": "тест"}, headers=headers)
+    client.post("/posts", json={"social_account_ids": [account_id], "text": "тест"}, headers=headers)
 
     response = client.get("/posts", headers=headers)
     body = response.json()
-    assert body[0]["platform"] == "telegram"
-    assert body[0]["account_label"] == "My Channel"
+    assert body["items"][0]["platform"] == "telegram"
+    assert body["items"][0]["account_label"] == "My Channel"
 
 
 def test_get_post_includes_platform_and_account_label(client: TestClient, db: Session) -> None:
     headers = _auth_headers(client)
     account_id = _connected_account_id(client, headers, db)
     created = client.post(
-        "/posts", json={"social_account_id": account_id, "text": "тест"}, headers=headers
-    ).json()
+        "/posts", json={"social_account_ids": [account_id], "text": "тест"}, headers=headers
+    ).json()[0]
 
     response = client.get(f"/posts/{created['id']}", headers=headers)
     body = response.json()

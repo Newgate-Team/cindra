@@ -8,7 +8,14 @@ from sqlalchemy.orm import Session
 from app.content_pipeline import registry
 from app.content_pipeline.errors import ContentModeratedError
 from app.content_pipeline.registry import register_generator
-from app.models import GenerationContentType, Subscription, SubscriptionTier, User
+from app.models import (
+    GenerationContentType,
+    SocialPlatform,
+    Subscription,
+    SubscriptionTier,
+    User,
+)
+from app.social_accounts import upsert_social_account
 
 
 @pytest.fixture(autouse=True)
@@ -40,11 +47,18 @@ def _auth_headers(client: TestClient) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-def test_generate_runs_synchronously_in_eager_mode_and_completes(client: TestClient) -> None:
+def _account_id(db: Session, platform: SocialPlatform = SocialPlatform.telegram, external_id: str = "-100") -> str:
+    user = db.scalar(select(User).where(User.email == "ada@cindra.dev"))
+    account = upsert_social_account(db, user, platform, external_id, access_token="t")
+    return str(account.id)
+
+
+def test_generate_runs_synchronously_in_eager_mode_and_completes(client: TestClient, db: Session) -> None:
     headers = _auth_headers(client)
+    account_id = _account_id(db)
     response = client.post(
         "/content/generate",
-        json={"topic": "утренний кофе", "platform": "telegram"},
+        json={"topic": "утренний кофе", "target_account_ids": [account_id]},
         headers=headers,
     )
     assert response.status_code == 202
@@ -54,11 +68,12 @@ def test_generate_runs_synchronously_in_eager_mode_and_completes(client: TestCli
     assert body["output_payload"] == {"text": "пост про утренний кофе"}
 
 
-def test_get_generation_job(client: TestClient) -> None:
+def test_get_generation_job(client: TestClient, db: Session) -> None:
     headers = _auth_headers(client)
+    account_id = _account_id(db, SocialPlatform.instagram, "insta-1")
     created = client.post(
         "/content/generate",
-        json={"topic": "тема", "platform": "instagram"},
+        json={"topic": "тема", "target_account_ids": [account_id], "content_type": "image"},
         headers=headers,
     ).json()
 
@@ -69,9 +84,10 @@ def test_get_generation_job(client: TestClient) -> None:
 
 def test_get_generation_job_not_owned_returns_404(client: TestClient, db: Session) -> None:
     headers = _auth_headers(client)
+    account_id = _account_id(db)
     created = client.post(
         "/content/generate",
-        json={"topic": "тема", "platform": "instagram"},
+        json={"topic": "тема", "target_account_ids": [account_id]},
         headers=headers,
     ).json()
 
@@ -86,12 +102,13 @@ def test_get_generation_job_not_owned_returns_404(client: TestClient, db: Sessio
 
 
 def test_generate_image_runs_synchronously_in_eager_mode_and_completes(
-    client: TestClient,
+    client: TestClient, db: Session
 ) -> None:
     headers = _auth_headers(client)
+    account_id = _account_id(db, SocialPlatform.instagram, "insta-1")
     response = client.post(
         "/content/generate",
-        json={"topic": "тема", "platform": "instagram", "content_type": "image"},
+        json={"topic": "тема", "target_account_ids": [account_id], "content_type": "image"},
         headers=headers,
     )
     assert response.status_code == 202
@@ -105,6 +122,7 @@ def test_generate_video_runs_synchronously_in_eager_mode_and_completes(
     client: TestClient, db: Session
 ) -> None:
     headers = _auth_headers(client)
+    account_id = _account_id(db, SocialPlatform.instagram, "insta-1")
     # Free tier's video limit is 0 (see app/plans.py) -- upgrade to
     # pro so this test exercises the generation path itself, not the
     # limit (that's covered separately by test_generate_video_returns_402_on_free_tier).
@@ -116,7 +134,7 @@ def test_generate_video_runs_synchronously_in_eager_mode_and_completes(
 
     response = client.post(
         "/content/generate",
-        json={"topic": "тема", "platform": "instagram", "content_type": "video"},
+        json={"topic": "тема", "target_account_ids": [account_id], "content_type": "video"},
         headers=headers,
     )
     assert response.status_code == 202
@@ -126,34 +144,36 @@ def test_generate_video_runs_synchronously_in_eager_mode_and_completes(
     assert body["output_payload"] == {"video_uri": "https://example.com/fake.mp4"}
 
 
-def test_generate_returns_402_once_tier_limit_is_reached(client: TestClient) -> None:
+def test_generate_returns_402_once_tier_limit_is_reached(client: TestClient, db: Session) -> None:
     # Free tier's image limit (3/month, see app/plans.py) -- chosen
     # over the text limit (20/month) so this test doesn't need 20
     # requests to hit it.
     headers = _auth_headers(client)
+    account_id = _account_id(db)
     for _ in range(3):
         response = client.post(
             "/content/generate",
-            json={"topic": "тема", "platform": "telegram", "content_type": "image"},
+            json={"topic": "тема", "target_account_ids": [account_id], "content_type": "image"},
             headers=headers,
         )
         assert response.status_code == 202
 
     response = client.post(
         "/content/generate",
-        json={"topic": "тема", "platform": "telegram", "content_type": "image"},
+        json={"topic": "тема", "target_account_ids": [account_id], "content_type": "image"},
         headers=headers,
     )
     assert response.status_code == 402
 
 
-def test_generate_video_returns_402_on_free_tier(client: TestClient) -> None:
+def test_generate_video_returns_402_on_free_tier(client: TestClient, db: Session) -> None:
     # Free tier's video limit is 0 -- blocked on the very first
     # attempt, unlike text/image which allow a few before blocking.
     headers = _auth_headers(client)
+    account_id = _account_id(db)
     response = client.post(
         "/content/generate",
-        json={"topic": "тема", "platform": "telegram", "content_type": "video"},
+        json={"topic": "тема", "target_account_ids": [account_id], "content_type": "video"},
         headers=headers,
     )
     assert response.status_code == 402
@@ -161,9 +181,117 @@ def test_generate_video_returns_402_on_free_tier(client: TestClient) -> None:
 
 def test_generate_requires_auth(client: TestClient) -> None:
     response = client.post(
-        "/content/generate", json={"topic": "тема", "platform": "telegram"}
+        "/content/generate", json={"topic": "тема", "target_account_ids": []}
     )
     assert response.status_code == 401
+
+
+def test_generate_rejects_instagram_text_before_generating(client: TestClient, db: Session) -> None:
+    # CIN-106: Instagram's Content Publishing API has no text-only
+    # post -- this must be rejected up front (400), not generated and
+    # then fail later at publish time.
+    headers = _auth_headers(client)
+    account_id = _account_id(db, SocialPlatform.instagram, "insta-1")
+    response = client.post(
+        "/content/generate",
+        json={"topic": "тема", "target_account_ids": [account_id], "content_type": "text"},
+        headers=headers,
+    )
+    assert response.status_code == 400
+    assert "instagram" in response.json()["detail"]
+
+
+def test_generate_rejects_target_account_not_owned(client: TestClient, db: Session) -> None:
+    headers = _auth_headers(client)
+    other = User(email="mallory@cindra.dev", hashed_password="x")
+    db.add(other)
+    db.commit()
+    other_account = upsert_social_account(db, other, SocialPlatform.telegram, "-999", access_token="t")
+
+    response = client.post(
+        "/content/generate",
+        json={"topic": "тема", "target_account_ids": [str(other_account.id)]},
+        headers=headers,
+    )
+    assert response.status_code == 404
+
+
+def test_generate_with_multiple_targets_uses_intersection_of_content_types(
+    client: TestClient, db: Session
+) -> None:
+    headers = _auth_headers(client)
+    telegram_id = _account_id(db, SocialPlatform.telegram, "-100")
+    instagram_id = _account_id(db, SocialPlatform.instagram, "insta-1")
+
+    # text is valid for telegram alone but not for the pair (instagram excludes it)
+    response = client.post(
+        "/content/generate",
+        json={
+            "topic": "тема",
+            "target_account_ids": [telegram_id, instagram_id],
+            "content_type": "text",
+        },
+        headers=headers,
+    )
+    assert response.status_code == 400
+
+    response = client.post(
+        "/content/generate",
+        json={
+            "topic": "тема",
+            "target_account_ids": [telegram_id, instagram_id],
+            "content_type": "image",
+        },
+        headers=headers,
+    )
+    assert response.status_code == 202
+
+
+def test_generate_rejects_more_than_five_attachments(client: TestClient, db: Session) -> None:
+    headers = _auth_headers(client)
+    account_id = _account_id(db)
+    attachments = [
+        {"url": f"https://r2.example/{i}.jpg", "attachment_type": "image"} for i in range(6)
+    ]
+    response = client.post(
+        "/content/generate",
+        json={"topic": "тема", "target_account_ids": [account_id], "attachments": attachments},
+        headers=headers,
+    )
+    assert response.status_code == 422
+
+
+def test_generate_rejects_two_videos(client: TestClient, db: Session) -> None:
+    headers = _auth_headers(client)
+    account_id = _account_id(db)
+    attachments = [
+        {"url": "https://r2.example/a.mp4", "attachment_type": "video"},
+        {"url": "https://r2.example/b.mp4", "attachment_type": "video"},
+    ]
+    response = client.post(
+        "/content/generate",
+        json={"topic": "тема", "target_account_ids": [account_id], "attachments": attachments},
+        headers=headers,
+    )
+    assert response.status_code == 422
+
+
+def test_generate_accepts_five_mixed_attachments(client: TestClient, db: Session) -> None:
+    headers = _auth_headers(client)
+    account_id = _account_id(db)
+    attachments = [
+        {"url": "https://r2.example/1.jpg", "attachment_type": "image"},
+        {"url": "https://r2.example/2.jpg", "attachment_type": "image"},
+        {"url": "https://r2.example/3.jpg", "attachment_type": "image"},
+        {"url": "https://r2.example/1.pdf", "attachment_type": "document"},
+        {"url": "https://r2.example/1.mp3", "attachment_type": "audio"},
+    ]
+    response = client.post(
+        "/content/generate",
+        json={"topic": "тема", "target_account_ids": [account_id], "attachments": attachments},
+        headers=headers,
+    )
+    assert response.status_code == 202
 
 
 def test_upload_attachment_returns_url_and_type(client: TestClient) -> None:
@@ -255,15 +383,16 @@ def test_upload_attachment_requires_auth(client: TestClient) -> None:
     assert response.status_code == 401
 
 
-def test_generate_flagged_content_reports_status(client: TestClient) -> None:
+def test_generate_flagged_content_reports_status(client: TestClient, db: Session) -> None:
     def _rejected(payload: dict) -> dict:
         raise ContentModeratedError("упоминание конкурента")
 
     register_generator(GenerationContentType.text, _rejected)
     headers = _auth_headers(client)
+    account_id = _account_id(db)
     response = client.post(
         "/content/generate",
-        json={"topic": "тема", "platform": "telegram"},
+        json={"topic": "тема", "target_account_ids": [account_id]},
         headers=headers,
     )
     assert response.json()["status"] == "flagged"

@@ -3,8 +3,12 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
+from app.content_pipeline.attachments import (
+    TooManyAttachmentsError,
+    validate_attachment_set,
+)
 from app.models import (
     GenerationContentType,
     GenerationStatus,
@@ -48,17 +52,35 @@ class SubscriptionOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class AttachmentRef(BaseModel):
+    url: str
+    attachment_type: str
+
+
 class GenerationRequest(BaseModel):
     topic: str = Field(min_length=1, max_length=5000)
-    platform: SocialPlatform
+    # Target accounts are chosen up front (CIN-106), before generation --
+    # content_type/content_kind are validated against the intersection of
+    # what all of them can actually publish (see publish_matrix.py), so
+    # e.g. an Instagram target rules out content_type=text before
+    # anything gets generated, not after, at publish time.
+    target_account_ids: list[uuid.UUID] = Field(min_length=1, max_length=10)
     content_type: GenerationContentType = GenerationContentType.text
     content_kind: str = "post"
     brand_guide: str | None = None
-    # Optional context file (CIN-97) -- set together by the client after
-    # a successful POST /content/attachment upload. attachment_type is
-    # one of image/video/audio/document (see content_pipeline/attachments.py).
-    attachment_url: str | None = None
-    attachment_type: str | None = None
+    # Optional context files (CIN-97, extended to a list in CIN-107) --
+    # set by the client after successful POST /content/attachment
+    # upload(s), one call per file. Up to 5 total, video/audio capped
+    # at 1 each -- see content_pipeline/attachments.py.validate_attachment_set.
+    attachments: list[AttachmentRef] = Field(default_factory=list, max_length=5)
+
+    @model_validator(mode="after")
+    def _validate_attachment_set(self) -> "GenerationRequest":
+        try:
+            validate_attachment_set([a.attachment_type for a in self.attachments])
+        except TooManyAttachmentsError as exc:
+            raise ValueError(str(exc)) from exc
+        return self
 
 
 class AttachmentOut(BaseModel):
@@ -79,8 +101,27 @@ class GenerationJobOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class FeedItemOut(BaseModel):
+    """A shared, cross-user feed item (CIN-109) -- deliberately excludes
+    the generating user's identity, error_message, and brand_guide.
+    `topic` is the user's own prompt (input_payload), not
+    output_payload["prompt"]: image_generator.py folds brand_guide
+    straight into the stored prompt string, so showing that would leak
+    another user's brand-guide text indirectly."""
+
+    id: uuid.UUID
+    content_type: GenerationContentType
+    image_url: str | None
+    video_url: str | None
+    topic: str
+    created_at: datetime
+
+
 class PostCreate(BaseModel):
-    social_account_id: uuid.UUID
+    # Fan-out publish (CIN-106): one generated piece of content can go
+    # to several accounts/platforms at once -- one Post row gets
+    # created per id, all sharing generation_job_id.
+    social_account_ids: list[uuid.UUID] = Field(min_length=1, max_length=10)
     text: str = Field(min_length=1, max_length=4096)
     image_url: str | None = None  # required for Instagram, optional for Telegram
     video_url: str | None = None  # mutually exclusive with image_url -- see Post.video_url

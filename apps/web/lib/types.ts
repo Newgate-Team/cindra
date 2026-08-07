@@ -45,6 +45,22 @@ export interface SocialAccount {
   created_at: string;
 }
 
+export interface Page<T> {
+  items: T[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface FeedItem {
+  id: string;
+  content_type: GenerationContentType;
+  image_url: string | null;
+  video_url: string | null;
+  topic: string;
+  created_at: string;
+}
+
 export interface Post {
   id: string;
   social_account_id: string;

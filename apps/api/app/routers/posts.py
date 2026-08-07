@@ -1,15 +1,16 @@
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.deps import get_current_user
 from app.models import Post, PostStatus, SocialAccount, UsageEventType, User
+from app.pagination import DEFAULT_LIMIT, MAX_LIMIT, Page, paginate
 from app.scheduler.tasks import publish_post
 from app.schemas import PostCreate, PostOut, PostUpdate
-from app.usage import enforce_and_record_usage
+from app.usage import enforce_and_record_usage_bulk
 
 router = APIRouter(prefix="/posts", tags=["posts"])
 
@@ -43,57 +44,82 @@ def _reject_if_in_the_past(scheduled_for: datetime | None) -> None:
         )
 
 
-@router.get("", response_model=list[PostOut])
+@router.get("", response_model=Page[PostOut])
 def list_posts(
-    current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
-) -> list[PostOut]:
-    rows = db.execute(
+    limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
+    offset: int = Query(0, ge=0),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Page[PostOut]:
+    query = (
         select(Post, SocialAccount)
         .join(SocialAccount, Post.social_account_id == SocialAccount.id)
         .where(Post.user_id == current_user.id)
         .order_by(Post.scheduled_for.desc())
-    ).all()
-    return [_post_out(post, account) for post, account in rows]
+    )
+    rows, total = paginate(db, query, limit, offset)
+    items = [_post_out(post, account) for post, account in rows]
+    return Page(items=items, total=total, limit=limit, offset=offset)
 
 
-@router.post("", response_model=PostOut, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=list[PostOut], status_code=status.HTTP_201_CREATED)
 def create_post(
     payload: PostCreate,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-) -> PostOut:
-    account = db.get(SocialAccount, payload.social_account_id)
-    if account is None or account.user_id != current_user.id:
+) -> list[PostOut]:
+    # Fan-out publish (CIN-106): one call creates one Post per target
+    # account, all sharing generation_job_id -- batched in one request
+    # (rather than one POST /posts per account from the frontend) so
+    # the usage-limit check below is atomic across the whole batch,
+    # instead of racing/partially succeeding target by target.
+    accounts = db.scalars(
+        select(SocialAccount).where(SocialAccount.id.in_(payload.social_account_ids))
+    ).all()
+    accounts_by_id = {a.id: a for a in accounts}
+    if set(payload.social_account_ids) - accounts_by_id.keys() or any(
+        a.user_id != current_user.id for a in accounts
+    ):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Соцаккаунт не найден"
         )
 
     _reject_if_in_the_past(payload.scheduled_for)
-    enforce_and_record_usage(db, current_user, UsageEventType.publication)
+    enforce_and_record_usage_bulk(
+        db, current_user, UsageEventType.publication, count=len(payload.social_account_ids)
+    )
 
     scheduled_for = payload.scheduled_for or datetime.now(UTC)
-    post = Post(
-        user_id=current_user.id,
-        social_account_id=account.id,
-        generation_job_id=payload.generation_job_id,
-        text=payload.text,
-        image_url=payload.image_url,
-        video_url=payload.video_url,
-        content_kind=payload.content_kind,
-        scheduled_for=scheduled_for,
-    )
-    db.add(post)
+    posts = [
+        Post(
+            user_id=current_user.id,
+            social_account_id=account_id,
+            generation_job_id=payload.generation_job_id,
+            text=payload.text,
+            image_url=payload.image_url,
+            video_url=payload.video_url,
+            content_kind=payload.content_kind,
+            scheduled_for=scheduled_for,
+        )
+        for account_id in payload.social_account_ids
+    ]
+    db.add_all(posts)
     db.commit()
-    db.refresh(post)
+    for post in posts:
+        db.refresh(post)
 
     if scheduled_for <= datetime.now(UTC):
         # Due now rather than in the future -- dispatch immediately
         # instead of waiting for the next beat tick (up to 60s away,
-        # see celery_app.conf.beat_schedule).
-        publish_post.delay(str(post.id))
-        db.refresh(post)
+        # see celery_app.conf.beat_schedule). Each dispatch is fully
+        # independent by post_id (see scheduler/tasks.py), so one
+        # target failing doesn't affect the others.
+        for post in posts:
+            publish_post.delay(str(post.id))
+        for post in posts:
+            db.refresh(post)
 
-    return _post_out(post, account)
+    return [_post_out(post, accounts_by_id[post.social_account_id]) for post in posts]
 
 
 @router.get("/{post_id}", response_model=PostOut)
