@@ -155,8 +155,18 @@ def veo_video_generator(
         samples = operation["response"]["generateVideoResponse"]["generatedSamples"]
         video_uri = samples[0]["video"]["uri"]
         try:
+            # follow_redirects=True is required here (CIN-113): httpx
+            # defaults to NOT following redirects, and this download
+            # URL redirects (302) to the actual file. Without this,
+            # download_response.content was a small JSON redirect/error
+            # body instead of real video bytes -- status_code stayed
+            # under 400, so it silently passed the check below and got
+            # uploaded to R2 as if it were a valid video.
             download_response = get(
-                video_uri, headers={"x-goog-api-key": settings.gemini_api_key}, timeout=60.0
+                video_uri,
+                headers={"x-goog-api-key": settings.gemini_api_key},
+                timeout=60.0,
+                follow_redirects=True,
             )
         except httpx.TransportError as exc:
             raise TransientGenerationError(f"Veo API network error: {exc}") from exc
