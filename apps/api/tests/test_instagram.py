@@ -178,11 +178,15 @@ def test_publish_with_image_url_creates_then_publishes_container(
 
     with (
         patch("app.social_integrations.instagram.create_media_container", return_value="container-1") as create,
+        patch("app.social_integrations.instagram._wait_for_container_ready") as wait,
         patch("app.social_integrations.instagram.publish_media", return_value={"id": "media-1"}) as pub,
     ):
         result = instagram.publish(account, post)
 
     create.assert_called_once_with("ig-42", "https://example.com/x.jpg", "caption", "token", None)
+    # CIN-119: image containers process asynchronously too -- publish()
+    # must wait for FINISHED before calling media_publish, not just for video.
+    wait.assert_called_once_with("container-1", "token")
     pub.assert_called_once_with("ig-42", "container-1", "token")
     assert result == {"id": "media-1"}
 
@@ -202,6 +206,7 @@ def test_publish_story_passes_stories_media_type(db: Session, user: User) -> Non
 
     with (
         patch("app.social_integrations.instagram.create_media_container", return_value="container-1") as create,
+        patch("app.social_integrations.instagram._wait_for_container_ready"),
         patch("app.social_integrations.instagram.publish_media", return_value={"id": "media-1"}),
     ):
         instagram.publish(account, post)
@@ -248,7 +253,7 @@ def test_create_media_container_video_story_omits_caption() -> None:
     assert creation_id == "container-1"
 
 
-def test_wait_for_video_container_ready_returns_when_finished() -> None:
+def test_wait_for_container_ready_returns_when_finished() -> None:
     poll_count = {"n": 0}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -256,28 +261,28 @@ def test_wait_for_video_container_ready_returns_when_finished() -> None:
         status = "IN_PROGRESS" if poll_count["n"] < 2 else "FINISHED"
         return httpx.Response(200, json={"status_code": status})
 
-    instagram._wait_for_video_container_ready(
+    instagram._wait_for_container_ready(
         "container-1", "token", client=_client(handler), sleep=lambda _: None
     )
     assert poll_count["n"] == 2
 
 
-def test_wait_for_video_container_ready_error_status_is_permanent() -> None:
+def test_wait_for_container_ready_error_status_is_permanent() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"status_code": "ERROR"})
 
     with pytest.raises(PermanentPublishError):
-        instagram._wait_for_video_container_ready(
+        instagram._wait_for_container_ready(
             "container-1", "token", client=_client(handler), sleep=lambda _: None
         )
 
 
-def test_wait_for_video_container_ready_never_finishing_is_permanent() -> None:
+def test_wait_for_container_ready_never_finishing_is_permanent() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"status_code": "IN_PROGRESS"})
 
     with pytest.raises(PermanentPublishError):
-        instagram._wait_for_video_container_ready(
+        instagram._wait_for_container_ready(
             "container-1", "token", client=_client(handler), sleep=lambda _: None
         )
 
@@ -298,7 +303,7 @@ def test_publish_with_video_url_polls_then_publishes(db: Session, user: User) ->
         patch(
             "app.social_integrations.instagram.create_media_container", return_value="container-1"
         ) as create,
-        patch("app.social_integrations.instagram._wait_for_video_container_ready") as wait,
+        patch("app.social_integrations.instagram._wait_for_container_ready") as wait,
         patch("app.social_integrations.instagram.publish_media", return_value={"id": "media-1"}) as pub,
     ):
         result = instagram.publish(account, post)

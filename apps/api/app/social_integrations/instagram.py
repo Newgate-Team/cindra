@@ -15,11 +15,15 @@ _GRAPH_API_BASE = "https://graph.facebook.com/v21.0"
 # token, permission revoked, malformed request) is permanent.
 _RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 
-# Unlike an image container (ready immediately), a video/Reels
-# container processes asynchronously -- poll status_code until
-# FINISHED before media_publish, same budget class as Veo's own
-# generation poll in video_generator.py, just shorter (IG only
-# transcodes/validates, it doesn't render from scratch).
+# Every media container (image AND video/Reels) processes
+# asynchronously on Instagram's side -- media_publish can fail with
+# "Media ID is not available" if called before status_code reaches
+# FINISHED. Image containers are usually much faster than video/Reels
+# (same budget class as Veo's own generation poll in
+# video_generator.py, just shorter -- IG only fetches/validates, it
+# doesn't render from scratch), but not guaranteed instant: confirmed
+# in production (CIN-119) with a real generated photo Instagram had to
+# fetch itself from an external image_url.
 _CONTAINER_POLL_INTERVAL_SECONDS = 5.0
 _CONTAINER_MAX_POLL_ATTEMPTS = 36  # ~3 minutes
 
@@ -166,15 +170,15 @@ def create_media_container(
     return _handle_response(response)["id"]
 
 
-def _wait_for_video_container_ready(
+def _wait_for_container_ready(
     container_id: str,
     access_token: str,
     client: httpx.Client | None = None,
     sleep: Callable[[float], None] = time.sleep,
 ) -> None:
-    """Video/Reels containers process asynchronously (unlike image
-    containers, ready immediately) -- media_publish fails if called
-    before status_code reaches FINISHED."""
+    """Both image and video/Reels containers process asynchronously on
+    Instagram's side (CIN-119) -- media_publish fails with "Media ID
+    is not available" if called before status_code reaches FINISHED."""
     get = client.get if client is not None else httpx.get
     url = f"{_GRAPH_API_BASE}/{container_id}"
     for _ in range(_CONTAINER_MAX_POLL_ATTEMPTS):
@@ -184,10 +188,10 @@ def _wait_for_video_container_ready(
         if status_code == "FINISHED":
             return
         if status_code == "ERROR":
-            raise PermanentPublishError("Instagram: обработка видео завершилась с ошибкой")
+            raise PermanentPublishError("Instagram: обработка медиа завершилась с ошибкой")
         sleep(_CONTAINER_POLL_INTERVAL_SECONDS)
     raise PermanentPublishError(
-        f"Instagram: обработка видео не завершилась за {_CONTAINER_MAX_POLL_ATTEMPTS} попыток"
+        f"Instagram: обработка медиа не завершилась за {_CONTAINER_MAX_POLL_ATTEMPTS} попыток"
     )
 
 
@@ -228,9 +232,12 @@ def publish(account: SocialAccount, post: Post) -> dict[str, Any]:
             media_type,
             video_url=post.video_url,
         )
-        _wait_for_video_container_ready(creation_id, access_token)
     else:
         creation_id = create_media_container(
             account.external_account_id, post.image_url, post.text, access_token, media_type
         )
+    # CIN-119: both image and video containers process asynchronously
+    # -- media_publish before FINISHED fails with "Media ID is not
+    # available", not just for video/Reels.
+    _wait_for_container_ready(creation_id, access_token)
     return publish_media(account.external_account_id, creation_id, access_token)
