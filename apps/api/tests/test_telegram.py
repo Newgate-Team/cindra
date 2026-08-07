@@ -114,13 +114,36 @@ def test_send_message_permanent_error_when_bot_not_admin() -> None:
 
 def test_send_video_returns_result_on_success() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.path == "/bot123:abc/sendVideo"
-        return httpx.Response(200, json={"ok": True, "result": {"message_id": 43}})
+        if request.url.path == "/bot123:abc/sendVideo":
+            return httpx.Response(200, json={"ok": True, "result": {"message_id": 43}})
+        return httpx.Response(200, content=b"fake-video-bytes")  # the video_url fetch
 
     result = telegram.send_video(
         "-100123", "https://example.com/x.mp4", "caption", "123:abc", client=_client(handler)
     )
     assert result == {"message_id": 43}
+
+
+def test_send_video_uploads_bytes_as_multipart_not_url() -> None:
+    # CIN-115: Telegram's own URL-based fetch caps at 20MB and rejects
+    # a real generated video ("Bad Request: failed to get HTTP URL
+    # content") -- send_video downloads the bytes itself and uploads
+    # them as multipart/form-data instead, which allows up to 50MB.
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/bot123:abc/sendVideo":
+            captured["content_type"] = request.headers.get("content-type", "")
+            captured["body"] = request.content
+            return httpx.Response(200, json={"ok": True, "result": {"message_id": 43}})
+        return httpx.Response(200, content=b"fake-video-bytes")
+
+    telegram.send_video(
+        "-100123", "https://example.com/x.mp4", "caption", "123:abc", client=_client(handler)
+    )
+    assert "multipart/form-data" in captured["content_type"]
+    assert b"fake-video-bytes" in captured["body"]
+    assert b"https://example.com/x.mp4" not in captured["body"]
 
 
 def test_send_photo_converts_markdown_and_sets_parse_mode() -> None:
@@ -140,19 +163,21 @@ def test_send_photo_converts_markdown_and_sets_parse_mode() -> None:
 
 
 def test_send_video_converts_markdown_and_sets_parse_mode() -> None:
-    import json
-
     captured = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
-        captured["body"] = json.loads(request.content)
-        return httpx.Response(200, json={"ok": True, "result": {"message_id": 46}})
+        if request.url.path == "/bot123:abc/sendVideo":
+            captured["body"] = request.content.decode("utf-8")
+            return httpx.Response(200, json={"ok": True, "result": {"message_id": 46}})
+        return httpx.Response(200, content=b"fake-video-bytes")
 
     telegram.send_video(
         "-100123", "https://example.com/x.mp4", "**жирная** подпись", "123:abc", client=_client(handler)
     )
-    assert captured["body"]["parse_mode"] == "MarkdownV2"
-    assert captured["body"]["caption"] == "*жирная* подпись"
+    # multipart/form-data fields are embedded as raw text (not JSON),
+    # so this checks for the encoded field values directly.
+    assert "MarkdownV2" in captured["body"]
+    assert "*жирная* подпись" in captured["body"]
 
 
 def test_publish_with_video_url_sends_video(db: Session, user: User) -> None:
