@@ -199,3 +199,23 @@ def test_missing_output_image_raises_clear_error_not_keyerror() -> None:
             {"topic": "x", "platform": "instagram"}, client=_client(handler)
         )
     assert "output_image" not in str(exc_info.value)
+
+
+def test_missing_output_image_logs_raw_response_for_diagnosis(caplog: pytest.LogCaptureFixture) -> None:
+    # CIN-110: the user-facing error stays generic, but the raw response
+    # body is logged so a real failure can be diagnosed after the fact
+    # instead of guessed at (see CIN-105's unresolved root cause).
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, json={"id": "abc123", "status": "completed", "steps": [{"type": "text"}]}
+        )
+
+    with caplog.at_level("WARNING"), pytest.raises(ImageGenerationFailedError):
+        nano_banana_image_generator(
+            {"topic": "x", "platform": "instagram"}, client=_client(handler)
+        )
+
+    assert len(caplog.records) == 1
+    message = caplog.records[0].getMessage()
+    assert "status=completed" in message
+    assert '"steps"' in message
