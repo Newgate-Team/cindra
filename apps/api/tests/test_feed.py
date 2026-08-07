@@ -102,9 +102,9 @@ def test_feed_does_not_expose_user_identity_or_brand_guide(client: TestClient, d
 
     response = client.get("/feed", headers=headers)
     item = response.json()["items"][0]
-    assert set(item.keys()) == {"id", "content_type", "image_url", "video_url", "topic", "created_at"}
-    assert item["topic"] == "осенний латте"
-    assert "секретный бренд-гайд" not in item["topic"]
+    assert set(item.keys()) == {"id", "content_type", "image_url", "video_url", "caption", "created_at"}
+    assert item["caption"] == "осенний латте"
+    assert "секретный бренд-гайд" not in item["caption"]
 
 
 def test_feed_is_paginated(client: TestClient, db: Session) -> None:
@@ -138,8 +138,45 @@ def test_feed_newest_first(client: TestClient, db: Session) -> None:
     db.commit()
 
     response = client.get("/feed", headers=headers)
-    topics = [item["topic"] for item in response.json()["items"]]
-    assert topics == ["новое", "старое"]
+    captions = [item["caption"] for item in response.json()["items"]]
+    assert captions == ["новое", "старое"]
+
+
+def test_feed_prefers_generated_caption_over_raw_topic(client: TestClient, db: Session) -> None:
+    # CIN-116: output_payload["text"] (CIN-114's generated caption)
+    # takes priority over input_payload["topic"] when both are present.
+    headers = _auth_headers(client)
+    user = db.scalar(select(User).where(User.email == "ada@cindra.dev"))
+    db.add(
+        _job(
+            user,
+            GenerationContentType.image,
+            topic="сырой промпт",
+            output_payload={"image_url": "https://x/img.png", "text": "Настоящая подпись поста"},
+        )
+    )
+    db.commit()
+
+    response = client.get("/feed", headers=headers)
+    assert response.json()["items"][0]["caption"] == "Настоящая подпись поста"
+
+
+def test_feed_falls_back_to_topic_when_caption_is_missing(client: TestClient, db: Session) -> None:
+    # CIN-114's caption generation is best-effort and can be absent.
+    headers = _auth_headers(client)
+    user = db.scalar(select(User).where(User.email == "ada@cindra.dev"))
+    db.add(
+        _job(
+            user,
+            GenerationContentType.image,
+            topic="запасной вариант",
+            output_payload={"image_url": "https://x/img.png"},
+        )
+    )
+    db.commit()
+
+    response = client.get("/feed", headers=headers)
+    assert response.json()["items"][0]["caption"] == "запасной вариант"
 
 
 def test_feed_requires_auth(client: TestClient) -> None:

@@ -37,7 +37,11 @@ def list_feed(
             content_type=job.content_type,
             image_url=(job.output_payload or {}).get("image_url"),
             video_url=(job.output_payload or {}).get("video_url"),
-            topic=(job.input_payload or {}).get("topic", ""),
+            # CIN-116: prefer the generated caption (CIN-114) over the
+            # raw prompt -- falls back to the prompt since caption
+            # generation is best-effort and may be missing.
+            caption=(job.output_payload or {}).get("text")
+            or (job.input_payload or {}).get("topic", ""),
             created_at=job.created_at,
         )
         for (job,) in rows

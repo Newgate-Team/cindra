@@ -43,6 +43,26 @@ function PostText({ text }: { text: string }) {
   );
 }
 
+// Small thumbnail so a photo/video post is recognizable at a glance
+// without blowing up row height -- text is still shown for every
+// post regardless (CIN-116), this is purely additive.
+function PostMedia({ post }: { post: Post }) {
+  if (post.image_url) {
+    // eslint-disable-next-line @next/next/no-img-element
+    return <img src={post.image_url} alt="" style={{ width: 60, height: 60, objectFit: "cover", borderRadius: 4 }} />;
+  }
+  if (post.video_url) {
+    return (
+      <video
+        src={post.video_url}
+        muted
+        style={{ width: 60, height: 60, objectFit: "cover", borderRadius: 4 }}
+      />
+    );
+  }
+  return null;
+}
+
 // datetime-local's `min` needs "yyyy-MM-ddTHH:mm" -- called fresh on
 // every render rather than a module-level constant, so it stays "now"
 // across a long-lived page instead of freezing at page load.
@@ -261,6 +281,7 @@ function CalendarList() {
                 <th>Когда</th>
                 <th>Платформа</th>
                 <th>Аккаунт</th>
+                <th>Медиа</th>
                 <th>Текст</th>
                 <th>Статус</th>
                 <th></th>
@@ -272,6 +293,9 @@ function CalendarList() {
                   <td>{formatDate(post.scheduled_for)}</td>
                   <td>{PLATFORM_LABELS[post.platform]}</td>
                   <td>{post.account_label}</td>
+                  <td>
+                    <PostMedia post={post} />
+                  </td>
                   <td>
                     <PostText text={post.text} />
                   </td>

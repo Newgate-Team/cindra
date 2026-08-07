@@ -57,7 +57,7 @@ export interface FeedItem {
   content_type: GenerationContentType;
   image_url: string | null;
   video_url: string | null;
-  topic: string;
+  caption: string;
   created_at: string;
 }
 
