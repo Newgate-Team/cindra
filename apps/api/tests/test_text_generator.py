@@ -8,6 +8,7 @@ from app.content_pipeline.errors import TransientGenerationError
 from app.content_pipeline.text_generator import (
     TextGenerationFailedError,
     gemini_text_generator,
+    generate_caption,
 )
 
 
@@ -194,3 +195,24 @@ def test_non_retryable_error_does_not_leak_api_key_in_message() -> None:
     message = str(exc_info.value)
     assert fake_key not in message
     assert "key=" not in message
+
+
+def test_generate_caption_returns_text_on_success() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, json={"candidates": [{"content": {"parts": [{"text": "Готовая подпись"}]}}]}
+        )
+
+    caption = generate_caption({"topic": "x", "platform": "telegram"}, client=_client(handler))
+    assert caption == "Готовая подпись"
+
+
+def test_generate_caption_returns_none_on_failure_instead_of_raising() -> None:
+    # CIN-114: a caption failure must never propagate -- callers (image/
+    # video generators) rely on this degrading gracefully rather than
+    # failing an already-successful, already-paid-for generation.
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, json={"error": {"status": "INTERNAL"}})
+
+    caption = generate_caption({"topic": "x", "platform": "telegram"}, client=_client(handler))
+    assert caption is None

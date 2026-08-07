@@ -8,6 +8,7 @@ from app.config import get_settings
 from app.content_pipeline.attachments import build_attachment_context
 from app.content_pipeline.errors import TransientGenerationError
 from app.content_pipeline.media_storage import upload_bytes
+from app.content_pipeline.text_generator import generate_caption
 
 _GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 
@@ -180,7 +181,16 @@ def veo_video_generator(
                 f"{download_response.text[:500]}"
             )
         video_url = upload_bytes(download_response.content, "video/mp4", "mp4")
-        return {"video_url": video_url, "prompt": prompt}
+
+        result: dict[str, Any] = {"video_url": video_url, "prompt": prompt}
+        # CIN-114: a real caption, not just the raw topic, for the
+        # "Подпись" field on the review-and-publish screen --
+        # best-effort, never fails the (already successful, already
+        # paid-for) video itself.
+        caption = generate_caption(payload, client=client)
+        if caption:
+            result["text"] = caption
+        return result
 
     raise VideoGenerationFailedError(
         f"Veo generation did not finish within {_MAX_POLL_ATTEMPTS} polls "
