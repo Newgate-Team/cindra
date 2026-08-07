@@ -52,22 +52,3 @@ def build_text_prompt(
         lines.append(f"{label}: {text}")
     lines.append("Верни только готовый текст, без пояснений и без обрамляющих кавычек.")
     return "\n".join(lines)
-
-
-def build_story_overlay_prompt(topic: str, brand_guide: str | None = None) -> str:
-    """Prompt for the minimal text composited directly onto an
-    Instagram Story image (CIN-123) -- deliberately much shorter than
-    build_text_prompt's output: this has to read as a short line or
-    two sitting on top of a photo, not a full caption."""
-    lines = [
-        f"Тема: {topic}",
-        (
-            "Очень короткая фраза для текста поверх фото в Instagram Stories -- "
-            "2-6 слов, без хэштегов, без кавычек, без точки в конце. Один яркий "
-            "акцент по теме, а не законченное предложение."
-        ),
-    ]
-    if brand_guide:
-        lines.append(f"Бренд-гайд (соблюдать тон): {brand_guide}")
-    lines.append("Верни только саму фразу, без пояснений.")
-    return "\n".join(lines)
