@@ -5,7 +5,10 @@ import httpx
 import pytest
 
 from app.content_pipeline.errors import TransientGenerationError
-from app.content_pipeline.text_generator import gemini_text_generator
+from app.content_pipeline.text_generator import (
+    TextGenerationFailedError,
+    gemini_text_generator,
+)
 
 
 def _client(handler) -> httpx.Client:
@@ -159,7 +162,35 @@ def test_400_is_not_transient() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(400, json={"error": {"status": "INVALID_ARGUMENT"}})
 
-    with pytest.raises(httpx.HTTPStatusError):
+    with pytest.raises(TextGenerationFailedError):
         gemini_text_generator(
             {"topic": "x", "platform": "telegram"}, client=_client(handler)
         )
+
+
+def test_non_retryable_error_does_not_leak_api_key_in_message() -> None:
+    # CIN-111: the key is sent as a `?key=` query param -- a bare
+    # httpx.HTTPStatusError's message includes the full request URL
+    # (and therefore the key). The exception raised here must not.
+    # Settings are patched to a known fake key rather than relying on
+    # whatever real key happens to be configured, so this assertion is
+    # meaningful even in an environment with no key set.
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    fake_key = "fake-secret-key-should-not-leak"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, json={"error": {"status": "PERMISSION_DENIED"}})
+
+    with (
+        patch(
+            "app.content_pipeline.text_generator.get_settings",
+            return_value=SimpleNamespace(gemini_model="fake-model", gemini_api_key=fake_key),
+        ),
+        pytest.raises(TextGenerationFailedError) as exc_info,
+    ):
+        gemini_text_generator({"topic": "x", "platform": "telegram"}, client=_client(handler))
+    message = str(exc_info.value)
+    assert fake_key not in message
+    assert "key=" not in message

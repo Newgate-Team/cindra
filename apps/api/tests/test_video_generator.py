@@ -101,10 +101,44 @@ def test_start_400_is_not_transient() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(400, json={"error": {"status": "INVALID_ARGUMENT"}})
 
-    with pytest.raises(httpx.HTTPStatusError):
+    with pytest.raises(VideoGenerationFailedError):
         veo_video_generator(
             {"topic": "x", "platform": "instagram"}, client=_client(handler), sleep=_no_sleep
         )
+
+
+def test_start_400_does_not_leak_api_key_in_message() -> None:
+    # CIN-111: predictLongRunning authenticates via a `?key=` query
+    # param -- a bare httpx.HTTPStatusError's message includes the
+    # full request URL (and therefore the key). Settings are patched
+    # to a known fake key so this assertion is meaningful regardless
+    # of what real key (if any) is configured in this environment.
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    fake_key = "fake-secret-key-should-not-leak"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json={"error": {"status": "INVALID_ARGUMENT"}})
+
+    with (
+        patch(
+            "app.content_pipeline.video_generator.get_settings",
+            return_value=SimpleNamespace(
+                veo_model="fake-veo-model",
+                veo_duration_seconds="8",
+                veo_resolution="1080p",
+                gemini_api_key=fake_key,
+            ),
+        ),
+        pytest.raises(VideoGenerationFailedError) as exc_info,
+    ):
+        veo_video_generator(
+            {"topic": "x", "platform": "instagram"}, client=_client(handler), sleep=_no_sleep
+        )
+    message = str(exc_info.value)
+    assert fake_key not in message
+    assert "key=" not in message
 
 
 def test_poll_5xx_is_transient() -> None:
@@ -114,6 +148,18 @@ def test_poll_5xx_is_transient() -> None:
         return httpx.Response(503, json={"error": {"status": "UNAVAILABLE"}})
 
     with pytest.raises(TransientGenerationError):
+        veo_video_generator(
+            {"topic": "x", "platform": "instagram"}, client=_client(handler), sleep=_no_sleep
+        )
+
+
+def test_poll_400_is_not_transient() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            return httpx.Response(200, json={"name": "operations/abc123"})
+        return httpx.Response(400, json={"error": {"status": "INVALID_ARGUMENT"}})
+
+    with pytest.raises(VideoGenerationFailedError):
         veo_video_generator(
             {"topic": "x", "platform": "instagram"}, client=_client(handler), sleep=_no_sleep
         )

@@ -15,6 +15,14 @@ _GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 # key, 403 permission denied) won't fix itself on retry.
 _RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 
+
+class TextGenerationFailedError(Exception):
+    """Raised for a non-retryable HTTP error from Gemini. Deliberately
+    NOT httpx.HTTPStatusError/raise_for_status() -- that exception's
+    message includes the full request URL, and this call authenticates
+    via a `?key=` query param (CIN-111), so the raw API key would leak
+    into job.error_message and straight into the UI otherwise."""
+
 # Output tokens cost 8.3x input on this model ($2.50 vs $0.30/1M) --
 # an explicit cap is a cheap backstop against paying for a rambling
 # response, with generous headroom above anything this app actually
@@ -100,7 +108,10 @@ def gemini_text_generator(
         raise TransientGenerationError(
             f"Gemini API {response.status_code}: {response.text[:500]}"
         )
-    response.raise_for_status()
+    if response.status_code >= 400:
+        raise TextGenerationFailedError(
+            f"Gemini API {response.status_code}: {response.text[:500]}"
+        )
 
     body = response.json()
     text = "".join(
