@@ -108,8 +108,7 @@ def test_image_attachment_becomes_reference_image_in_input_array() -> None:
     payload = {
         "topic": "утренний кофе",
         "platform": "instagram",
-        "attachment_url": "https://r2.example/mood.jpg",
-        "attachment_type": "image",
+        "attachments": [{"url": "https://r2.example/mood.jpg", "attachment_type": "image"}],
     }
     with patch(
         "app.content_pipeline.image_generator.upload_bytes",
@@ -117,6 +116,37 @@ def test_image_attachment_becomes_reference_image_in_input_array() -> None:
     ):
         result = nano_banana_image_generator(payload, client=_client(handler))
     assert result["image_url"] == "https://media.cindra.example/abc.png"
+
+
+def test_two_image_attachments_both_become_reference_images() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "interactions" in str(request.url):
+            body = json.loads(request.content)
+            assert isinstance(body["input"], list)
+            assert len(body["input"]) == 3  # text + 2 reference images
+            assert [p["type"] for p in body["input"]] == ["text", "image", "image"]
+            return httpx.Response(
+                200,
+                json={
+                    "status": "completed",
+                    "output_image": {"data": "ZmFrZS1pbWFnZQ==", "mime_type": "image/png"},
+                },
+            )
+        return httpx.Response(200, content=b"fake-reference-image")
+
+    payload = {
+        "topic": "утренний кофе",
+        "platform": "instagram",
+        "attachments": [
+            {"url": "https://r2.example/mood1.jpg", "attachment_type": "image"},
+            {"url": "https://r2.example/mood2.jpg", "attachment_type": "image"},
+        ],
+    }
+    with patch(
+        "app.content_pipeline.image_generator.upload_bytes",
+        return_value="https://media.cindra.example/abc.png",
+    ):
+        nano_banana_image_generator(payload, client=_client(handler))
 
 
 def test_document_attachment_adds_context_without_changing_input_shape() -> None:
@@ -137,8 +167,7 @@ def test_document_attachment_adds_context_without_changing_input_shape() -> None
     payload = {
         "topic": "утренний кофе",
         "platform": "instagram",
-        "attachment_url": "https://r2.example/brief.txt",
-        "attachment_type": "document",
+        "attachments": [{"url": "https://r2.example/brief.txt", "attachment_type": "document"}],
     }
     with patch(
         "app.content_pipeline.image_generator.upload_bytes",

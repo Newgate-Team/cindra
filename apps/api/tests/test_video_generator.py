@@ -169,8 +169,7 @@ def test_document_attachment_adds_context_to_prompt() -> None:
     payload = {
         "topic": "x",
         "platform": "instagram",
-        "attachment_url": "https://r2.example/brief.txt",
-        "attachment_type": "document",
+        "attachments": [{"url": "https://r2.example/brief.txt", "attachment_type": "document"}],
     }
     with patch(
         "app.content_pipeline.video_generator.upload_bytes",
@@ -207,8 +206,7 @@ def test_image_attachment_is_not_used() -> None:
     payload = {
         "topic": "x",
         "platform": "instagram",
-        "attachment_url": "https://r2.example/mood.jpg",
-        "attachment_type": "image",
+        "attachments": [{"url": "https://r2.example/mood.jpg", "attachment_type": "image"}],
     }
     with patch(
         "app.content_pipeline.video_generator.upload_bytes",
@@ -216,3 +214,42 @@ def test_image_attachment_is_not_used() -> None:
     ):
         veo_video_generator(payload, client=_client(handler), sleep=_no_sleep)
     assert fetched["called"] is False
+
+
+def test_two_document_attachments_are_both_included() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url).split("?")[0]
+        if url == "https://r2.example/brief.txt":
+            return httpx.Response(200, content="сценарий из ТЗ клиента".encode())
+        if url == "https://r2.example/notes.txt":
+            return httpx.Response(200, content="дополнительные заметки".encode())
+        if request.method == "POST":
+            body = json.loads(request.content)
+            prompt = body["instances"][0]["prompt"]
+            assert "сценарий из ТЗ клиента" in prompt
+            assert "дополнительные заметки" in prompt
+            return httpx.Response(200, json={"name": "operations/abc123"})
+        return httpx.Response(
+            200,
+            json={
+                "name": "operations/abc123",
+                "done": True,
+                "response": {
+                    "generateVideoResponse": {"generatedSamples": [{"video": {"uri": _VIDEO_URI}}]}
+                },
+            },
+        )
+
+    payload = {
+        "topic": "x",
+        "platform": "instagram",
+        "attachments": [
+            {"url": "https://r2.example/brief.txt", "attachment_type": "document"},
+            {"url": "https://r2.example/notes.txt", "attachment_type": "document"},
+        ],
+    }
+    with patch(
+        "app.content_pipeline.video_generator.upload_bytes",
+        return_value="https://media.cindra.example/abc.mp4",
+    ):
+        veo_video_generator(payload, client=_client(handler), sleep=_no_sleep)

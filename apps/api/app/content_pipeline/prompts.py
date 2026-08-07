@@ -28,16 +28,17 @@ def build_text_prompt(
     platform: SocialPlatform,
     content_kind: str = "post",
     brand_guide: str | None = None,
-    attachment_text: str | None = None,
+    attachment_texts: list[str] | None = None,
 ) -> str:
     """Build the user-message prompt for text generation.
 
     `content_kind` is one of "post" / "story" / "video_script" (falls
     back to plain "Обычный пост." guidance for anything else, rather
     than raising -- an unrecognized kind shouldn't crash the request).
-    `attachment_text` is extracted document text from an optional
-    context file (CIN-97) -- image/video/audio attachments are passed
-    separately as multimodal parts, not folded into this string.
+    `attachment_texts` is extracted text from optional document
+    context files (CIN-97, up to several since CIN-107) -- image/
+    video/audio attachments are passed separately as multimodal parts,
+    not folded into this string.
     """
     lines = [
         f"Тема: {topic}",
@@ -46,7 +47,8 @@ def build_text_prompt(
     ]
     if brand_guide:
         lines.append(f"Бренд-гайд (соблюдать тон и стиль): {brand_guide}")
-    if attachment_text:
-        lines.append(f"Контекст из прикреплённого документа: {attachment_text}")
+    for i, text in enumerate(attachment_texts or [], start=1):
+        label = "Контекст из прикреплённого документа" if len(attachment_texts) == 1 else f"Контекст из документа {i}"
+        lines.append(f"{label}: {text}")
     lines.append("Верни только готовый текст, без пояснений и без обрамляющих кавычек.")
     return "\n".join(lines)

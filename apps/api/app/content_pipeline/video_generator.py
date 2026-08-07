@@ -26,13 +26,14 @@ class VideoGenerationFailedError(Exception):
     """
 
 
-def _build_video_prompt(payload: dict[str, Any], attachment_text: str | None = None) -> str:
+def _build_video_prompt(payload: dict[str, Any], attachment_texts: list[str] | None = None) -> str:
     lines = [f"Короткое видео на тему: {payload['topic']}."]
     brand_guide = payload.get("brand_guide")
     if brand_guide:
         lines.append(f"Стиль и бренд-гайд (соблюдать): {brand_guide}")
-    if attachment_text:
-        lines.append(f"Контекст из прикреплённого документа: {attachment_text}")
+    for i, text in enumerate(attachment_texts or [], start=1):
+        label = "Контекст из прикреплённого документа" if len(attachment_texts) == 1 else f"Контекст из документа {i}"
+        lines.append(f"{label}: {text}")
     return "\n".join(lines)
 
 
@@ -73,19 +74,19 @@ def veo_video_generator(
     """
     settings = get_settings()
 
-    # Optional context file (CIN-97): only a document's extracted text
-    # is used here -- Veo's predictLongRunning has no documented way to
-    # accept an arbitrary image/video/audio as generation context (only
-    # text-to-video), so image/video/audio attachments aren't applied
-    # when content_type is "video" rather than guessing at an
-    # unconfirmed request shape.
-    attachment_text = None
-    attachment_url = payload.get("attachment_url")
-    if attachment_url and payload["attachment_type"] == "document":
-        context = build_attachment_context(attachment_url, "document", client=client)
-        attachment_text = context["text"]
+    # Optional context files (CIN-97, up to 2 documents since CIN-107):
+    # only documents' extracted text is used here -- Veo's
+    # predictLongRunning has no documented way to accept an arbitrary
+    # image/video/audio as generation context (only text-to-video), so
+    # image/video/audio attachments aren't applied when content_type is
+    # "video" rather than guessing at an unconfirmed request shape.
+    attachment_texts = [
+        build_attachment_context(attachment["url"], "document", client=client)["text"]
+        for attachment in payload.get("attachments", [])
+        if attachment["attachment_type"] == "document"
+    ]
 
-    prompt = _build_video_prompt(payload, attachment_text=attachment_text)
+    prompt = _build_video_prompt(payload, attachment_texts=attachment_texts)
     post = client.post if client is not None else httpx.post
     get = client.get if client is not None else httpx.get
     params = {"key": settings.gemini_api_key}

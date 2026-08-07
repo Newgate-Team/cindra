@@ -86,8 +86,33 @@ def test_document_attachment_adds_context_to_prompt() -> None:
     payload = {
         "topic": "осенняя коллекция",
         "platform": "telegram",
-        "attachment_url": "https://r2.example/brief.txt",
-        "attachment_type": "document",
+        "attachments": [{"url": "https://r2.example/brief.txt", "attachment_type": "document"}],
+    }
+    result = gemini_text_generator(payload, client=_client(handler))
+    assert result["text"] == "Готово"
+
+
+def test_multiple_document_attachments_are_both_included() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "generativelanguage" in str(request.url):
+            body = json.loads(request.content)
+            text = body["contents"][0]["parts"][0]["text"]
+            assert "план запуска" in text
+            assert "список продуктов" in text
+            return httpx.Response(
+                200, json={"candidates": [{"content": {"parts": [{"text": "Готово"}]}}]}
+            )
+        if "brief.txt" in str(request.url):
+            return httpx.Response(200, content="план запуска".encode())
+        return httpx.Response(200, content="список продуктов".encode())
+
+    payload = {
+        "topic": "осенняя коллекция",
+        "platform": "telegram",
+        "attachments": [
+            {"url": "https://r2.example/brief.txt", "attachment_type": "document"},
+            {"url": "https://r2.example/products.txt", "attachment_type": "document"},
+        ],
     }
     result = gemini_text_generator(payload, client=_client(handler))
     assert result["text"] == "Готово"
@@ -111,8 +136,7 @@ def test_image_attachment_becomes_multimodal_part() -> None:
     payload = {
         "topic": "осенняя коллекция",
         "platform": "telegram",
-        "attachment_url": "https://r2.example/reference.png",
-        "attachment_type": "image",
+        "attachments": [{"url": "https://r2.example/reference.png", "attachment_type": "image"}],
     }
     result = gemini_text_generator(payload, client=_client(handler))
     assert result["text"] == "Готово"

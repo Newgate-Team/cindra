@@ -3,8 +3,12 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
+from app.content_pipeline.attachments import (
+    TooManyAttachmentsError,
+    validate_attachment_set,
+)
 from app.models import (
     GenerationContentType,
     GenerationStatus,
@@ -48,6 +52,11 @@ class SubscriptionOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class AttachmentRef(BaseModel):
+    url: str
+    attachment_type: str
+
+
 class GenerationRequest(BaseModel):
     topic: str = Field(min_length=1, max_length=5000)
     # Target accounts are chosen up front (CIN-106), before generation --
@@ -59,11 +68,19 @@ class GenerationRequest(BaseModel):
     content_type: GenerationContentType = GenerationContentType.text
     content_kind: str = "post"
     brand_guide: str | None = None
-    # Optional context file (CIN-97) -- set together by the client after
-    # a successful POST /content/attachment upload. attachment_type is
-    # one of image/video/audio/document (see content_pipeline/attachments.py).
-    attachment_url: str | None = None
-    attachment_type: str | None = None
+    # Optional context files (CIN-97, extended to a list in CIN-107) --
+    # set by the client after successful POST /content/attachment
+    # upload(s), one call per file. Up to 5 total, video/audio capped
+    # at 1 each -- see content_pipeline/attachments.py.validate_attachment_set.
+    attachments: list[AttachmentRef] = Field(default_factory=list, max_length=5)
+
+    @model_validator(mode="after")
+    def _validate_attachment_set(self) -> "GenerationRequest":
+        try:
+            validate_attachment_set([a.attachment_type for a in self.attachments])
+        except TooManyAttachmentsError as exc:
+            raise ValueError(str(exc)) from exc
+        return self
 
 
 class AttachmentOut(BaseModel):

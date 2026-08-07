@@ -8,12 +8,14 @@ from PIL import Image
 
 from app.content_pipeline.attachments import (
     AttachmentTooLargeError,
+    TooManyAttachmentsError,
     UnsupportedAttachmentError,
     build_attachment_context,
     classify_attachment,
     downscale_image_for_context,
     extract_document_text,
     fetch_attachment_bytes,
+    validate_attachment_set,
 )
 
 
@@ -155,3 +157,39 @@ def test_build_attachment_context_image_returns_raw_bytes() -> None:
         "https://r2.example/photo.png", "image", client=_client(handler)
     )
     assert context == {"kind": "media", "mime_type": "image/png", "data": b"fake-image-bytes"}
+
+
+def test_validate_attachment_set_allows_up_to_five_images() -> None:
+    validate_attachment_set(["image"] * 5)
+
+
+def test_validate_attachment_set_allows_up_to_five_documents() -> None:
+    validate_attachment_set(["document"] * 5)
+
+
+def test_validate_attachment_set_allows_mixed_combination() -> None:
+    # 3 photos + 1 document + 1 audio -- from the user's own example.
+    validate_attachment_set(["image", "image", "image", "document", "audio"])
+
+
+def test_validate_attachment_set_rejects_more_than_five_total() -> None:
+    with pytest.raises(TooManyAttachmentsError):
+        validate_attachment_set(["image"] * 6)
+
+
+def test_validate_attachment_set_rejects_two_videos() -> None:
+    with pytest.raises(TooManyAttachmentsError):
+        validate_attachment_set(["video", "video"])
+
+
+def test_validate_attachment_set_rejects_two_audios() -> None:
+    with pytest.raises(TooManyAttachmentsError):
+        validate_attachment_set(["audio", "audio"])
+
+
+def test_validate_attachment_set_allows_one_video_and_one_audio_together() -> None:
+    validate_attachment_set(["video", "audio", "image", "document"])
+
+
+def test_validate_attachment_set_allows_empty() -> None:
+    validate_attachment_set([])
