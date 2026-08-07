@@ -247,6 +247,53 @@ def test_generate_with_multiple_targets_uses_intersection_of_content_types(
     assert response.status_code == 202
 
 
+def test_generate_rejects_more_than_five_attachments(client: TestClient, db: Session) -> None:
+    headers = _auth_headers(client)
+    account_id = _account_id(db)
+    attachments = [
+        {"url": f"https://r2.example/{i}.jpg", "attachment_type": "image"} for i in range(6)
+    ]
+    response = client.post(
+        "/content/generate",
+        json={"topic": "тема", "target_account_ids": [account_id], "attachments": attachments},
+        headers=headers,
+    )
+    assert response.status_code == 422
+
+
+def test_generate_rejects_two_videos(client: TestClient, db: Session) -> None:
+    headers = _auth_headers(client)
+    account_id = _account_id(db)
+    attachments = [
+        {"url": "https://r2.example/a.mp4", "attachment_type": "video"},
+        {"url": "https://r2.example/b.mp4", "attachment_type": "video"},
+    ]
+    response = client.post(
+        "/content/generate",
+        json={"topic": "тема", "target_account_ids": [account_id], "attachments": attachments},
+        headers=headers,
+    )
+    assert response.status_code == 422
+
+
+def test_generate_accepts_five_mixed_attachments(client: TestClient, db: Session) -> None:
+    headers = _auth_headers(client)
+    account_id = _account_id(db)
+    attachments = [
+        {"url": "https://r2.example/1.jpg", "attachment_type": "image"},
+        {"url": "https://r2.example/2.jpg", "attachment_type": "image"},
+        {"url": "https://r2.example/3.jpg", "attachment_type": "image"},
+        {"url": "https://r2.example/1.pdf", "attachment_type": "document"},
+        {"url": "https://r2.example/1.mp3", "attachment_type": "audio"},
+    ]
+    response = client.post(
+        "/content/generate",
+        json={"topic": "тема", "target_account_ids": [account_id], "attachments": attachments},
+        headers=headers,
+    )
+    assert response.status_code == 202
+
+
 def test_upload_attachment_returns_url_and_type(client: TestClient) -> None:
     headers = _auth_headers(client)
     with patch(

@@ -24,13 +24,14 @@ class ImageGenerationFailedError(Exception):
     VideoGenerationFailedError in video_generator.py."""
 
 
-def _build_image_prompt(payload: dict[str, Any], attachment_text: str | None = None) -> str:
+def _build_image_prompt(payload: dict[str, Any], attachment_texts: list[str] | None = None) -> str:
     lines = [f"Фотореалистичное изображение на тему: {payload['topic']}."]
     brand_guide = payload.get("brand_guide")
     if brand_guide:
         lines.append(f"Стиль и бренд-гайд (соблюдать): {brand_guide}")
-    if attachment_text:
-        lines.append(f"Контекст из прикреплённого документа: {attachment_text}")
+    for i, text in enumerate(attachment_texts or [], start=1):
+        label = "Контекст из прикреплённого документа" if len(attachment_texts) == 1 else f"Контекст из документа {i}"
+        lines.append(f"{label}: {text}")
     lines.append("Без текста, надписей и водяных знаков на изображении.")
     return "\n".join(lines)
 
@@ -69,33 +70,36 @@ def nano_banana_image_generator(
     """
     settings = get_settings()
 
-    # Optional context file (CIN-97): a document's extracted text folds
-    # into the prompt; an attached image becomes a reference image via
-    # the Interactions API's array `input` form (image-to-image/edit,
+    # Optional context files (CIN-97, up to 2 reference images since
+    # CIN-107): each document's extracted text folds into the prompt;
+    # each attached image becomes a reference image via the
+    # Interactions API's array `input` form (image-to-image/edit,
     # ai.google.dev/gemini-api/docs/image-generation). Video/audio
     # attachments aren't usable here -- the Interactions API only
     # documents image reference input, not video/audio -- so they're
     # silently not applied when content_type is "image".
-    attachment_text = None
-    attachment_image_b64: str | None = None
-    attachment_mime: str | None = None
-    attachment_url = payload.get("attachment_url")
-    if attachment_url:
-        context = build_attachment_context(attachment_url, payload["attachment_type"], client=client)
+    attachment_texts: list[str] = []
+    reference_images: list[dict[str, Any]] = []
+    for attachment in payload.get("attachments", []):
+        context = build_attachment_context(
+            attachment["url"], attachment["attachment_type"], client=client
+        )
         if context["kind"] == "text":
-            attachment_text = context["text"]
-        elif payload["attachment_type"] == "image":
-            attachment_image_b64 = base64.b64encode(context["data"]).decode("ascii")
-            attachment_mime = context["mime_type"]
+            attachment_texts.append(context["text"])
+        elif attachment["attachment_type"] == "image":
+            reference_images.append(
+                {
+                    "type": "image",
+                    "mime_type": context["mime_type"],
+                    "data": base64.b64encode(context["data"]).decode("ascii"),
+                }
+            )
 
-    prompt = _build_image_prompt(payload, attachment_text=attachment_text)
+    prompt = _build_image_prompt(payload, attachment_texts=attachment_texts)
 
     input_field: Any
-    if attachment_image_b64:
-        input_field = [
-            {"type": "text", "text": prompt},
-            {"type": "image", "mime_type": attachment_mime, "data": attachment_image_b64},
-        ]
+    if reference_images:
+        input_field = [{"type": "text", "text": prompt}, *reference_images]
     else:
         input_field = prompt
 

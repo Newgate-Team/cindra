@@ -66,6 +66,31 @@ class AttachmentTooLargeError(Exception):
     """Raw upload exceeds the per-type size cap."""
 
 
+class TooManyAttachmentsError(Exception):
+    """The attachment set for one generation exceeds CIN-107's caps."""
+
+
+# CIN-107: up to 5 attachments total, any mix of document/image, but
+# video and audio are capped at 1 each below that total -- one
+# reference clip/track is enough context, and Gemini's multimodal
+# input isn't meant to take several.
+MAX_TOTAL_ATTACHMENTS = 5
+_PER_TYPE_CAPS = {"video": 1, "audio": 1}
+
+
+def validate_attachment_set(attachment_types: list[str]) -> None:
+    if len(attachment_types) > MAX_TOTAL_ATTACHMENTS:
+        raise TooManyAttachmentsError(
+            f"Слишком много вложений: {len(attachment_types)}, максимум {MAX_TOTAL_ATTACHMENTS}"
+        )
+    for attachment_type, cap in _PER_TYPE_CAPS.items():
+        count = attachment_types.count(attachment_type)
+        if count > cap:
+            raise TooManyAttachmentsError(
+                f"Слишком много вложений типа {attachment_type}: {count}, максимум {cap}"
+            )
+
+
 def downscale_image_for_context(data: bytes) -> tuple[bytes, str]:
     """Resize an uploaded image attachment down to _MAX_IMAGE_DIMENSION
     on its longest side before it's stored/sent to Gemini as context

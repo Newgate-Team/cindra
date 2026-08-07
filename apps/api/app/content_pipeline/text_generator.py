@@ -41,36 +41,39 @@ def gemini_text_generator(
     """
     settings = get_settings()
 
-    # Optional context file (CIN-97): a document's extracted text folds
-    # into the prompt string; an image/video/audio attachment instead
-    # becomes an extra multimodal `parts` entry below -- Gemini reads it
-    # directly rather than us describing it in words.
-    attachment_text = None
-    attachment_part: dict[str, Any] | None = None
-    attachment_url = payload.get("attachment_url")
-    if attachment_url:
-        context = build_attachment_context(attachment_url, payload["attachment_type"], client=client)
+    # Optional context files (CIN-97, up to 5 mixed since CIN-107): each
+    # document's extracted text folds into the prompt string; each
+    # image/video/audio attachment instead becomes an extra multimodal
+    # `parts` entry below -- Gemini reads it directly rather than us
+    # describing it in words.
+    attachment_texts: list[str] = []
+    attachment_parts: list[dict[str, Any]] = []
+    for attachment in payload.get("attachments", []):
+        context = build_attachment_context(
+            attachment["url"], attachment["attachment_type"], client=client
+        )
         if context["kind"] == "text":
-            attachment_text = context["text"]
+            attachment_texts.append(context["text"])
         else:
-            attachment_part = {
-                "inline_data": {
-                    "mime_type": context["mime_type"],
-                    "data": base64.b64encode(context["data"]).decode("ascii"),
+            attachment_parts.append(
+                {
+                    "inline_data": {
+                        "mime_type": context["mime_type"],
+                        "data": base64.b64encode(context["data"]).decode("ascii"),
+                    }
                 }
-            }
+            )
 
     prompt = build_text_prompt(
         topic=payload["topic"],
         platform=SocialPlatform(payload["platform"]),
         content_kind=payload.get("content_kind", "post"),
         brand_guide=payload.get("brand_guide"),
-        attachment_text=attachment_text,
+        attachment_texts=attachment_texts,
     )
 
     parts: list[dict[str, Any]] = [{"text": prompt}]
-    if attachment_part:
-        parts.append(attachment_part)
+    parts.extend(attachment_parts)
 
     url = f"{_GEMINI_BASE_URL}/{settings.gemini_model}:generateContent"
     request_kwargs: dict[str, Any] = {

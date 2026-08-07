@@ -161,6 +161,24 @@ const ATTACHMENT_TYPE_LABELS: Record<Attachment["attachment_type"], string> = {
   document: "документ",
 };
 
+// Mirrors app/content_pipeline/attachments.py's validate_attachment_set
+// (CIN-107): up to 5 attachments total, any mix of document/image, but
+// video and audio are capped at 1 each below that total.
+const MAX_TOTAL_ATTACHMENTS = 5;
+const PER_TYPE_ATTACHMENT_CAPS: Partial<Record<Attachment["attachment_type"], number>> = {
+  video: 1,
+  audio: 1,
+};
+
+type NamedAttachment = Attachment & { name: string };
+
+function attachmentCapReached(attachments: NamedAttachment[], attachmentType: Attachment["attachment_type"]): boolean {
+  if (attachments.length >= MAX_TOTAL_ATTACHMENTS) return true;
+  const perTypeCap = PER_TYPE_ATTACHMENT_CAPS[attachmentType];
+  if (perTypeCap === undefined) return false;
+  return attachments.filter((a) => a.attachment_type === attachmentType).length >= perTypeCap;
+}
+
 function GenerateForm() {
   const { token } = useAuth();
   const [accounts, setAccounts] = useState<SocialAccount[]>([]);
@@ -170,8 +188,7 @@ function GenerateForm() {
   const [contentType, setContentType] = useState<GenerationContentType>("text");
   const [contentKind, setContentKind] = useState("post");
   const [brandGuide, setBrandGuide] = useState("");
-  const [attachment, setAttachment] = useState<Attachment | null>(null);
-  const [attachmentName, setAttachmentName] = useState("");
+  const [attachments, setAttachments] = useState<NamedAttachment[]>([]);
   const [uploadingAttachment, setUploadingAttachment] = useState(false);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [job, setJob] = useState<GenerationJob | null>(null);
@@ -208,11 +225,20 @@ function GenerateForm() {
     event.target.value = ""; // allow re-selecting the same file later
     if (!file) return;
     setAttachmentError(null);
+    if (attachments.length >= MAX_TOTAL_ATTACHMENTS) {
+      setAttachmentError(`Максимум ${MAX_TOTAL_ATTACHMENTS} вложений за генерацию`);
+      return;
+    }
     setUploadingAttachment(true);
     try {
       const uploaded = await api.upload<Attachment>("/content/attachment", file, token);
-      setAttachment(uploaded);
-      setAttachmentName(file.name);
+      if (attachmentCapReached(attachments, uploaded.attachment_type)) {
+        setAttachmentError(
+          `Достигнут лимит для типа «${ATTACHMENT_TYPE_LABELS[uploaded.attachment_type]}»`
+        );
+        return;
+      }
+      setAttachments((prev) => [...prev, { ...uploaded, name: file.name }]);
     } catch (err) {
       setAttachmentError(err instanceof ApiError ? err.message : "Не удалось загрузить файл");
     } finally {
@@ -220,9 +246,8 @@ function GenerateForm() {
     }
   }
 
-  function removeAttachment() {
-    setAttachment(null);
-    setAttachmentName("");
+  function removeAttachment(index: number) {
+    setAttachments((prev) => prev.filter((_, i) => i !== index));
     setAttachmentError(null);
   }
 
@@ -261,8 +286,7 @@ function GenerateForm() {
           content_type: contentType,
           content_kind: contentKind,
           brand_guide: brandGuide || null,
-          attachment_url: attachment?.url ?? null,
-          attachment_type: attachment?.attachment_type ?? null,
+          attachments: attachments.map((a) => ({ url: a.url, attachment_type: a.attachment_type })),
         },
         token
       );
@@ -359,18 +383,27 @@ function GenerateForm() {
           />
         </label>
         <label>
-          Прикрепить файл (необязательно)
-          <input type="file" accept={ATTACHMENT_ACCEPT} onChange={handleAttachmentChange} />
+          Прикрепить файлы (необязательно, до {MAX_TOTAL_ATTACHMENTS}: видео и аудио — не больше 1 каждого)
+          <input
+            type="file"
+            accept={ATTACHMENT_ACCEPT}
+            onChange={handleAttachmentChange}
+            disabled={uploadingAttachment || attachments.length >= MAX_TOTAL_ATTACHMENTS}
+          />
         </label>
         {uploadingAttachment && <p className="muted">Загружаем файл…</p>}
         {attachmentError && <p className="error">{attachmentError}</p>}
-        {attachment && !uploadingAttachment && (
-          <p className="muted">
-            Прикреплено: {attachmentName} ({ATTACHMENT_TYPE_LABELS[attachment.attachment_type]}){" "}
-            <button type="button" className="secondary" onClick={removeAttachment}>
-              Убрать
-            </button>
-          </p>
+        {attachments.length > 0 && (
+          <ul>
+            {attachments.map((a, index) => (
+              <li key={`${a.url}-${index}`} className="muted">
+                {a.name} ({ATTACHMENT_TYPE_LABELS[a.attachment_type]}){" "}
+                <button type="button" className="secondary" onClick={() => removeAttachment(index)}>
+                  Убрать
+                </button>
+              </li>
+            ))}
+          </ul>
         )}
         {error && <p className="error">{error}</p>}
         <button type="submit" disabled={submitting || uploadingAttachment || targetAccountIds.length === 0}>

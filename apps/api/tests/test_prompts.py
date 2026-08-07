@@ -34,6 +34,21 @@ def test_video_script_guidance() -> None:
     assert "таймкодами" in prompt
 
 
+def test_single_attachment_text_uses_generic_label() -> None:
+    prompt = build_text_prompt(
+        "тема", SocialPlatform.telegram, attachment_texts=["план запуска"]
+    )
+    assert "Контекст из прикреплённого документа: план запуска" in prompt
+
+
+def test_multiple_attachment_texts_are_numbered() -> None:
+    prompt = build_text_prompt(
+        "тема", SocialPlatform.telegram, attachment_texts=["план запуска", "список продуктов"]
+    )
+    assert "Контекст из документа 1: план запуска" in prompt
+    assert "Контекст из документа 2: список продуктов" in prompt
+
+
 def test_facebook_has_its_own_guidance_and_does_not_raise() -> None:
     # Regression check (CIN-106): _PLATFORM_GUIDANCE previously had no
     # facebook entry and used a hard dict lookup, so this raised an
