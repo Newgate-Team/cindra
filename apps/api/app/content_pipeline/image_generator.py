@@ -8,7 +8,11 @@ from app.config import get_settings
 from app.content_pipeline.attachments import build_attachment_context
 from app.content_pipeline.errors import TransientGenerationError
 from app.content_pipeline.media_storage import upload_bytes
-from app.content_pipeline.text_generator import generate_caption
+from app.content_pipeline.story_overlay import composite_story_text
+from app.content_pipeline.text_generator import (
+    generate_caption,
+    generate_story_overlay_text,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -184,14 +188,27 @@ def nano_banana_image_generator(
         )
     image_bytes = base64.b64decode(output_image["data"])
     mime_type = output_image["mime_type"]
-    extension = mime_type.split("/")[-1]
-    image_url = upload_bytes(image_bytes, mime_type, extension)
 
-    result: dict[str, Any] = {"image_url": image_url, "prompt": prompt}
+    result: dict[str, Any] = {"prompt": prompt}
     # CIN-114: a real caption, not just the raw topic, for the "Подпись"
     # field on the review-and-publish screen -- best-effort, never
     # fails the (already successful, already paid-for) image itself.
     caption = generate_caption(payload, client=client)
     if caption:
         result["text"] = caption
+
+    if payload.get("content_kind") == "story":
+        # CIN-123: Instagram Stories have no text-overlay parameter via
+        # the API at all -- the only way generated text ends up visible
+        # on the published Story is compositing it onto the image
+        # itself before upload. Separate, much shorter generation than
+        # the caption above; best-effort like it, skips the overlay
+        # (not the whole generation) on failure.
+        overlay_text = generate_story_overlay_text(payload, client=client)
+        if overlay_text:
+            image_bytes = composite_story_text(image_bytes, overlay_text)
+            mime_type = "image/png"
+
+    extension = mime_type.split("/")[-1]
+    result["image_url"] = upload_bytes(image_bytes, mime_type, extension)
     return result

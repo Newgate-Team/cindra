@@ -7,7 +7,7 @@ import httpx
 from app.config import get_settings
 from app.content_pipeline.attachments import build_attachment_context
 from app.content_pipeline.errors import TransientGenerationError
-from app.content_pipeline.prompts import build_text_prompt
+from app.content_pipeline.prompts import build_story_overlay_prompt, build_text_prompt
 from app.models import SocialPlatform
 
 logger = logging.getLogger(__name__)
@@ -35,56 +35,17 @@ class TextGenerationFailedError(Exception):
 _MAX_OUTPUT_TOKENS = 2048
 
 
-def gemini_text_generator(
-    payload: dict[str, Any], client: httpx.Client | None = None
-) -> dict[str, Any]:
-    """Real Google Gemini generateContent API call.
-
-    `payload` is a GenerationJob.input_payload built by the /content
-    router: {"topic", "platform", "content_kind", "brand_guide"}.
-    Without GEMINI_API_KEY configured (see gate ticket CIN-53) this
-    still reaches the real endpoint and fails with a real 400
-    API_KEY_INVALID -- proving the request is shaped correctly, not
-    mocking the call away (verified manually against the real
-    generativelanguage.googleapis.com endpoint; see CIN-53). `client`
-    is only for tests to inject an httpx.MockTransport -- production
-    always uses the default real client.
-    """
+def _generate_content(
+    prompt: str, extra_parts: list[dict[str, Any]], client: httpx.Client | None
+) -> str:
+    """Shared low-level Gemini generateContent call, given an
+    already-built prompt -- both gemini_text_generator (the full post/
+    caption pipeline) and generate_story_overlay_text (CIN-123's much
+    shorter, separate generation) go through this so the request
+    shape, retry classification, and CIN-111 key-redaction all live in
+    exactly one place."""
     settings = get_settings()
-
-    # Optional context files (CIN-97, up to 5 mixed since CIN-107): each
-    # document's extracted text folds into the prompt string; each
-    # image/video/audio attachment instead becomes an extra multimodal
-    # `parts` entry below -- Gemini reads it directly rather than us
-    # describing it in words.
-    attachment_texts: list[str] = []
-    attachment_parts: list[dict[str, Any]] = []
-    for attachment in payload.get("attachments", []):
-        context = build_attachment_context(
-            attachment["url"], attachment["attachment_type"], client=client
-        )
-        if context["kind"] == "text":
-            attachment_texts.append(context["text"])
-        else:
-            attachment_parts.append(
-                {
-                    "inline_data": {
-                        "mime_type": context["mime_type"],
-                        "data": base64.b64encode(context["data"]).decode("ascii"),
-                    }
-                }
-            )
-
-    prompt = build_text_prompt(
-        topic=payload["topic"],
-        platform=SocialPlatform(payload["platform"]),
-        content_kind=payload.get("content_kind", "post"),
-        brand_guide=payload.get("brand_guide"),
-        attachment_texts=attachment_texts,
-    )
-
-    parts: list[dict[str, Any]] = [{"text": prompt}]
-    parts.extend(attachment_parts)
+    parts: list[dict[str, Any]] = [{"text": prompt}, *extra_parts]
 
     url = f"{_GEMINI_BASE_URL}/{settings.gemini_model}:generateContent"
     request_kwargs: dict[str, Any] = {
@@ -117,11 +78,60 @@ def gemini_text_generator(
         )
 
     body = response.json()
-    text = "".join(
+    return "".join(
         part["text"]
         for part in body["candidates"][0]["content"]["parts"]
         if "text" in part
     )
+
+
+def gemini_text_generator(
+    payload: dict[str, Any], client: httpx.Client | None = None
+) -> dict[str, Any]:
+    """Real Google Gemini generateContent API call.
+
+    `payload` is a GenerationJob.input_payload built by the /content
+    router: {"topic", "platform", "content_kind", "brand_guide"}.
+    Without GEMINI_API_KEY configured (see gate ticket CIN-53) this
+    still reaches the real endpoint and fails with a real 400
+    API_KEY_INVALID -- proving the request is shaped correctly, not
+    mocking the call away (verified manually against the real
+    generativelanguage.googleapis.com endpoint; see CIN-53). `client`
+    is only for tests to inject an httpx.MockTransport -- production
+    always uses the default real client.
+    """
+    # Optional context files (CIN-97, up to 5 mixed since CIN-107): each
+    # document's extracted text folds into the prompt string; each
+    # image/video/audio attachment instead becomes an extra multimodal
+    # `parts` entry below -- Gemini reads it directly rather than us
+    # describing it in words.
+    attachment_texts: list[str] = []
+    attachment_parts: list[dict[str, Any]] = []
+    for attachment in payload.get("attachments", []):
+        context = build_attachment_context(
+            attachment["url"], attachment["attachment_type"], client=client
+        )
+        if context["kind"] == "text":
+            attachment_texts.append(context["text"])
+        else:
+            attachment_parts.append(
+                {
+                    "inline_data": {
+                        "mime_type": context["mime_type"],
+                        "data": base64.b64encode(context["data"]).decode("ascii"),
+                    }
+                }
+            )
+
+    prompt = build_text_prompt(
+        topic=payload["topic"],
+        platform=SocialPlatform(payload["platform"]),
+        content_kind=payload.get("content_kind", "post"),
+        brand_guide=payload.get("brand_guide"),
+        attachment_texts=attachment_texts,
+    )
+
+    text = _generate_content(prompt, attachment_parts, client)
     return {"text": text, "prompt": prompt}
 
 
@@ -139,4 +149,33 @@ def generate_caption(payload: dict[str, Any], client: httpx.Client | None = None
         return gemini_text_generator(payload, client=client)["text"]
     except Exception:
         logger.warning("Caption generation failed, falling back to no caption", exc_info=True)
+        return None
+
+
+def generate_story_overlay_text(
+    payload: dict[str, Any], client: httpx.Client | None = None
+) -> str | None:
+    """Best-effort minimal text to render directly onto an Instagram
+    Story image (CIN-123).
+
+    Instagram's Content Publishing API has no text-overlay/caption
+    parameter for Stories at all (confirmed against Meta's own docs --
+    a Story container only ever accepts image_url/video_url) -- so a
+    generated phrase can only end up visible on a published Story by
+    being composited onto the image's pixels before upload (see
+    content_pipeline/story_overlay.py). Deliberately a separate, much
+    shorter generation than generate_caption()'s full caption -- that
+    one keeps being the (longer) Post.text shown in Calendar/Feed, not
+    what gets drawn on the image itself.
+
+    Deliberately swallows any failure and returns None rather than
+    letting an overlay-text hiccup fail an already-successful, already
+    -paid-for image generation -- callers skip compositing when this
+    returns None, same as generate_caption's fallback.
+    """
+    try:
+        prompt = build_story_overlay_prompt(payload["topic"], payload.get("brand_guide"))
+        return _generate_content(prompt, [], client)
+    except Exception:
+        logger.warning("Story overlay text generation failed, skipping overlay", exc_info=True)
         return None

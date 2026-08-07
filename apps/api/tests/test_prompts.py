@@ -1,4 +1,4 @@
-from app.content_pipeline.prompts import build_text_prompt
+from app.content_pipeline.prompts import build_story_overlay_prompt, build_text_prompt
 from app.models import SocialPlatform
 
 
@@ -55,3 +55,19 @@ def test_facebook_has_its_own_guidance_and_does_not_raise() -> None:
     # uncaught KeyError inside the Celery task.
     prompt = build_text_prompt("тема", SocialPlatform.facebook)
     assert "Facebook" in prompt
+
+
+def test_story_overlay_prompt_asks_for_a_short_phrase() -> None:
+    prompt = build_story_overlay_prompt("осенняя коллекция")
+    assert "осенняя коллекция" in prompt
+    assert "2-6 слов" in prompt
+
+
+def test_story_overlay_prompt_includes_brand_guide_when_present() -> None:
+    prompt = build_story_overlay_prompt("тема", brand_guide="дружелюбно, без канцелярита")
+    assert "дружелюбно, без канцелярита" in prompt
+
+
+def test_story_overlay_prompt_omits_brand_guide_when_absent() -> None:
+    prompt = build_story_overlay_prompt("тема")
+    assert "Бренд-гайд" not in prompt
