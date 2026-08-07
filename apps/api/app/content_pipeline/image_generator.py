@@ -20,12 +20,36 @@ _RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 
 
 class ImageGenerationFailedError(Exception):
-    """Raised when the Interactions API responds 200 but declines to
-    produce an image (no output_image field) -- e.g. the model judged
-    the request unsafe, or gave a text-only reply instead. Not
-    retryable: the same prompt would very likely get the same non-answer
-    again, so this is treated as a permanent failure like
-    VideoGenerationFailedError in video_generator.py."""
+    """Raised when the Interactions API responds 200 with genuinely no
+    image anywhere in the response (neither output_image nor a steps
+    entry) -- e.g. the model judged the request unsafe, or gave a
+    text-only reply instead. Not retryable: the same prompt would very
+    likely get the same non-answer again, so this is treated as a
+    permanent failure like VideoGenerationFailedError in
+    video_generator.py."""
+
+
+def _extract_image_from_steps(body: dict[str, Any]) -> dict[str, Any] | None:
+    """output_image is documented as a convenience field for "the last
+    image generated... in response to the CURRENT request" -- but a
+    real production response (CIN-118, confirmed via CIN-110's
+    logging) had status=completed and a real generated image, with no
+    top-level output_image at all: the image only existed nested in
+    steps[].content[]. Every prior "Gemini declined to generate"
+    diagnosis (CIN-105/110/117) was chasing the wrong cause -- this was
+    a response-parsing gap, not the model refusing.
+
+    Searches steps in order and returns the LAST image content block
+    found (matching output_image's own "last image" semantics), or
+    None if there genuinely isn't one anywhere in the response.
+    """
+    found: dict[str, Any] | None = None
+    for step in body.get("steps", []):
+        for item in step.get("content", []):
+            mime_type = item.get("mime_type", "")
+            if mime_type.startswith("image/") and "data" in item:
+                found = {"data": item["data"], "mime_type": mime_type}
+    return found
 
 
 def _build_image_prompt(payload: dict[str, Any], attachment_texts: list[str] | None = None) -> str:
@@ -140,7 +164,8 @@ def nano_banana_image_generator(
     response.raise_for_status()
 
     body = response.json()
-    if "output_image" not in body:
+    output_image = body.get("output_image") or _extract_image_from_steps(body)
+    if output_image is None:
         # The user-facing message below stays generic (no raw API
         # internals) -- this is the diagnostic trail for us: without it,
         # there's no way to tell *why* Gemini declined (safety, a
@@ -148,7 +173,7 @@ def nano_banana_image_generator(
         # that it did (CIN-110, following the same real case CIN-105
         # left unconfirmed).
         logger.warning(
-            "Gemini Interactions API returned no output_image (status=%s): %s",
+            "Gemini Interactions API returned no image anywhere in the response (status=%s): %s",
             body.get("status"),
             response.text[:2000],
         )
@@ -157,7 +182,6 @@ def nano_banana_image_generator(
             "Возможно, запрос был отклонён как небезопасный, либо модель не смогла "
             "выполнить какую-то часть запроса. Попробуйте переформулировать запрос."
         )
-    output_image = body["output_image"]
     image_bytes = base64.b64decode(output_image["data"])
     mime_type = output_image["mime_type"]
     extension = mime_type.split("/")[-1]
