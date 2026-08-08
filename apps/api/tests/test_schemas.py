@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from app.schemas import TelegramConnectRequest
+from app.schemas import TelegramStartVerificationRequest
 
 
 @pytest.mark.parametrize(
@@ -18,7 +18,7 @@ from app.schemas import TelegramConnectRequest
     ],
 )
 def test_normalize_chat_id(raw: str, expected: str) -> None:
-    assert TelegramConnectRequest(chat_id=raw).chat_id == expected
+    assert TelegramStartVerificationRequest(chat_id=raw).chat_id == expected
 
 
 @pytest.mark.parametrize(
@@ -27,4 +27,4 @@ def test_normalize_chat_id(raw: str, expected: str) -> None:
 )
 def test_normalize_chat_id_rejects_private_invite_links(raw: str) -> None:
     with pytest.raises(ValidationError, match="Приватные инвайт-ссылки"):
-        TelegramConnectRequest(chat_id=raw)
+        TelegramStartVerificationRequest(chat_id=raw)

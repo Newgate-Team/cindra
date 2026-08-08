@@ -358,6 +358,26 @@ main {
   border-color: var(--ember);
 }
 
+/* Telegram ownership verification code (CIN-128) -- selectable/
+   copyable monospace box the user pastes into their channel's
+   description to prove they can actually edit it. */
+.verification-code-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.verification-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 15px;
+  padding: 8px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) - 4px);
+  user-select: all;
+}
+
 .tier-price {
   font-size: 28px;
   font-weight: 700;

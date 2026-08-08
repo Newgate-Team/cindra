@@ -169,7 +169,27 @@ class PostOut(BaseModel):
 _TME_LINK_RE = re.compile(r"^(?:https?://)?t\.me/(.+)$", re.IGNORECASE)
 
 
-class TelegramConnectRequest(BaseModel):
+def _normalize_chat_id(value: str) -> str:
+    value = value.strip()
+
+    match = _TME_LINK_RE.match(value)
+    if match:
+        path = match.group(1).strip("/")
+        if path.startswith(("+", "joinchat/")):
+            raise ValueError(
+                "Приватные инвайт-ссылки (t.me/+... или t.me/joinchat/...) не поддерживаются -- "
+                "укажите @username канала/группы или его numeric chat_id"
+            )
+        username = path.split("/")[0].split("?")[0]
+        return f"@{username}"
+
+    if value.startswith("@") or re.fullmatch(r"-?\d+", value):
+        return value
+
+    return f"@{value}"
+
+
+class TelegramStartVerificationRequest(BaseModel):
     chat_id: str = Field(
         min_length=1,
         description="Telegram @username, username, t.me-ссылка на публичный канал или numeric chat_id",
@@ -178,23 +198,25 @@ class TelegramConnectRequest(BaseModel):
     @field_validator("chat_id")
     @classmethod
     def normalize_chat_id(cls, value: str) -> str:
-        value = value.strip()
+        return _normalize_chat_id(value)
 
-        match = _TME_LINK_RE.match(value)
-        if match:
-            path = match.group(1).strip("/")
-            if path.startswith(("+", "joinchat/")):
-                raise ValueError(
-                    "Приватные инвайт-ссылки (t.me/+... или t.me/joinchat/...) не поддерживаются -- "
-                    "укажите @username канала/группы или его numeric chat_id"
-                )
-            username = path.split("/")[0].split("?")[0]
-            return f"@{username}"
 
-        if value.startswith("@") or re.fullmatch(r"-?\d+", value):
-            return value
+class TelegramStartVerificationOut(BaseModel):
+    """CIN-128: proof that whoever finishes the connect flow actually
+    controls the channel -- editing a channel's description requires
+    Telegram's own "Change Channel Info" admin permission, so
+    successfully placing `code` there and having us see it back is
+    itself the ownership proof. `verification_token` is a short-lived
+    signed token (see security.py) binding this code to this chat_id
+    so /telegram/connect can't be handed an unrelated code/chat pair."""
 
-        return f"@{value}"
+    code: str
+    verification_token: str
+    chat_title: str | None
+
+
+class TelegramConnectRequest(BaseModel):
+    verification_token: str = Field(min_length=1)
 
 
 class InstagramConnectRequest(BaseModel):
