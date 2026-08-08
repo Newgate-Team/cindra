@@ -14,6 +14,21 @@ const TIER_LABELS: Record<string, string> = {
   business: "Business ($100/мес)",
 };
 
+// Grid rendering for the tier-comparison cards below -- kept as
+// separate lookup tables (rather than reusing/reparsing TIER_LABELS)
+// so the numbers stay a direct, readable mirror of app/plans.py's
+// real PLAN_LIMITS (free: 20 text/3 image/0 video, 10 publications,
+// 1 account; pro/business already matched what the upgrade copy
+// below said before this page was restyled).
+const TIER_ORDER: SubscriptionTier[] = ["free", "pro", "business"];
+const TIER_NAME: Record<SubscriptionTier, string> = { free: "Free", pro: "Pro", business: "Business" };
+const TIER_PRICE: Record<SubscriptionTier, string> = { free: "0 $", pro: "19 $", business: "100 $" };
+const TIER_FEATURES: Record<SubscriptionTier, string[]> = {
+  free: ["20 текстов, 3 фото в месяц", "10 публикаций в месяц", "1 подключённый аккаунт"],
+  pro: ["300 текстов, 60 фото, 6 видео в месяц", "Без лимита публикаций", "Без лимита аккаунтов"],
+  business: ["600 текстов, 150 фото, 55 видео в месяц", "Без лимита публикаций", "Без лимита аккаунтов"],
+};
+
 const PAYPAL_CLIENT_ID = process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID ?? "";
 const PAYPAL_PLAN_IDS: Partial<Record<SubscriptionTier, string>> = {
   pro: process.env.NEXT_PUBLIC_PAYPAL_PRO_PLAN_ID,
@@ -152,41 +167,64 @@ function BillingSummary() {
 
   useEffect(reload, [reload]);
 
+  const currentIndex = subscription ? TIER_ORDER.indexOf(subscription.tier) : -1;
+
   return (
     <>
-      <h1>Тариф</h1>
-      {error && <p className="error">{error}</p>}
-      {subscription && (
-        <div className="card">
-          <p>
-            Текущий тариф: <strong>{TIER_LABELS[subscription.tier] ?? subscription.tier}</strong>{" "}
-            <span className={`badge ${subscription.status}`}>{subscription.status}</span>
-          </p>
-          {subscription.current_period_end && (
+      <div className="page-header">
+        <div>
+          <h1>Тариф</h1>
+          {subscription && (
             <p className="muted">
-              Продлится до {new Date(subscription.current_period_end).toLocaleDateString("ru-RU")}
+              {TIER_LABELS[subscription.tier] ?? subscription.tier}
+              {subscription.current_period_end &&
+                ` · продление ${new Date(subscription.current_period_end).toLocaleDateString("ru-RU")}`}
             </p>
           )}
         </div>
-      )}
-
-      {subscription && subscription.tier !== "business" && user && (
+      </div>
+      {error && <p className="error">{error}</p>}
+      {subscription && (
         <>
-          <h2>Апгрейд</h2>
-          {subscription.tier === "free" && (
-            <div className="card">
-              <p>
-                <strong>{TIER_LABELS.pro}</strong> — 300 текстов, 60 фото, 6 видео в месяц, без
-                лимита публикаций и подключённых аккаунтов.
-              </p>
-              <UpgradeButton tier="pro" userId={user.id} onConfirmed={reload} />
-            </div>
-          )}
-          <div className="card">
-            <p>
-              <strong>{TIER_LABELS.business}</strong> — 600 текстов, 150 фото, 55 видео в месяц.
-            </p>
-            <UpgradeButton tier="business" userId={user.id} onConfirmed={reload} />
+          <p>
+            Статус: <span className={`badge ${subscription.status}`}>{subscription.status}</span>
+          </p>
+
+          <div className="tile-grid">
+            {TIER_ORDER.map((tier) => {
+              const isCurrent = subscription.tier === tier;
+              const tierIndex = TIER_ORDER.indexOf(tier);
+              return (
+                <div key={tier} className={`card tier-card${isCurrent ? " current" : ""}`}>
+                  <div className="tile-header">
+                    <div className="tile-header-body">
+                      <strong>{TIER_NAME[tier]}</strong>
+                    </div>
+                    {isCurrent && <span className="badge active">Текущий</span>}
+                  </div>
+                  <p className="tier-price">
+                    {TIER_PRICE[tier]}
+                    <span>/мес</span>
+                  </p>
+                  <ul className="tier-features">
+                    {TIER_FEATURES[tier].map((feature) => (
+                      <li key={feature}>{feature}</li>
+                    ))}
+                  </ul>
+                  {isCurrent ? (
+                    <button className="secondary" disabled>
+                      Активен
+                    </button>
+                  ) : (
+                    tierIndex > currentIndex &&
+                    user &&
+                    (tier === "pro" || tier === "business") && (
+                      <UpgradeButton tier={tier} userId={user.id} onConfirmed={reload} />
+                    )
+                  )}
+                </div>
+              );
+            })}
           </div>
         </>
       )}

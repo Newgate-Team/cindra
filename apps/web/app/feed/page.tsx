@@ -39,10 +39,16 @@ function FeedList() {
 
   return (
     <>
-      <h1>Лента</h1>
+      <div className="page-header">
+        <div>
+          <h1>Лента</h1>
+          {items !== null && (
+            <p className="muted">{total > 0 ? `${total} публикаций от всех пользователей` : "Пока никто ничего не сгенерировал"}</p>
+          )}
+        </div>
+      </div>
       {error && <p className="error">{error}</p>}
       {items === null && !error && <p className="muted">Загрузка…</p>}
-      {items?.length === 0 && <p className="muted">Пока никто ничего не сгенерировал.</p>}
       {items && items.length > 0 && (
         <>
           <div className="feed-grid">
@@ -60,13 +66,12 @@ function FeedList() {
               </div>
             ))}
           </div>
-          <div>
+          <div className="pagination">
             <button type="button" disabled={pageIndex === 0} onClick={() => setPageIndex((p) => p - 1)}>
               Назад
             </button>
             <span>
-              {" "}
-              показано {rangeStart}–{rangeEnd} из {total}{" "}
+              показано {rangeStart}–{rangeEnd} из {total}
             </span>
             <button type="button" disabled={!hasNextPage} onClick={() => setPageIndex((p) => p + 1)}>
               Вперёд
