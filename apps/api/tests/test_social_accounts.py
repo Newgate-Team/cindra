@@ -2,9 +2,11 @@ from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
+import jwt
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.models import SocialPlatform, User
 from app.social_accounts import get_access_token, upsert_social_account
 from app.social_integrations.errors import PermanentPublishError
@@ -114,17 +116,96 @@ def _bot_is_member(status: str = "member"):
         yield
 
 
+def _start_verification(client: TestClient, headers: dict[str, str], chat: dict, chat_id: str = "@mychannel"):
+    """CIN-128: step 1 of the connect flow -- issues a code the caller
+    must place in the chat's description before /telegram/connect will
+    accept it. Returns (verification_token, chat_with_code) so tests
+    can feed the latter back as get_chat's next return value, mirroring
+    the real flow where the user has actually edited the description."""
+    with patch("app.routers.social_accounts.get_chat", return_value=chat):
+        response = client.post(
+            "/social-accounts/telegram/start-verification",
+            json={"chat_id": chat_id},
+            headers=headers,
+        )
+    assert response.status_code == 200, response.json()
+    body = response.json()
+    chat_with_code = {**chat, "description": body["code"]}
+    return body["verification_token"], chat_with_code
+
+
+def test_start_telegram_verification_returns_code_and_token(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    with patch(
+        "app.routers.social_accounts.get_chat",
+        return_value={"id": -100123, "title": "My Channel"},
+    ):
+        response = client.post(
+            "/social-accounts/telegram/start-verification",
+            json={"chat_id": "@mychannel"},
+            headers=headers,
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["code"].startswith("cindra-verify-")
+    assert body["chat_title"] == "My Channel"
+    assert body["verification_token"]
+
+
+def test_start_telegram_verification_normalizes_tme_link(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    with patch(
+        "app.routers.social_accounts.get_chat",
+        return_value={"id": -100123, "title": "My Channel"},
+    ) as mock_get_chat:
+        response = client.post(
+            "/social-accounts/telegram/start-verification",
+            json={"chat_id": "https://t.me/mychannel"},
+            headers=headers,
+        )
+
+    assert response.status_code == 200
+    mock_get_chat.assert_called_once()
+    assert mock_get_chat.call_args[0][0] == "@mychannel"
+
+
+def test_start_telegram_verification_bad_chat_returns_400(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    with patch(
+        "app.routers.social_accounts.get_chat",
+        side_effect=PermanentPublishError("chat not found"),
+    ):
+        response = client.post(
+            "/social-accounts/telegram/start-verification",
+            json={"chat_id": "@doesnotexist"},
+            headers=headers,
+        )
+
+    assert response.status_code == 400
+    assert "chat not found" in response.json()["detail"]
+
+
+def test_start_telegram_verification_requires_auth(client: TestClient) -> None:
+    response = client.post(
+        "/social-accounts/telegram/start-verification", json={"chat_id": "@mychannel"}
+    )
+    assert response.status_code == 401
+
+
 def test_connect_telegram_creates_social_account(client: TestClient) -> None:
     headers = _auth_headers(client)
+    chat = {"id": -100123, "title": "My Channel"}
+    token, chat_with_code = _start_verification(client, headers, chat)
+
     with (
-        patch(
-            "app.routers.social_accounts.get_chat",
-            return_value={"id": -100123, "title": "My Channel"},
-        ),
+        patch("app.routers.social_accounts.get_chat", return_value=chat_with_code),
         _bot_is_member(),
     ):
         response = client.post(
-            "/social-accounts/telegram/connect", json={"chat_id": "@mychannel"}, headers=headers
+            "/social-accounts/telegram/connect",
+            json={"verification_token": token},
+            headers=headers,
         )
 
     assert response.status_code == 201
@@ -137,53 +218,96 @@ def test_connect_telegram_creates_social_account(client: TestClient) -> None:
     assert len(listed) == 1
 
 
-def test_connect_telegram_normalizes_tme_link_before_lookup(client: TestClient) -> None:
+def test_connect_telegram_code_missing_from_description_returns_400(client: TestClient) -> None:
+    # CIN-128: the whole point -- if the description wasn't actually
+    # edited (e.g. someone just guesses/replays a token without being
+    # able to touch the channel), the connect must be rejected.
     headers = _auth_headers(client)
+    chat = {"id": -100123, "title": "My Channel"}
+    token, _chat_with_code = _start_verification(client, headers, chat)
+
     with (
-        patch(
-            "app.routers.social_accounts.get_chat",
-            return_value={"id": -100123, "title": "My Channel"},
-        ) as mock_get_chat,
+        patch("app.routers.social_accounts.get_chat", return_value={**chat, "description": None}),
         _bot_is_member(),
     ):
         response = client.post(
             "/social-accounts/telegram/connect",
-            json={"chat_id": "https://t.me/mychannel"},
+            json={"verification_token": token},
             headers=headers,
         )
 
-    assert response.status_code == 201
-    mock_get_chat.assert_called_once()
-    assert mock_get_chat.call_args[0][0] == "@mychannel"
+    assert response.status_code == 400
+    assert "не найден" in response.json()["detail"]
+    assert client.get("/social-accounts", headers=headers).json() == []
 
 
-def test_connect_telegram_bad_chat_returns_400(client: TestClient) -> None:
+def test_connect_telegram_wrong_code_in_description_returns_400(client: TestClient) -> None:
     headers = _auth_headers(client)
-    with patch(
-        "app.routers.social_accounts.get_chat",
-        side_effect=PermanentPublishError("chat not found"),
+    chat = {"id": -100123, "title": "My Channel"}
+    token, _chat_with_code = _start_verification(client, headers, chat)
+
+    with (
+        patch(
+            "app.routers.social_accounts.get_chat",
+            return_value={**chat, "description": "cindra-verify-not-the-real-code"},
+        ),
+        _bot_is_member(),
     ):
         response = client.post(
-            "/social-accounts/telegram/connect", json={"chat_id": "@doesnotexist"}, headers=headers
+            "/social-accounts/telegram/connect",
+            json={"verification_token": token},
+            headers=headers,
         )
 
     assert response.status_code == 400
-    assert "chat not found" in response.json()["detail"]
+
+
+def test_connect_telegram_invalid_verification_token_returns_400(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    response = client.post(
+        "/social-accounts/telegram/connect",
+        json={"verification_token": "not-a-real-token"},
+        headers=headers,
+    )
+    assert response.status_code == 400
+    assert "истёк" in response.json()["detail"] or "недействителен" in response.json()["detail"]
+
+
+def test_connect_telegram_expired_verification_token_returns_400(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    expired = jwt.encode(
+        {
+            "chat_id": "@mychannel",
+            "code": "cindra-verify-aaaaaaaa",
+            "exp": datetime.now(UTC) - timedelta(minutes=1),
+            "typ": "telegram_verification",
+        },
+        get_settings().jwt_secret,
+        algorithm="HS256",
+    )
+    response = client.post(
+        "/social-accounts/telegram/connect",
+        json={"verification_token": expired},
+        headers=headers,
+    )
+    assert response.status_code == 400
 
 
 def test_connect_telegram_bot_not_member_returns_400_with_bot_username(
     client: TestClient,
 ) -> None:
     headers = _auth_headers(client)
+    chat = {"id": -100123, "title": "My Channel"}
+    token, chat_with_code = _start_verification(client, headers, chat)
+
     with (
-        patch(
-            "app.routers.social_accounts.get_chat",
-            return_value={"id": -100123, "title": "My Channel"},
-        ),
+        patch("app.routers.social_accounts.get_chat", return_value=chat_with_code),
         _bot_is_member(status="left"),
     ):
         response = client.post(
-            "/social-accounts/telegram/connect", json={"chat_id": "@mychannel"}, headers=headers
+            "/social-accounts/telegram/connect",
+            json={"verification_token": token},
+            headers=headers,
         )
 
     assert response.status_code == 400
@@ -194,11 +318,11 @@ def test_connect_telegram_bot_membership_check_error_treated_as_not_added(
     client: TestClient,
 ) -> None:
     headers = _auth_headers(client)
+    chat = {"id": -100123, "title": "My Channel"}
+    token, chat_with_code = _start_verification(client, headers, chat)
+
     with (
-        patch(
-            "app.routers.social_accounts.get_chat",
-            return_value={"id": -100123, "title": "My Channel"},
-        ),
+        patch("app.routers.social_accounts.get_chat", return_value=chat_with_code),
         patch(
             "app.routers.social_accounts.get_me",
             return_value={"id": 999, "username": "cindra_bot"},
@@ -209,7 +333,9 @@ def test_connect_telegram_bot_membership_check_error_treated_as_not_added(
         ),
     ):
         response = client.post(
-            "/social-accounts/telegram/connect", json={"chat_id": "@mychannel"}, headers=headers
+            "/social-accounts/telegram/connect",
+            json={"verification_token": token},
+            headers=headers,
         )
 
     assert response.status_code == 400
@@ -217,7 +343,9 @@ def test_connect_telegram_bot_membership_check_error_treated_as_not_added(
 
 
 def test_connect_telegram_requires_auth(client: TestClient) -> None:
-    response = client.post("/social-accounts/telegram/connect", json={"chat_id": "@mychannel"})
+    response = client.post(
+        "/social-accounts/telegram/connect", json={"verification_token": "whatever"}
+    )
     assert response.status_code == 401
 
 

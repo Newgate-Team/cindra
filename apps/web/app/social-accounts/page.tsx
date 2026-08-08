@@ -26,11 +26,20 @@ const PLATFORM_ICONS: Record<string, string> = {
   facebook: "/facebook-icon.png",
 };
 
+interface TelegramVerification {
+  code: string;
+  chatTitle: string | null;
+  verificationToken: string;
+}
+
 function SocialAccountsManager() {
   const { token } = useAuth();
   const [accounts, setAccounts] = useState<SocialAccount[] | null>(null);
   const [chatId, setChatId] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [verification, setVerification] = useState<TelegramVerification | null>(null);
+  const [startError, setStartError] = useState<string | null>(null);
+  const [connectError, setConnectError] = useState<string | null>(null);
+  const [startingVerification, setStartingVerification] = useState(false);
   const [connecting, setConnecting] = useState(false);
 
   function reload() {
@@ -39,19 +48,57 @@ function SocialAccountsManager() {
 
   useEffect(reload, [token]);
 
-  async function handleConnectTelegram(event: FormEvent) {
+  // CIN-128: connecting a channel is two steps now -- start-verification
+  // finds the chat and issues a one-time code, then the user has to
+  // actually place that code in the channel's description (an admin-only
+  // Telegram permission) before /connect will accept it. This is what
+  // proves the person clicking "Подключить" here really controls the
+  // channel, instead of just knowing its @username.
+  async function handleStartVerification(event: FormEvent) {
     event.preventDefault();
-    setError(null);
+    setStartError(null);
+    setStartingVerification(true);
+    try {
+      const result = await api.post<{
+        code: string;
+        verification_token: string;
+        chat_title: string | null;
+      }>("/social-accounts/telegram/start-verification", { chat_id: chatId }, token);
+      setVerification({
+        code: result.code,
+        verificationToken: result.verification_token,
+        chatTitle: result.chat_title,
+      });
+    } catch (err) {
+      setStartError(err instanceof ApiError ? err.message : "Не удалось найти канал");
+    } finally {
+      setStartingVerification(false);
+    }
+  }
+
+  async function handleConfirmConnect() {
+    if (!verification) return;
+    setConnectError(null);
     setConnecting(true);
     try {
-      await api.post("/social-accounts/telegram/connect", { chat_id: chatId }, token);
+      await api.post(
+        "/social-accounts/telegram/connect",
+        { verification_token: verification.verificationToken },
+        token
+      );
       setChatId("");
+      setVerification(null);
       reload();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Не удалось подключить канал");
+      setConnectError(err instanceof ApiError ? err.message : "Не удалось подключить канал");
     } finally {
       setConnecting(false);
     }
+  }
+
+  function handleCancelVerification() {
+    setVerification(null);
+    setConnectError(null);
   }
 
   function handleConnectInstagram() {
@@ -116,25 +163,59 @@ function SocialAccountsManager() {
 
       <h2>Подключить Telegram-канал</h2>
       <div className="card">
-        <p className="muted">
-          Бот @CindraPublish_bot должен быть добавлен администратором канала. Введите @username
-          канала или его числовой chat_id.
-        </p>
-        <form onSubmit={handleConnectTelegram}>
-          <label>
-            Канал
-            <input
-              required
-              value={chatId}
-              onChange={(e) => setChatId(e.target.value)}
-              placeholder="@mychannel"
-            />
-          </label>
-          {error && <p className="error">{error}</p>}
-          <button type="submit" disabled={connecting}>
-            {connecting ? "Подключаем…" : "Подключить"}
-          </button>
-        </form>
+        {!verification ? (
+          <>
+            <p className="muted">
+              Бот @CindraPublish_bot должен быть добавлен администратором канала. Введите
+              @username канала или его числовой chat_id.
+            </p>
+            <form onSubmit={handleStartVerification}>
+              <label>
+                Канал
+                <input
+                  required
+                  value={chatId}
+                  onChange={(e) => setChatId(e.target.value)}
+                  placeholder="@mychannel"
+                />
+              </label>
+              {startError && <p className="error">{startError}</p>}
+              <button type="submit" disabled={startingVerification}>
+                {startingVerification ? "Ищем канал…" : "Далее"}
+              </button>
+            </form>
+          </>
+        ) : (
+          <>
+            <p>
+              Канал найден: <strong>{verification.chatTitle ?? chatId}</strong>
+            </p>
+            <p className="muted">
+              Чтобы подтвердить, что вы администратор канала (а не просто знаете его адрес),
+              вставьте этот код в описание канала в Telegram (Изменить → Описание) и сохраните,
+              затем нажмите «Подключить». После подключения код можно убрать.
+            </p>
+            <div className="verification-code-row">
+              <code className="verification-code">{verification.code}</code>
+              <button
+                type="button"
+                className="secondary"
+                onClick={() => navigator.clipboard.writeText(verification.code)}
+              >
+                Скопировать
+              </button>
+            </div>
+            {connectError && <p className="error">{connectError}</p>}
+            <div className="list-row-actions">
+              <button type="button" disabled={connecting} onClick={handleConfirmConnect}>
+                {connecting ? "Проверяем…" : "Подключить"}
+              </button>
+              <button type="button" className="secondary" onClick={handleCancelVerification}>
+                Отмена
+              </button>
+            </div>
+          </>
+        )}
       </div>
 
       <h2>Подключить Instagram</h2>
