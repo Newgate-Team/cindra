@@ -137,16 +137,24 @@ function ReviewAndPublish({
         {publishing ? "Публикуем…" : scheduledFor ? "Запланировать" : "Опубликовать сейчас"}
       </button>
       {posts && (
-        <ul>
+        <div>
           {posts.map((post) => (
-            <li key={post.id}>
-              {post.platform} — {post.account_label}: <span className={`badge ${post.status}`}>{post.status}</span>
-              {post.status === "failed" && post.error_message && (
-                <span className="error"> — {post.error_message}</span>
-              )}
-            </li>
+            <div key={post.id} className="card list-row">
+              <div className="list-row-body">
+                <strong>{post.platform}</strong>
+                <p className="muted list-row-meta">
+                  <span>{post.account_label}</span>
+                </p>
+                {post.status === "failed" && post.error_message && (
+                  <p className="error">{post.error_message}</p>
+                )}
+              </div>
+              <div className="list-row-side">
+                <span className={`badge ${post.status}`}>{post.status}</span>
+              </div>
+            </div>
           ))}
-        </ul>
+        </div>
       )}
     </form>
   );
@@ -314,7 +322,12 @@ function GenerateForm() {
   if (accountsLoaded && accounts.length === 0) {
     return (
       <>
-        <h1>Генерация контента</h1>
+        <div className="page-header">
+          <div>
+            <h1>Генерация контента</h1>
+            <p className="muted">Опишите задачу — Cindra подготовит черновик под выбранный канал</p>
+          </div>
+        </div>
         <p className="muted">Чтобы начать генерацию, сначала подключите соцсеть на странице «Соцсети».</p>
       </>
     );
@@ -322,17 +335,22 @@ function GenerateForm() {
 
   return (
     <>
-      <h1>Генерация контента</h1>
-      <form onSubmit={handleSubmit}>
-        <fieldset>
+      <div className="page-header">
+        <div>
+          <h1>Генерация контента</h1>
+          <p className="muted">Опишите задачу — Cindra подготовит черновик под выбранный канал</p>
+        </div>
+      </div>
+      <form onSubmit={handleSubmit} className="card">
+        <fieldset className="chip-group">
           <legend>Куда опубликовать</legend>
           {accounts.map((a) => (
-            <label key={a.id} style={{ display: "block", fontWeight: "normal" }}>
+            <label key={a.id}>
               <input
                 type="checkbox"
                 checked={targetAccountIds.includes(a.id)}
                 onChange={(e) => toggleTargetAccount(a.id, e.target.checked)}
-              />{" "}
+              />
               {a.platform} — {a.display_name ?? a.external_account_id}
             </label>
           ))}

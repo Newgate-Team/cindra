@@ -170,6 +170,17 @@ function toDatetimeLocalValue(iso: string): string {
   return new Date(iso).toISOString().slice(0, 16);
 }
 
+function StatusBadge({ post }: { post: Post }) {
+  return (
+    <>
+      <span className={`badge ${post.status}`}>{post.status}</span>
+      {post.status === "failed" && post.error_message && (
+        <div className="muted">{post.error_message}</div>
+      )}
+    </>
+  );
+}
+
 function PostActions({ post, onChanged }: { post: Post; onChanged: () => void }) {
   const { token } = useAuth();
   const [rescheduling, setRescheduling] = useState(false);
@@ -232,7 +243,7 @@ function PostActions({ post, onChanged }: { post: Post; onChanged: () => void })
   }
 
   return (
-    <div>
+    <div className="list-row-actions">
       <button type="button" onClick={() => setRescheduling(true)}>
         Перенести
       </button>
@@ -269,56 +280,45 @@ function CalendarList() {
 
   return (
     <>
-      <h1>Календарь публикаций</h1>
+      <div className="page-header">
+        <div>
+          <h1>Календарь публикаций</h1>
+          {posts !== null && (
+            <p className="muted">{total > 0 ? `Всего публикаций: ${total}` : "Публикаций пока нет"}</p>
+          )}
+        </div>
+      </div>
       {error && <p className="error">{error}</p>}
       {posts === null && !error && <p className="muted">Загрузка…</p>}
-      {posts?.length === 0 && <p className="muted">Публикаций пока нет.</p>}
       {posts && posts.length > 0 && (
         <>
-          <table>
-            <thead>
-              <tr>
-                <th>Когда</th>
-                <th>Платформа</th>
-                <th>Аккаунт</th>
-                <th>Медиа</th>
-                <th>Текст</th>
-                <th>Статус</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {posts.map((post) => (
-                <tr key={post.id}>
-                  <td>{formatDate(post.scheduled_for)}</td>
-                  <td>{PLATFORM_LABELS[post.platform]}</td>
-                  <td>{post.account_label}</td>
-                  <td>
-                    <PostMedia post={post} />
-                  </td>
-                  <td>
-                    <PostText text={post.text} />
-                  </td>
-                  <td>
-                    <span className={`badge ${post.status}`}>{post.status}</span>
-                    {post.status === "failed" && post.error_message && (
-                      <div className="muted">{post.error_message}</div>
-                    )}
-                  </td>
-                  <td>
-                    <PostActions post={post} onChanged={reload} />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <div>
+          {posts.map((post) => (
+            <div key={post.id} className="card list-row">
+              <div className="list-row-media">
+                <PostMedia post={post} />
+              </div>
+              <div className="list-row-body">
+                <PostText text={post.text} />
+                <p className="muted list-row-meta">
+                  <span>{PLATFORM_LABELS[post.platform]}</span>
+                  <span>·</span>
+                  <span>{post.account_label}</span>
+                  <span>·</span>
+                  <span>{formatDate(post.scheduled_for)}</span>
+                </p>
+              </div>
+              <div className="list-row-side">
+                <StatusBadge post={post} />
+                <PostActions post={post} onChanged={reload} />
+              </div>
+            </div>
+          ))}
+          <div className="pagination">
             <button type="button" disabled={pageIndex === 0} onClick={() => setPageIndex((p) => p - 1)}>
               Назад
             </button>
             <span>
-              {" "}
-              показано {rangeStart}–{rangeEnd} из {total}{" "}
+              показано {rangeStart}–{rangeEnd} из {total}
             </span>
             <button type="button" disabled={!hasNextPage} onClick={() => setPageIndex((p) => p + 1)}>
               Вперёд
@@ -328,19 +328,21 @@ function CalendarList() {
       )}
 
       <h2>Запланировать публикацию</h2>
-      <CreatePostForm
-        onCreated={() => {
-          // setPageIndex(0) only re-triggers the [token, pageIndex]
-          // effect below when the index actually changes -- if we're
-          // already on page 0, that effect won't fire, so reload()
-          // has to be called directly to pick up the new post.
-          if (pageIndex === 0) {
-            reload();
-          } else {
-            setPageIndex(0);
-          }
-        }}
-      />
+      <div className="card">
+        <CreatePostForm
+          onCreated={() => {
+            // setPageIndex(0) only re-triggers the [token, pageIndex]
+            // effect below when the index actually changes -- if we're
+            // already on page 0, that effect won't fire, so reload()
+            // has to be called directly to pick up the new post.
+            if (pageIndex === 0) {
+              reload();
+            } else {
+              setPageIndex(0);
+            }
+          }}
+        />
+      </div>
     </>
   );
 }
