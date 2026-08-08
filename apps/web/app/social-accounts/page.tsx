@@ -20,6 +20,12 @@ const PLATFORM_LABELS: Record<string, string> = {
   facebook: "Facebook-страница",
 };
 
+const PLATFORM_ICONS: Record<string, string> = {
+  telegram: "/telegram-icon.png",
+  instagram: "/instagram-icon.png",
+  facebook: "/facebook-icon.png",
+};
+
 function SocialAccountsManager() {
   const { token } = useAuth();
   const [accounts, setAccounts] = useState<SocialAccount[] | null>(null);
@@ -91,7 +97,8 @@ function SocialAccountsManager() {
             return (
               <div key={account.id} className="card">
                 <div className="tile-header">
-                  <span className="avatar">{label.slice(0, 2)}</span>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={PLATFORM_ICONS[account.platform]} alt="" className="platform-icon" />
                   <div className="tile-header-body">
                     <strong>{label}</strong>
                     <span className="muted">{account.display_name ?? account.external_account_id}</span>
