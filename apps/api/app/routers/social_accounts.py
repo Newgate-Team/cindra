@@ -1,3 +1,6 @@
+import secrets
+
+import jwt
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
@@ -10,6 +13,12 @@ from app.schemas import (
     InstagramConnectRequest,
     SocialAccountOut,
     TelegramConnectRequest,
+    TelegramStartVerificationOut,
+    TelegramStartVerificationRequest,
+)
+from app.security import (
+    create_telegram_verification_token,
+    decode_telegram_verification_token,
 )
 from app.social_accounts import upsert_social_account
 from app.social_integrations import instagram
@@ -20,6 +29,45 @@ router = APIRouter(prefix="/social-accounts", tags=["social-accounts"])
 
 
 @router.post(
+    "/telegram/start-verification",
+    response_model=TelegramStartVerificationOut,
+)
+def start_telegram_verification(
+    payload: TelegramStartVerificationRequest,
+    current_user: User = Depends(get_current_user),
+) -> TelegramStartVerificationOut:
+    """CIN-128: first step of connecting a Telegram channel/group --
+    previously the whole flow only checked that our *bot* was a member
+    of the chat, never that the *person connecting it on Cindra* had
+    any real permission there. Anyone who knew a public channel's
+    @username (with our bot already present in it) could hijack
+    publishing rights to it. This issues a one-time code the user must
+    place in the channel's description before /telegram/connect will
+    accept it -- editing description requires Telegram's own "Change
+    Channel Info" admin permission, so that's real proof of control.
+    """
+    bot_token = get_settings().telegram_bot_token
+    try:
+        chat = get_chat(payload.chat_id, bot_token)
+    except PermanentPublishError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Не удалось найти канал: {exc}",
+        ) from exc
+    except TransientPublishError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        ) from exc
+
+    code = f"cindra-verify-{secrets.token_hex(4)}"
+    return TelegramStartVerificationOut(
+        code=code,
+        verification_token=create_telegram_verification_token(payload.chat_id, code),
+        chat_title=chat.get("title") or chat.get("username"),
+    )
+
+
+@router.post(
     "/telegram/connect", response_model=SocialAccountOut, status_code=status.HTTP_201_CREATED
 )
 def connect_telegram(
@@ -27,9 +75,17 @@ def connect_telegram(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> SocialAccount:
+    try:
+        chat_id, code = decode_telegram_verification_token(payload.verification_token)
+    except jwt.InvalidTokenError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Код подтверждения истёк или недействителен -- начните подключение заново",
+        ) from None
+
     bot_token = get_settings().telegram_bot_token
     try:
-        chat = get_chat(payload.chat_id, bot_token)
+        chat = get_chat(chat_id, bot_token)
     except PermanentPublishError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -40,13 +96,26 @@ def connect_telegram(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
         ) from exc
 
+    # The actual ownership check (CIN-128): re-fetch the description
+    # fresh (not trusted from start-verification) and require the code
+    # to be present right now -- only someone with Telegram's own
+    # "Change Channel Info" admin permission could have put it there.
+    if code not in (chat.get("description") or ""):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Код подтверждения не найден в описании канала. Убедитесь, что вы "
+                "сохранили изменения в Telegram, и попробуйте ещё раз."
+            ),
+        )
+
     # get_chat succeeds for public channels even if the bot was never added
     # to them (Telegram exposes basic public-channel info to any bot) -- so
     # it alone can't tell us whether the bot can actually publish there.
     # getChatMember on the bot's own ID is what actually answers that.
     bot = get_me(bot_token)
     try:
-        membership = get_chat_member(payload.chat_id, bot["id"], bot_token)
+        membership = get_chat_member(chat_id, bot["id"], bot_token)
         bot_is_member = membership["status"] not in ("left", "kicked")
     except PermanentPublishError:
         bot_is_member = False

@@ -28,12 +28,26 @@ def _auth_headers(client: TestClient) -> dict[str, str]:
 
 
 def _connected_account_id(client: TestClient, headers: dict[str, str], db: Session) -> str:
+    # CIN-128: connecting a Telegram channel is now a two-step flow --
+    # start-verification issues a code that has to appear in the
+    # chat's description (proof the caller can actually edit it, i.e.
+    # is really an admin) before /connect will accept it.
     from unittest.mock import patch
+
+    chat = {"id": -100123, "title": "My Channel"}
+    with patch("app.routers.social_accounts.get_chat", return_value=chat):
+        start = client.post(
+            "/social-accounts/telegram/start-verification",
+            json={"chat_id": "@mychannel"},
+            headers=headers,
+        )
+    token = start.json()["verification_token"]
+    code = start.json()["code"]
 
     with (
         patch(
             "app.routers.social_accounts.get_chat",
-            return_value={"id": -100123, "title": "My Channel"},
+            return_value={**chat, "description": code},
         ),
         patch(
             "app.routers.social_accounts.get_me",
@@ -45,7 +59,9 @@ def _connected_account_id(client: TestClient, headers: dict[str, str], db: Sessi
         ),
     ):
         response = client.post(
-            "/social-accounts/telegram/connect", json={"chat_id": "@mychannel"}, headers=headers
+            "/social-accounts/telegram/connect",
+            json={"verification_token": token},
+            headers=headers,
         )
     return response.json()["id"]
 
