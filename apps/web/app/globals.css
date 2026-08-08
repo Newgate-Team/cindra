@@ -244,6 +244,155 @@ main {
   }
 }
 
+/* ---- Page header: title + subtitle (+ optional primary action) ---- */
+.page-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.page-header h1 {
+  margin: 0 0 4px;
+}
+
+.page-header p {
+  margin: 0;
+}
+
+.page-header-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* ---- Row list: card-per-item with a status badge + actions on the
+   right, replacing raw <table> rows for the Calendar list (CIN-126) ---- */
+.list-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 16px;
+}
+
+.list-row-media {
+  flex-shrink: 0;
+}
+
+.list-row-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.list-row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin: 4px 0 0;
+}
+
+.list-row-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.list-row-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.list-row-actions button {
+  padding: 6px 12px;
+  font-size: 13px;
+}
+
+/* ---- Tile grid: connected-channel cards / pricing-tier cards ---- */
+.tile-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.tile-grid .card {
+  margin-bottom: 0;
+}
+
+.avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  background: var(--secondary);
+  color: var(--secondary-foreground);
+  font-weight: 600;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.tile-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.tile-header-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.tile-header-body strong {
+  display: block;
+}
+
+.tier-card.current {
+  border-color: var(--ember);
+}
+
+.tier-price {
+  font-size: 28px;
+  font-weight: 700;
+  margin: 4px 0 14px;
+}
+
+.tier-price span {
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--muted-foreground);
+}
+
+.tier-features {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 14px;
+}
+
+.tier-features li::before {
+  content: "✓ ";
+  color: var(--success);
+}
+
+.pagination {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 16px 0;
+  font-size: 14px;
+  color: var(--muted-foreground);
+}
+
 form {
   display: flex;
   flex-direction: column;
@@ -269,6 +418,39 @@ legend {
   padding: 0 6px;
   font-size: 14px;
   font-weight: 600;
+}
+
+/* Channel picker in Generate: real <input type="checkbox"> underneath
+   (same state/handlers as before), styled as toggle chips to match
+   the reference design's channel picker. */
+.chip-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chip-group label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  width: fit-content;
+}
+
+.chip-group label:has(input:checked) {
+  border-color: var(--ember);
+  color: var(--ember-soft);
+  background: oklch(58% 0.208 27.5 / 0.12);
+}
+
+.chip-group input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
 }
 
 input,

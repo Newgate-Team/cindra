@@ -72,71 +72,94 @@ function SocialAccountsManager() {
 
   return (
     <>
-      <h1>Подключённые соцсети</h1>
+      <div className="page-header">
+        <div>
+          <h1>Каналы</h1>
+          {accounts !== null && (
+            <p className="muted">
+              {accounts.length > 0 ? `Подключено: ${accounts.length}` : "Пока ничего не подключено"}
+            </p>
+          )}
+        </div>
+      </div>
 
       {accounts === null && <p className="muted">Загрузка…</p>}
-      {accounts?.length === 0 && <p className="muted">Пока ничего не подключено.</p>}
-      {accounts?.map((account) => (
-        <div key={account.id} className="card" style={{ display: "flex", alignItems: "center" }}>
-          <div style={{ flex: 1 }}>
-            <strong>{PLATFORM_LABELS[account.platform] ?? account.platform}</strong> —{" "}
-            {account.display_name ?? account.external_account_id}
-          </div>
-          <button className="secondary" onClick={() => handleDisconnect(account.id)}>
-            Отключить
-          </button>
+      {accounts && accounts.length > 0 && (
+        <div className="tile-grid">
+          {accounts.map((account) => {
+            const label = PLATFORM_LABELS[account.platform] ?? account.platform;
+            return (
+              <div key={account.id} className="card">
+                <div className="tile-header">
+                  <span className="avatar">{label.slice(0, 2)}</span>
+                  <div className="tile-header-body">
+                    <strong>{label}</strong>
+                    <span className="muted">{account.display_name ?? account.external_account_id}</span>
+                  </div>
+                  <span className="badge active">Подключён</span>
+                </div>
+                <button className="secondary" onClick={() => handleDisconnect(account.id)}>
+                  Отключить
+                </button>
+              </div>
+            );
+          })}
         </div>
-      ))}
+      )}
 
       <h2>Подключить Telegram-канал</h2>
-      <p className="muted">
-        Бот @CindraPublish_bot должен быть добавлен администратором канала. Введите @username
-        канала или его числовой chat_id.
-      </p>
-      <form onSubmit={handleConnectTelegram}>
-        <label>
-          Канал
-          <input
-            required
-            value={chatId}
-            onChange={(e) => setChatId(e.target.value)}
-            placeholder="@mychannel"
-          />
-        </label>
-        {error && <p className="error">{error}</p>}
-        <button type="submit" disabled={connecting}>
-          {connecting ? "Подключаем…" : "Подключить"}
-        </button>
-      </form>
+      <div className="card">
+        <p className="muted">
+          Бот @CindraPublish_bot должен быть добавлен администратором канала. Введите @username
+          канала или его числовой chat_id.
+        </p>
+        <form onSubmit={handleConnectTelegram}>
+          <label>
+            Канал
+            <input
+              required
+              value={chatId}
+              onChange={(e) => setChatId(e.target.value)}
+              placeholder="@mychannel"
+            />
+          </label>
+          {error && <p className="error">{error}</p>}
+          <button type="submit" disabled={connecting}>
+            {connecting ? "Подключаем…" : "Подключить"}
+          </button>
+        </form>
+      </div>
 
       <h2>Подключить Instagram</h2>
-      {META_APP_ID ? (
-        <>
-          <p className="muted">Перед подключением убедитесь, что:</p>
-          <ul className="muted">
-            <li>Instagram-аккаунт переведён в профессиональный режим (Business или Creator);</li>
-            <li>он привязан к Facebook-странице, которой вы управляете как администратор.</li>
-          </ul>
+      <div className="card">
+        {META_APP_ID ? (
+          <>
+            <p className="muted">Перед подключением убедитесь, что:</p>
+            <ul className="muted">
+              <li>Instagram-аккаунт переведён в профессиональный режим (Business или Creator);</li>
+              <li>он привязан к Facebook-странице, которой вы управляете как администратор.</li>
+            </ul>
+            <p className="muted">
+              <a
+                href="https://developers.facebook.com/docs/instagram-platform"
+                target="_blank"
+                rel="noreferrer"
+              >
+                Подробнее в документации Meta
+              </a>
+            </p>
+            <button onClick={handleConnectInstagram}>Войти через Meta</button>
+            <p className="muted">
+              Заодно подключится и сама Facebook-страница — она появится в списке выше отдельной
+              записью, публиковать в неё можно так же, как в Telegram и Instagram.
+            </p>
+          </>
+        ) : (
           <p className="muted">
-            <a
-              href="https://developers.facebook.com/docs/instagram-platform"
-              target="_blank"
-              rel="noreferrer"
-            >
-              Подробнее в документации Meta
-            </a>
+            Подключение Instagram пока недоступно — не настроено Meta App (см. задачу CIN-52).
           </p>
-          <button onClick={handleConnectInstagram}>Войти через Meta</button>
-          <p className="muted">
-            Заодно подключится и сама Facebook-страница — она появится в списке выше отдельной
-            записью, публиковать в неё можно так же, как в Telegram и Instagram.
-          </p>
-        </>
-      ) : (
-        <p className="muted">
-          Подключение Instagram пока недоступно — не настроено Meta App (см. задачу CIN-52).
-        </p>
-      )}
+        )}
+      </div>
     </>
   );
 }
