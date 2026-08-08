@@ -6,6 +6,7 @@ import { ApiError, api } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import type { Page, Post, SocialAccount } from "@/lib/types";
 
+import { ChevronDownIcon, ChevronUpIcon } from "../components/icons";
 import { RequireAuth } from "../components/RequireAuth";
 
 function formatDate(iso: string): string {
@@ -31,12 +32,12 @@ function PostText({ text }: { text: string }) {
       {isTruncated && (
         <button
           type="button"
-          className="secondary"
+          className="secondary icon-button"
           onClick={() => setExpanded((v) => !v)}
           aria-label={expanded ? "Свернуть текст публикации" : "Показать полный текст публикации"}
           title={expanded ? "Свернуть текст публикации" : "Показать полный текст публикации"}
         >
-          {expanded ? "🔼" : "🔍"}
+          {expanded ? <ChevronUpIcon size={14} /> : <ChevronDownIcon size={14} />}
         </button>
       )}
     </span>

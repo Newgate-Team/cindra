@@ -60,3 +60,21 @@ export function CardIcon({ size = 20 }: IconProps) {
     </svg>
   );
 }
+
+// Expand/collapse a truncated post's full text (CIN-83's PostText,
+// Calendar) -- replaces the 🔍/🔼 emoji it used to render.
+export function ChevronDownIcon({ size = 16 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" {...common}>
+      <path d="M5 9l7 7 7-7" />
+    </svg>
+  );
+}
+
+export function ChevronUpIcon({ size = 16 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" {...common}>
+      <path d="M5 15l7-7 7 7" />
+    </svg>
+  );
+}
