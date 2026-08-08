@@ -1,8 +1,39 @@
+/* Design tokens ported from the Lovable reference design
+   (cindra-creative-spark.lovable.app) -- dark theme, ember/red accent,
+   matching the brand's red/black/white flame logo. Values are the
+   exact oklch() tokens read from that site's :root, so this is a
+   faithful color/shape match, not a re-guess. */
 :root {
-  color-scheme: light;
-  --border: #ddd;
-  --muted: #666;
-  --accent: #c0392b;
+  color-scheme: dark;
+
+  --background: oklch(16% 0.006 60);
+  --foreground: oklch(96% 0.004 80);
+  --surface: oklch(20% 0.007 60);
+  --surface-2: oklch(24.5% 0.008 60);
+  --card: oklch(20% 0.007 60);
+  --ember: oklch(58% 0.208 27.5);
+  --ember-soft: oklch(70% 0.17 40);
+  --primary: oklch(58% 0.208 27.5);
+  --primary-foreground: oklch(98% 0.005 80);
+  --secondary: oklch(26% 0.008 60);
+  --secondary-foreground: oklch(94% 0.004 80);
+  --muted: oklch(24% 0.007 60);
+  --muted-foreground: oklch(68% 0.011 65);
+  --destructive: oklch(60% 0.21 22);
+  --success: oklch(68% 0.15 152);
+  --success-foreground: oklch(16% 0.006 60);
+  --warning: oklch(79% 0.15 78);
+  --warning-foreground: oklch(16% 0.006 60);
+  --border: oklch(30% 0.008 60);
+  --input: oklch(30% 0.008 60);
+  --ring: oklch(58% 0.208 27.5);
+  --radius: 0.75rem;
+  --gradient-ember: linear-gradient(135deg, var(--ember), var(--ember-soft));
+  --shadow-card: 0 1px 0 0 oklab(100% 0 0 / 0.06) inset, 0 20px 40px -28px oklch(0% 0 0 / 0.8);
+
+  --sidebar-width: 240px;
+  --topbar-height: 56px;
+  --bottom-tabs-height: 64px;
 }
 
 * {
@@ -10,80 +41,267 @@
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-family: var(--font-sans), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   margin: 0;
-  color: #1a1a1a;
+  background: var(--background);
+  color: var(--foreground);
 }
 
-main {
-  max-width: 720px;
-  margin: 0 auto;
-  padding: 24px 16px 64px;
+h1, h2, h3 {
+  font-weight: 600;
+  letter-spacing: -0.01em;
 }
 
-nav {
+a {
+  color: inherit;
+}
+
+/* Layout shell: sidebar (desktop) + main column. On mobile the
+   sidebar collapses to a top bar + bottom tab bar instead (see
+   .topbar/.bottom-tabs below) -- same links, just relaid out. */
+.app-shell {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px 16px;
-  align-items: center;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border);
+  min-height: 100vh;
 }
 
-/* Below this, the unwrapped nav (logo + 4 links + email + logout)
-   no longer fits one line and starts pushing items off-screen --
-   drop the spacer so trailing items wrap onto their own left-aligned
-   line instead of being squeezed/cut off (see CIN-95). */
-@media (max-width: 480px) {
-  nav .spacer {
-    flex-basis: 100%;
-    height: 0;
+.app-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding-top: var(--topbar-height);
+  padding-bottom: var(--bottom-tabs-height);
+}
+
+@media (min-width: 1024px) {
+  .app-content {
+    padding-top: 0;
+    padding-bottom: 0;
   }
 }
 
-nav a {
-  color: #1a1a1a;
-  text-decoration: none;
-}
-
-nav a:hover {
-  color: var(--accent);
-}
-
-nav .spacer {
+main {
   flex: 1;
+  max-width: 880px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 24px 20px 64px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+  font-weight: 700;
+  font-size: 18px;
+  color: var(--foreground);
+}
+
+.brand img {
+  display: block;
+}
+
+/* ---- Desktop sidebar ---- */
+.sidebar {
+  display: none;
+}
+
+@media (min-width: 1024px) {
+  .sidebar {
+    display: flex;
+    flex-direction: column;
+    width: var(--sidebar-width);
+    flex-shrink: 0;
+    padding: 20px 16px;
+    border-right: 1px solid var(--border);
+    background: var(--surface);
+    position: sticky;
+    top: 0;
+    height: 100vh;
+  }
+
+  .sidebar .brand {
+    padding: 4px 8px 20px;
+  }
+
+  .sidebar-links {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .sidebar-links a {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+    border-radius: calc(var(--radius) - 4px);
+    text-decoration: none;
+    color: var(--muted-foreground);
+    font-size: 14px;
+    font-weight: 500;
+  }
+
+  .sidebar-links a:hover {
+    background: var(--surface-2);
+    color: var(--foreground);
+  }
+
+  .sidebar-footer {
+    margin-top: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+  }
+
+  .sidebar-footer a {
+    text-decoration: none;
+    font-size: 14px;
+    color: var(--muted-foreground);
+  }
+
+  .sidebar-footer a:hover {
+    color: var(--foreground);
+  }
+
+  .sidebar-footer .muted {
+    word-break: break-all;
+  }
+}
+
+/* ---- Mobile top bar ---- */
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  height: var(--topbar-height);
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 10;
+}
+
+.topbar-auth-links {
+  display: flex;
+  gap: 16px;
+  font-size: 14px;
+}
+
+.topbar-auth-links a {
+  text-decoration: none;
+  color: var(--foreground);
+}
+
+@media (min-width: 1024px) {
+  .topbar {
+    display: none;
+  }
+}
+
+/* ---- Mobile bottom tab bar ---- */
+.bottom-tabs {
+  display: flex;
+  align-items: stretch;
+  justify-content: space-around;
+  height: var(--bottom-tabs-height);
+  padding: 6px 4px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 10;
+}
+
+.bottom-tabs a {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  flex: 1;
+  text-decoration: none;
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+
+.bottom-tabs a:hover {
+  color: var(--foreground);
+}
+
+@media (min-width: 1024px) {
+  .bottom-tabs {
+    display: none;
+  }
 }
 
 form {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  max-width: 480px;
+  gap: 14px;
+  max-width: 520px;
 }
 
 label {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
   font-size: 14px;
+  font-weight: 500;
+}
+
+fieldset {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+}
+
+legend {
+  padding: 0 6px;
+  font-size: 14px;
+  font-weight: 600;
 }
 
 input,
 select,
 textarea {
   font: inherit;
-  padding: 8px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--input);
+  border-radius: calc(var(--radius) - 4px);
+  background: var(--surface-2);
+  color: var(--foreground);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--muted-foreground);
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
 }
 
 button {
   font: inherit;
-  padding: 8px 16px;
+  font-weight: 600;
+  padding: 10px 18px;
   border: none;
-  border-radius: 4px;
-  background: var(--accent);
-  color: white;
+  border-radius: calc(var(--radius) - 4px);
+  background: var(--gradient-ember);
+  color: var(--primary-foreground);
   cursor: pointer;
   width: fit-content;
 }
@@ -95,17 +313,17 @@ button:disabled {
 
 button.secondary {
   background: transparent;
-  color: var(--accent);
-  border: 1px solid var(--accent);
+  color: var(--foreground);
+  border: 1px solid var(--border);
 }
 
 .error {
-  color: var(--accent);
+  color: oklch(75% 0.18 22);
   font-size: 14px;
 }
 
 .muted {
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 14px;
 }
 
@@ -117,15 +335,22 @@ table {
 th,
 td {
   text-align: left;
-  padding: 8px;
+  padding: 10px 8px;
   border-bottom: 1px solid var(--border);
   font-size: 14px;
 }
 
+th {
+  color: var(--muted-foreground);
+  font-weight: 500;
+}
+
 .card {
+  background: var(--card);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 16px;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-card);
+  padding: 18px;
   margin-bottom: 16px;
 }
 
@@ -142,45 +367,47 @@ td {
 
 .badge {
   display: inline-block;
-  padding: 2px 8px;
+  padding: 3px 10px;
   border-radius: 999px;
   font-size: 12px;
-  background: #f0f0f0;
+  font-weight: 500;
+  background: var(--secondary);
+  color: var(--secondary-foreground);
 }
 
 .badge.published,
 .badge.completed,
 .badge.active {
-  background: #e5f5e5;
-  color: #2e7d32;
+  background: oklch(68% 0.15 152 / 0.18);
+  color: var(--success);
 }
 
 .badge.failed {
-  background: #fdecea;
-  color: var(--accent);
+  background: oklch(60% 0.21 22 / 0.18);
+  color: oklch(75% 0.18 22);
 }
 
 .badge.flagged {
-  background: #fff4e5;
-  color: #b8860b;
+  background: oklch(79% 0.15 78 / 0.18);
+  color: var(--warning);
 }
 
 footer {
   display: flex;
   flex-wrap: wrap;
   gap: 8px 16px;
-  padding: 16px;
+  padding: 16px 20px;
   border-top: 1px solid var(--border);
   font-size: 13px;
 }
 
 footer a {
-  color: var(--muted);
+  color: var(--muted-foreground);
   text-decoration: none;
 }
 
 footer a:hover {
-  color: var(--accent);
+  color: var(--foreground);
 }
 
 article h2 {
