@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 
 import { ApiError, api } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
@@ -158,6 +158,40 @@ function ReviewAndPublish({
   );
 }
 
+// Video scripts aren't meant to be posted anywhere directly (CIN-130)
+// -- this is the post-generation step for that case: edit, then
+// download as a .txt file instead of picking a target account and
+// publishing. Plain .txt rather than .md: every phone/OS opens .txt
+// in some text viewer with no extra app, whereas .md commonly has no
+// default handler at all on mobile.
+function ReviewAndDownload({ job, initialCaption }: { job: GenerationJob; initialCaption: string }) {
+  const [text, setText] = useState(job.output_payload?.text ?? initialCaption);
+
+  function handleDownload() {
+    const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `video-script-${new Date().toISOString().slice(0, 10)}.txt`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }
+
+  return (
+    <div>
+      <label>
+        Сценарий (можно отредактировать перед скачиванием)
+        <textarea rows={12} value={text} onChange={(e) => setText(e.target.value)} />
+      </label>
+      <button type="button" onClick={handleDownload}>
+        Скачать сценарий (.txt)
+      </button>
+    </div>
+  );
+}
+
 const CONTENT_TYPE_LABELS: Record<GenerationContentType, string> = {
   text: "Текст",
   image: "Изображение",
@@ -210,6 +244,16 @@ export interface GenerationFormProps {
   topicLabel?: string;
   topicPlaceholder?: string;
   emptyAccountsMessage?: string;
+  // CIN-130: hides "Куда опубликовать" entirely -- for content that
+  // isn't meant to be posted anywhere (a video script). Target
+  // accounts are still sent to /content/generate under the hood
+  // (every eligible one, silently) since the backend still requires
+  // >=1 for its content_type/content_kind validation and tone
+  // guidance, but the user never has to think about "publishing".
+  hideTargetPicker?: boolean;
+  // "download" skips the publish step after generation entirely and
+  // shows an edit-then-download-as-.txt step instead (ReviewAndDownload).
+  postGenerationAction?: "publish" | "download";
 }
 
 export function GenerationForm({
@@ -221,6 +265,8 @@ export function GenerationForm({
   topicLabel = "Запрос",
   topicPlaceholder = "например, осенняя коллекция кофе",
   emptyAccountsMessage = "Чтобы начать генерацию, сначала подключите соцсеть на странице «Соцсети».",
+  hideTargetPicker = false,
+  postGenerationAction = "publish",
 }: GenerationFormProps) {
   const { token } = useAuth();
   const [accounts, setAccounts] = useState<SocialAccount[]>([]);
@@ -248,9 +294,23 @@ export function GenerationForm({
   // Only accounts that can actually publish the locked content type
   // are offered -- e.g. Instagram never appears on the "Сценарий
   // видео" page, since it doesn't support content_type=text at all.
-  const selectableAccounts = lockedContentType
-    ? accounts.filter((a) => allowedContentTypesFor([a.platform]).includes(lockedContentType))
-    : accounts;
+  const selectableAccounts = useMemo(
+    () =>
+      lockedContentType
+        ? accounts.filter((a) => allowedContentTypesFor([a.platform]).includes(lockedContentType))
+        : accounts,
+    [accounts, lockedContentType]
+  );
+
+  // CIN-130: when the picker itself is hidden, every eligible account
+  // is sent along silently -- /content/generate still requires >=1
+  // for its own validation/tone guidance, even though nothing here
+  // ever gets published to any of them.
+  useEffect(() => {
+    if (hideTargetPicker) {
+      setTargetAccountIds(selectableAccounts.map((a) => a.id));
+    }
+  }, [hideTargetPicker, selectableAccounts]);
 
   function toggleTargetAccount(accountId: string, checked: boolean) {
     const next = checked ? [...targetAccountIds, accountId] : targetAccountIds.filter((id) => id !== accountId);
@@ -379,19 +439,21 @@ export function GenerationForm({
         </div>
       </div>
       <form onSubmit={handleSubmit} className="card">
-        <fieldset className="chip-group">
-          <legend>Куда опубликовать</legend>
-          {selectableAccounts.map((a) => (
-            <label key={a.id}>
-              <input
-                type="checkbox"
-                checked={targetAccountIds.includes(a.id)}
-                onChange={(e) => toggleTargetAccount(a.id, e.target.checked)}
-              />
-              {a.platform} — {a.display_name ?? a.external_account_id}
-            </label>
-          ))}
-        </fieldset>
+        {!hideTargetPicker && (
+          <fieldset className="chip-group">
+            <legend>Куда опубликовать</legend>
+            {selectableAccounts.map((a) => (
+              <label key={a.id}>
+                <input
+                  type="checkbox"
+                  checked={targetAccountIds.includes(a.id)}
+                  onChange={(e) => toggleTargetAccount(a.id, e.target.checked)}
+                />
+                {a.platform} — {a.display_name ?? a.external_account_id}
+              </label>
+            ))}
+          </fieldset>
+        )}
         <label>
           {topicLabel}
           <textarea
@@ -486,7 +548,10 @@ export function GenerationForm({
             Статус генерации: <span className={`badge ${job.status}`}>{job.status}</span>
           </p>
           {job.status === "completed" &&
-            (job.output_payload?.text || job.output_payload?.image_url || job.output_payload?.video_url) && (
+            (job.output_payload?.text || job.output_payload?.image_url || job.output_payload?.video_url) &&
+            (postGenerationAction === "download" ? (
+              <ReviewAndDownload job={job} initialCaption={topic} />
+            ) : (
               <ReviewAndPublish
                 job={job}
                 contentKind={contentKind}
@@ -494,7 +559,7 @@ export function GenerationForm({
                 accounts={accounts}
                 targetAccountIds={targetAccountIds}
               />
-            )}
+            ))}
           {job.status === "failed" && <p className="error">{job.error_message}</p>}
           {job.status === "flagged" && (
             <p className="error">Отклонено модерацией: {job.error_message}</p>
