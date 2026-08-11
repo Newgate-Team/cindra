@@ -1,18 +1,22 @@
-import { IBM_Plex_Sans } from "next/font/google";
-
+// Self-hosted via Fontsource (npm) instead of next/font/google (CIN-131):
+// the latter fetches woff2 files from fonts.gstatic.com at *build* time,
+// which the GitHub Actions runner intermittently can't reach, hard-
+// failing the whole build. Fontsource bundles the actual font files in
+// the npm package itself, so the build only ever depends on the npm
+// registry, which every CI run this session has reached reliably.
+// Each weight file below already includes latin + cyrillic (and other)
+// unicode-range subsets in one file -- the browser only fetches the
+// subset it actually needs per character on the page.
+import "@fontsource/ibm-plex-sans/400.css";
+import "@fontsource/ibm-plex-sans/500.css";
+import "@fontsource/ibm-plex-sans/600.css";
+import "@fontsource/ibm-plex-sans/700.css";
 import "./globals.css";
 
 import { AuthProvider } from "@/lib/auth-context";
 
 import { Footer } from "./components/Footer";
 import { NavBar } from "./components/NavBar";
-
-const ibmPlexSans = IBM_Plex_Sans({
-  subsets: ["latin", "cyrillic"],
-  weight: ["400", "500", "600", "700"],
-  variable: "--font-sans",
-  display: "swap",
-});
 
 export const metadata = {
   title: "Cindra",
@@ -25,7 +29,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="ru" className={ibmPlexSans.variable}>
+    <html lang="ru">
       <body>
         <AuthProvider>
           <div className="app-shell">
