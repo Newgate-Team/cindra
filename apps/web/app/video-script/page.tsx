@@ -18,6 +18,8 @@ export default function VideoScriptPage() {
         lockedContentKind="video_script"
         topicLabel="О чём видео"
         topicPlaceholder="например, обзор новой коллекции для Reels"
+        hideTargetPicker
+        postGenerationAction="download"
       />
     </RequireAuth>
   );
