@@ -78,6 +78,7 @@ def test_direct_post_queries_creator_then_uploads_video() -> None:
             "tiktok": {
                 "accounts": {
                     str(account.id): {
+                        "mode": "direct_post",
                         "privacy_level": "SELF_ONLY",
                         "disable_comment": False,
                         "disable_duet": True,
@@ -142,8 +143,75 @@ def test_direct_post_queries_creator_then_uploads_video() -> None:
     with _client(handler) as client, patch("app.social_integrations.tiktok.get_settings", return_value=settings):
         result = tiktok.publish(account, post, client)
 
-    assert result == {"id": "publish-123"}
+    assert result == {"id": "publish-123", "mode": "direct_post"}
     assert calls[-1] == "PUT https://upload.tiktok.test/video"
+
+
+def test_draft_upload_skips_creator_settings_and_sends_video_to_inbox() -> None:
+    account_id = uuid.uuid4()
+    account = SocialAccount(
+        id=account_id,
+        user_id=uuid.uuid4(),
+        platform=SocialPlatform.tiktok,
+        external_account_id="open-id",
+        encrypted_access_token=encrypt_token("access-token"),
+        encrypted_refresh_token=encrypt_token("refresh-token"),
+        token_expires_at=datetime.now(UTC) + timedelta(hours=1),
+    )
+    post = Post(
+        id=uuid.uuid4(),
+        user_id=account.user_id,
+        social_account_id=account.id,
+        text="Черновик для TikTok",
+        video_url="https://media.cindra.test/draft.mp4",
+        content_kind="post",
+        platform_options={
+            "tiktok": {"accounts": {str(account.id): {"mode": "draft_upload"}}}
+        },
+        scheduled_for=datetime.now(UTC),
+    )
+    video_bytes = b"draft-video"
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(f"{request.method} {request.url}")
+        assert request.url != tiktok._CREATOR_INFO_URL
+        if str(request.url) == post.video_url:
+            return httpx.Response(200, content=video_bytes, headers={"content-type": "video/mp4"})
+        if request.url == tiktok._DRAFT_UPLOAD_URL:
+            payload = request.read().decode()
+            assert '"source":"FILE_UPLOAD"' in payload
+            assert '"post_info"' not in payload
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "publish_id": "draft-123",
+                        "upload_url": "https://upload.tiktok.test/draft",
+                    },
+                    "error": {"code": "ok", "message": ""},
+                },
+            )
+        if str(request.url) == "https://upload.tiktok.test/draft":
+            assert request.headers["content-range"] == (
+                f"bytes 0-{len(video_bytes) - 1}/{len(video_bytes)}"
+            )
+            assert request.read() == video_bytes
+            return httpx.Response(201)
+        raise AssertionError(f"unexpected request: {request.method} {request.url}")
+
+    settings = SimpleNamespace(r2_public_url_base="https://media.cindra.test")
+    with _client(handler) as client, patch(
+        "app.social_integrations.tiktok.get_settings", return_value=settings
+    ):
+        result = tiktok.publish(account, post, client)
+
+    assert result == {"id": "draft-123", "mode": "draft_upload"}
+    assert calls == [
+        "GET https://media.cindra.test/draft.mp4",
+        f"POST {tiktok._DRAFT_UPLOAD_URL}",
+        "PUT https://upload.tiktok.test/draft",
+    ]
 
 
 def test_direct_post_requires_creator_selected_privacy() -> None:

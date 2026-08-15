@@ -35,6 +35,7 @@ function platformsFor(ids: string[], accounts: SocialAccount[]): SocialPlatform[
 }
 
 interface TikTokPostOptions {
+  mode: "direct_post" | "draft_upload";
   privacy_level: string;
   disable_comment: boolean;
   disable_duet: boolean;
@@ -122,6 +123,7 @@ function ReviewAndPublish({
           const next = { ...previous };
           for (const { account, creator } of results) {
             next[account.id] = next[account.id] ?? {
+              mode: "direct_post",
               // TikTok explicitly forbids silently preselecting a
               // privacy level: the creator must choose every time.
               privacy_level: "",
@@ -166,7 +168,14 @@ function ReviewAndPublish({
   const tiktokReady =
     targetTikTokAccounts.length === 0 ||
     (targetTikTokAccounts.every(
-      (account) => tiktokCreators[account.id] && tiktokOptions[account.id]?.privacy_level
+      (account) => {
+        const options = tiktokOptions[account.id];
+        return (
+          tiktokCreators[account.id] &&
+          options &&
+          (options.mode === "draft_upload" || Boolean(options.privacy_level))
+        );
+      }
     ) && !tiktokError);
 
   async function handlePublish(event: FormEvent) {
@@ -236,79 +245,105 @@ function ReviewAndPublish({
               Настройки получены прямо из TikTok. Максимальная длительность: {creator.max_video_post_duration_sec} сек.
             </p>
             <label>
-              Кто увидит видео
+              Способ отправки
               <select
                 required
-                value={options.privacy_level}
+                value={options.mode}
                 onChange={(event) =>
-                  updateTikTokOption(account.id, "privacy_level", event.target.value)
+                  updateTikTokOption(
+                    account.id,
+                    "mode",
+                    event.target.value as TikTokPostOptions["mode"]
+                  )
                 }
               >
-                <option value="">Выберите приватность</option>
-                {creator.privacy_level_options.map((level) => (
-                  <option key={level} value={level}>
-                    {TIKTOK_PRIVACY_LABELS[level] ?? level}
-                  </option>
-                ))}
+                <option value="direct_post">Опубликовать напрямую</option>
+                <option value="draft_upload">Отправить в TikTok как черновик</option>
               </select>
             </label>
-            <label>
-              <input
-                type="checkbox"
-                checked={options.disable_comment}
-                disabled={creator.comment_disabled}
-                onChange={(event) =>
-                  updateTikTokOption(account.id, "disable_comment", event.target.checked)
-                }
-              />
-              Отключить комментарии
-            </label>
-            <label>
-              <input
-                type="checkbox"
-                checked={options.disable_duet}
-                disabled={creator.duet_disabled}
-                onChange={(event) =>
-                  updateTikTokOption(account.id, "disable_duet", event.target.checked)
-                }
-              />
-              Отключить Duet
-            </label>
-            <label>
-              <input
-                type="checkbox"
-                checked={options.disable_stitch}
-                disabled={creator.stitch_disabled}
-                onChange={(event) =>
-                  updateTikTokOption(account.id, "disable_stitch", event.target.checked)
-                }
-              />
-              Отключить Stitch
-            </label>
-            <label>
-              <input
-                type="checkbox"
-                checked={options.brand_organic_toggle}
-                onChange={(event) =>
-                  updateTikTokOption(account.id, "brand_organic_toggle", event.target.checked)
-                }
-              />
-              Видео продвигает наш собственный бренд, продукт или услугу
-            </label>
-            <label>
-              <input
-                type="checkbox"
-                checked={options.brand_content_toggle}
-                onChange={(event) =>
-                  updateTikTokOption(account.id, "brand_content_toggle", event.target.checked)
-                }
-              />
-              Видео содержит платное продвижение стороннего бренда
-            </label>
-            <label>
-              <input type="checkbox" checked={options.is_aigc} disabled readOnly />
-              Контент создан с помощью ИИ
-            </label>
+            {options.mode === "draft_upload" ? (
+              <p className="muted">
+                Видео появится во входящих TikTok. Откройте уведомление в мобильном приложении,
+                отредактируйте черновик и завершите публикацию там.
+              </p>
+            ) : (
+              <>
+                <label>
+                  Кто увидит видео
+                  <select
+                    required
+                    value={options.privacy_level}
+                    onChange={(event) =>
+                      updateTikTokOption(account.id, "privacy_level", event.target.value)
+                    }
+                  >
+                    <option value="">Выберите приватность</option>
+                    {creator.privacy_level_options.map((level) => (
+                      <option key={level} value={level}>
+                        {TIKTOK_PRIVACY_LABELS[level] ?? level}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={options.disable_comment}
+                    disabled={creator.comment_disabled}
+                    onChange={(event) =>
+                      updateTikTokOption(account.id, "disable_comment", event.target.checked)
+                    }
+                  />
+                  Отключить комментарии
+                </label>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={options.disable_duet}
+                    disabled={creator.duet_disabled}
+                    onChange={(event) =>
+                      updateTikTokOption(account.id, "disable_duet", event.target.checked)
+                    }
+                  />
+                  Отключить Duet
+                </label>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={options.disable_stitch}
+                    disabled={creator.stitch_disabled}
+                    onChange={(event) =>
+                      updateTikTokOption(account.id, "disable_stitch", event.target.checked)
+                    }
+                  />
+                  Отключить Stitch
+                </label>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={options.brand_organic_toggle}
+                    onChange={(event) =>
+                      updateTikTokOption(account.id, "brand_organic_toggle", event.target.checked)
+                    }
+                  />
+                  Видео продвигает наш собственный бренд, продукт или услугу
+                </label>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={options.brand_content_toggle}
+                    onChange={(event) =>
+                      updateTikTokOption(account.id, "brand_content_toggle", event.target.checked)
+                    }
+                  />
+                  Видео содержит платное продвижение стороннего бренда
+                </label>
+                <label>
+                  <input type="checkbox" checked={options.is_aigc} disabled readOnly />
+                  Контент создан с помощью ИИ
+                </label>
+              </>
+            )}
           </fieldset>
         );
       })}

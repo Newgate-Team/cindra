@@ -1,8 +1,9 @@
-"""TikTok Login Kit and Content Posting (Direct Post) integration.
+"""TikTok Login Kit and Content Posting integration.
 
-The creator-info request is intentionally part of the publish path:
+Direct Post queries creator info immediately before publishing because
 TikTok requires clients to show and respect the creator's current
-privacy/interaction choices instead of caching or inventing defaults.
+privacy/interaction choices. Draft Upload skips those post settings and
+delivers the video to the creator's TikTok inbox for final editing.
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ _API_BASE = "https://open.tiktokapis.com"
 _TOKEN_URL = f"{_API_BASE}/v2/oauth/token/"
 _CREATOR_INFO_URL = f"{_API_BASE}/v2/post/publish/creator_info/query/"
 _DIRECT_POST_URL = f"{_API_BASE}/v2/post/publish/video/init/"
+_DRAFT_UPLOAD_URL = f"{_API_BASE}/v2/post/publish/inbox/video/init/"
 _STATUS_URL = f"{_API_BASE}/v2/post/publish/status/fetch/"
 _RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 _TOKEN_REFRESH_MARGIN = timedelta(minutes=5)
@@ -210,6 +212,26 @@ def _download_video(
     return size, content_type
 
 
+def _options_for_account(account: SocialAccount, post: Post) -> dict[str, Any]:
+    tiktok_options = post.platform_options.get("tiktok", {})
+    return tiktok_options.get("accounts", {}).get(str(account.id), tiktok_options)
+
+
+def _upload_source_info(video_size: int) -> tuple[dict[str, Any], int, int]:
+    chunk_size = min(video_size, _MAX_CHUNK_SIZE)
+    total_chunk_count = max(1, video_size // chunk_size)
+    return (
+        {
+            "source": "FILE_UPLOAD",
+            "video_size": video_size,
+            "chunk_size": chunk_size,
+            "total_chunk_count": total_chunk_count,
+        },
+        chunk_size,
+        total_chunk_count,
+    )
+
+
 def _init_direct_post(
     access_token: str,
     account: SocialAccount,
@@ -218,8 +240,7 @@ def _init_direct_post(
     video_size: int,
     client: httpx.Client,
 ) -> tuple[str, str, int, int]:
-    tiktok_options = post.platform_options.get("tiktok", {})
-    options = tiktok_options.get("accounts", {}).get(str(account.id), tiktok_options)
+    options = _options_for_account(account, post)
     privacy_level = options.get("privacy_level")
     available_privacy = creator_info.get("privacy_level_options", [])
     if not privacy_level or privacy_level not in available_privacy:
@@ -227,8 +248,7 @@ def _init_direct_post(
             "Выберите доступный уровень приватности TikTok непосредственно перед публикацией"
         )
 
-    chunk_size = min(video_size, _MAX_CHUNK_SIZE)
-    total_chunk_count = max(1, video_size // chunk_size)
+    source_info, chunk_size, total_chunk_count = _upload_source_info(video_size)
     post_info = {
         "title": post.text[:2200],
         "privacy_level": privacy_level,
@@ -245,17 +265,28 @@ def _init_direct_post(
     }
     payload = {
         "post_info": post_info,
-        "source_info": {
-            "source": "FILE_UPLOAD",
-            "video_size": video_size,
-            "chunk_size": chunk_size,
-            "total_chunk_count": total_chunk_count,
-        },
+        "source_info": source_info,
     }
     response = client.post(
         _DIRECT_POST_URL,
         headers=_bearer(access_token),
         json=payload,
+        timeout=30.0,
+    )
+    data = _handle_json(response).get("data", {})
+    return data["publish_id"], data["upload_url"], chunk_size, total_chunk_count
+
+
+def _init_draft_upload(
+    access_token: str,
+    video_size: int,
+    client: httpx.Client,
+) -> tuple[str, str, int, int]:
+    source_info, chunk_size, total_chunk_count = _upload_source_info(video_size)
+    response = client.post(
+        _DRAFT_UPLOAD_URL,
+        headers=_bearer(access_token),
+        json={"source_info": source_info},
         timeout=30.0,
     )
     data = _handle_json(response).get("data", {})
@@ -303,18 +334,28 @@ def publish(
     account: SocialAccount, post: Post, client: httpx.Client | None = None
 ) -> dict[str, Any]:
     if not post.video_url:
-        raise PermanentPublishError("TikTok Direct Post требует video_url")
+        raise PermanentPublishError("Публикация в TikTok требует video_url")
 
     owns_client = client is None
     active_client = client or httpx.Client()
     try:
         access_token = ensure_fresh_access_token(account, active_client)
-        creator_info = query_creator_info(access_token, active_client)
+        options = _options_for_account(account, post)
+        mode = options.get("mode", "direct_post")
+        if mode not in {"direct_post", "draft_upload"}:
+            raise PermanentPublishError("Неизвестный режим публикации TikTok")
+
         with tempfile.SpooledTemporaryFile(max_size=_MAX_CHUNK_SIZE) as video:
             video_size, content_type = _download_video(post.video_url, video, active_client)
-            publish_id, upload_url, chunk_size, total_chunk_count = _init_direct_post(
-                access_token, account, post, creator_info, video_size, active_client
-            )
+            if mode == "draft_upload":
+                publish_id, upload_url, chunk_size, total_chunk_count = _init_draft_upload(
+                    access_token, video_size, active_client
+                )
+            else:
+                creator_info = query_creator_info(access_token, active_client)
+                publish_id, upload_url, chunk_size, total_chunk_count = _init_direct_post(
+                    access_token, account, post, creator_info, video_size, active_client
+                )
             _upload_video(
                 video,
                 upload_url,
@@ -324,7 +365,7 @@ def publish(
                 content_type,
                 active_client,
             )
-        return {"id": publish_id}
+        return {"id": publish_id, "mode": mode}
     finally:
         if owns_client:
             active_client.close()
