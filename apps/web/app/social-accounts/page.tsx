@@ -18,12 +18,14 @@ const PLATFORM_LABELS: Record<string, string> = {
   telegram: "Telegram",
   instagram: "Instagram",
   facebook: "Facebook-страница",
+  tiktok: "TikTok",
 };
 
 const PLATFORM_ICONS: Record<string, string> = {
   telegram: "/telegram-icon.png",
   instagram: "/instagram-icon.png",
   facebook: "/facebook-icon.png",
+  tiktok: "/tiktok-icon.svg",
 };
 
 interface TelegramVerification {
@@ -41,6 +43,8 @@ function SocialAccountsManager() {
   const [connectError, setConnectError] = useState<string | null>(null);
   const [startingVerification, setStartingVerification] = useState(false);
   const [connecting, setConnecting] = useState(false);
+  const [tiktokError, setTikTokError] = useState<string | null>(null);
+  const [connectingTikTok, setConnectingTikTok] = useState(false);
 
   function reload() {
     api.get<SocialAccount[]>("/social-accounts", token).then(setAccounts);
@@ -116,6 +120,22 @@ function SocialAccountsManager() {
         "business_management,pages_manage_posts,pages_manage_engagement,pages_read_user_content"
     );
     window.location.href = url.toString();
+  }
+
+  async function handleConnectTikTok() {
+    setTikTokError(null);
+    setConnectingTikTok(true);
+    try {
+      const result = await api.post<{ authorization_url: string }>(
+        "/social-accounts/tiktok/start",
+        {},
+        token
+      );
+      window.location.href = result.authorization_url;
+    } catch (err) {
+      setTikTokError(err instanceof ApiError ? err.message : "Не удалось начать вход в TikTok");
+      setConnectingTikTok(false);
+    }
   }
 
   async function handleDisconnect(id: string) {
@@ -247,6 +267,18 @@ function SocialAccountsManager() {
             Подключение Instagram пока недоступно — не настроено Meta App (см. задачу CIN-52).
           </p>
         )}
+      </div>
+
+      <h2>Подключить TikTok</h2>
+      <div className="card">
+        <p className="muted">
+          Подключается через официальный TikTok Login Kit. Cindra запросит только данные профиля
+          и разрешения на загрузку и публикацию видео.
+        </p>
+        {tiktokError && <p className="error">{tiktokError}</p>}
+        <button type="button" onClick={handleConnectTikTok} disabled={connectingTikTok}>
+          {connectingTikTok ? "Открываем TikTok…" : "Войти через TikTok"}
+        </button>
       </div>
     </>
   );

@@ -6,7 +6,7 @@ from app.content_pipeline.text_generator import gemini_text_generator
 from app.content_pipeline.video_generator import veo_video_generator
 from app.models import GenerationContentType, SocialPlatform
 from app.scheduler.registry import register_publisher
-from app.social_integrations import facebook, instagram, telegram
+from app.social_integrations import facebook, instagram, telegram, tiktok
 
 
 def bootstrap() -> None:
@@ -26,6 +26,7 @@ def bootstrap() -> None:
     register_publisher(SocialPlatform.telegram, telegram.publish)
     register_publisher(SocialPlatform.instagram, instagram.publish)
     register_publisher(SocialPlatform.facebook, facebook.publish)
+    register_publisher(SocialPlatform.tiktok, tiktok.publish)
 
     # CIN-121: the Celery worker runs with --loglevel=info (railway.toml),
     # which sets the root logger to INFO -- httpx's own request logger

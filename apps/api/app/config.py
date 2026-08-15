@@ -46,6 +46,11 @@ class Settings(BaseSettings):
     meta_app_id: str = ""
     meta_app_secret: str = ""
     meta_redirect_uri: str = "https://app.cindra.example/oauth/instagram/callback"
+    # TikTok Login Kit + Content Posting API. The redirect URI must be
+    # registered verbatim in the TikTok developer app.
+    tiktok_client_key: str = ""
+    tiktok_client_secret: str = ""
+    tiktok_redirect_uri: str = "https://cindra-chi.vercel.app/oauth/tiktok/callback"
     # Comma-separated. Without CORS the browser blocks every request
     # from the web app (blocked at the OPTIONS preflight, not
     # something curl-based manual testing ever exercises) -- found

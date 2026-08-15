@@ -19,6 +19,7 @@ class SocialPlatform(str, enum.Enum):
     telegram = "telegram"
     instagram = "instagram"
     facebook = "facebook"
+    tiktok = "tiktok"
 
 
 class SubscriptionTier(str, enum.Enum):
@@ -211,6 +212,11 @@ class Post(Base):
     # publishers (e.g. instagram.py, CIN-74) know whether to publish a
     # Story instead of a regular feed post.
     content_kind: Mapped[str] = mapped_column(String(50), default="post", nullable=False)
+    # Per-platform settings that must be chosen at review time instead
+    # of silently defaulted by a publisher. TikTok in particular
+    # requires the creator's current privacy options and interaction /
+    # commercial-content disclosures to be shown before Direct Post.
+    platform_options: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
     status: Mapped[PostStatus] = mapped_column(
         Enum(PostStatus, name="post_status"), default=PostStatus.scheduled, nullable=False
     )
