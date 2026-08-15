@@ -51,3 +51,9 @@ def upsert_social_account(
 
 def get_access_token(account: SocialAccount) -> str:
     return decrypt_token(account.encrypted_access_token)
+
+
+def get_refresh_token(account: SocialAccount) -> str | None:
+    if account.encrypted_refresh_token is None:
+        return None
+    return decrypt_token(account.encrypted_refresh_token)
