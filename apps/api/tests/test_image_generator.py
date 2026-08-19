@@ -334,6 +334,37 @@ def test_prompt_nudges_toward_short_correctly_spelled_text() -> None:
     assert "без орфографических и грамматических ошибок" in captured["body"]["input"]
 
 
+def test_prompt_nudges_toward_clean_credible_composition_with_negative_space() -> None:
+    # CIN-132: grounded in the run-social-content skill's
+    # create-social-image-posts reference (prompt-contracts.md's
+    # exclusion list, visual-formats.md's "natural moment over generic
+    # pose"). Negative space matters specifically here since Instagram
+    # Stories composite a caption onto the image afterward (CIN-123).
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "interactions" in str(request.url):
+            captured["body"] = json.loads(request.content)
+            return httpx.Response(
+                200,
+                json={
+                    "status": "completed",
+                    "output_image": {"data": "ZmFrZS1pbWFnZQ==", "mime_type": "image/png"},
+                },
+            )
+        return httpx.Response(500, json={"error": {"status": "INTERNAL"}})
+
+    payload = {"topic": "осенняя коллекция кофе", "platform": "instagram"}
+    with patch(
+        "app.content_pipeline.image_generator.upload_bytes",
+        return_value="https://media.cindra.example/abc.png",
+    ):
+        nano_banana_image_generator(payload, client=_client(handler))
+    body = captured["body"]["input"]
+    assert "свободного пространства" in body
+    assert "искажённых лиц" in body
+
+
 def test_image_found_in_steps_is_used_when_output_image_is_missing() -> None:
     # CIN-118: a real production response had status=completed and a
     # genuinely generated image, but no top-level output_image at all

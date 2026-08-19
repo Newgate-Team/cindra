@@ -74,6 +74,21 @@ def _build_image_prompt(payload: dict[str, Any], attachment_texts: list[str] | N
         "баннере/экране и т.п.) -- используй короткую фразу, не длиннее 4-6 слов, и "
         "напиши её без орфографических и грамматических ошибок."
     )
+    # CIN-132: grounded in the run-social-content skill's
+    # create-social-image-posts reference (prompt-contracts.md's
+    # exclusion list + visual-formats.md's "natural moment over generic
+    # pose"). Negative space near an edge keeps the frame usable if the
+    # user overlays a caption in their own editor. Worded to exclude
+    # only accidental artifacts (garbled background writing), not text
+    # in general -- CIN-117's blanket "no text" prohibition must not
+    # creep back in.
+    lines.append(
+        "Кадр должен быть композиционно чистым и правдоподобным: естественный момент, "
+        "а не постановочная стоковая поза. Оставь немного свободного пространства у "
+        "одного из краёв на случай подписи поверх фото. Без искажённых лиц, лишних "
+        "пальцев, поддельных интерфейсов и нечитаемых случайных надписей на заднем "
+        "плане."
+    )
     brand_guide = payload.get("brand_guide")
     if brand_guide:
         lines.append(f"Стиль и бренд-гайд (соблюдать): {brand_guide}")
