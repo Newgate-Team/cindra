@@ -21,6 +21,11 @@ import { NavBar } from "./components/NavBar";
 export const metadata = {
   title: "Cindra",
   description: "AI-контент для соцсетей",
+  // app.cindra.online — приватный кабинет, не публичный сайт (CRW-13):
+  // индексироваться должен только будущий маркетинговый cindra.online.
+  // Дублируется в app/robots.ts — meta-тег закрывает страницы, которые
+  // краулер уже знает, robots.txt останавливает обход новых.
+  robots: { index: false, follow: false },
 };
 
 export default function RootLayout({
