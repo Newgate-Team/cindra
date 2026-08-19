@@ -40,6 +40,12 @@ class Settings(BaseSettings):
     # (confirmed against a real, paid production call, CIN-112).
     veo_duration_seconds: int = 8
     veo_resolution: str = "1080p"
+    # OAuth 2.0 Web client ID from Google Cloud Console (CIN-133).
+    # Empty until the client is created there (requires browser access
+    # to console.cloud.google.com) -- POST /auth/google returns 503
+    # until configured. The same value goes to the frontend as
+    # NEXT_PUBLIC_GOOGLE_CLIENT_ID.
+    google_client_id: str = ""
     # Empty until CIN-51 is resolved -- see that gate ticket.
     telegram_bot_token: str = ""
     # Empty until CIN-52 is resolved -- see that gate ticket.
