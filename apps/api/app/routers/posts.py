@@ -127,6 +127,7 @@ def create_post(
                 image_url=payload.image_url,
                 video_url=payload.video_url,
                 content_kind=payload.content_kind,
+                platform_options=payload.platform_options,
                 scheduled_for=scheduled_for,
             )
             for account_id in new_account_ids

@@ -135,6 +135,7 @@ class PostCreate(BaseModel):
     scheduled_for: datetime | None = None  # None = publish as soon as possible
     generation_job_id: uuid.UUID | None = None
     content_kind: str = "post"  # "post" / "story" -- see Post.content_kind (CIN-74)
+    platform_options: dict[str, Any] = Field(default_factory=dict)
 
 
 class PostUpdate(BaseModel):
@@ -227,6 +228,32 @@ class InstagramConnectRequest(BaseModel):
     code: str = Field(
         min_length=1, description="Authorization code от Meta OAuth-редиректа (см. CIN-52)"
     )
+
+
+class TikTokOAuthStartOut(BaseModel):
+    authorization_url: str
+
+
+class TikTokConnectRequest(BaseModel):
+    code: str = Field(min_length=1)
+    state: str = Field(min_length=1)
+
+
+class TikTokCreatorInfoOut(BaseModel):
+    creator_username: str
+    creator_nickname: str
+    creator_avatar_url: str | None = None
+    privacy_level_options: list[str]
+    comment_disabled: bool
+    duet_disabled: bool
+    stitch_disabled: bool
+    max_video_post_duration_sec: int
+
+
+class TikTokPublishStatusOut(BaseModel):
+    status: str
+    fail_reason: str | None = None
+    publicly_available_post_id: list[str] = Field(default_factory=list)
 
 
 class SocialAccountOut(BaseModel):

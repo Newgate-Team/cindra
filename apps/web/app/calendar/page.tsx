@@ -17,6 +17,7 @@ const PLATFORM_LABELS: Record<Post["platform"], string> = {
   telegram: "Telegram",
   instagram: "Instagram",
   facebook: "Facebook",
+  tiktok: "TikTok",
 };
 
 // Текст публикации обрезан в таблице до 80 символов -- иконка рядом
@@ -85,8 +86,11 @@ function CreatePostForm({ onCreated }: { onCreated: () => void }) {
 
   useEffect(() => {
     api.get<SocialAccount[]>("/social-accounts", token).then((list) => {
-      setAccounts(list);
-      if (list.length > 0) setAccountId(list[0].id);
+      // This compact manual form has no media uploader. TikTok only
+      // accepts a video, so it belongs in the generate/review flow.
+      const manualAccounts = list.filter((account) => account.platform !== "tiktok");
+      setAccounts(manualAccounts);
+      if (manualAccounts.length > 0) setAccountId(manualAccounts[0].id);
     });
   }, [token]);
 

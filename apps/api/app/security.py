@@ -56,3 +56,29 @@ def decode_telegram_verification_token(token: str) -> tuple[str, str]:
     if payload.get("typ") != _TELEGRAM_VERIFICATION_TYPE:
         raise jwt.InvalidTokenError("not a telegram_verification token")
     return payload["chat_id"], payload["code"]
+
+
+TIKTOK_OAUTH_STATE_EXPIRE_MINUTES = 10
+_TIKTOK_OAUTH_STATE_TYPE = "tiktok_oauth_state"
+
+
+def create_tiktok_oauth_state(user_id: uuid.UUID) -> str:
+    """Short-lived signed state binds the TikTok callback to the
+    authenticated Cindra user who started the OAuth flow."""
+    settings = get_settings()
+    expire = datetime.now(UTC) + timedelta(minutes=TIKTOK_OAUTH_STATE_EXPIRE_MINUTES)
+    payload = {
+        "sub": str(user_id),
+        "nonce": uuid.uuid4().hex,
+        "exp": expire,
+        "typ": _TIKTOK_OAUTH_STATE_TYPE,
+    }
+    return jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
+
+
+def decode_tiktok_oauth_state(token: str) -> uuid.UUID:
+    settings = get_settings()
+    payload = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
+    if payload.get("typ") != _TIKTOK_OAUTH_STATE_TYPE:
+        raise jwt.InvalidTokenError("not a tiktok_oauth_state token")
+    return uuid.UUID(payload["sub"])
