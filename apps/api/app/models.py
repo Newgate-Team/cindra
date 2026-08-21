@@ -295,6 +295,11 @@ class VideoProject(Base):
     video_generation_job_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("generation_jobs.id", ondelete="SET NULL"), nullable=True
     )
+    # CIN-137: image GenerationJob ids (as strings) for the
+    # auto-generated illustrations of blocks/cartoon briefs, in prompt
+    # order. A JSONB list rather than a link table -- capped at 10,
+    # only ever read back with the project.
+    illustration_job_ids: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )

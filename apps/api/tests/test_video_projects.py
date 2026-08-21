@@ -4,13 +4,20 @@ import uuid
 from unittest.mock import patch
 
 import httpx
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.content_pipeline.errors import TransientGenerationError
-from app.content_pipeline.video_studio import _split_brief_files, generate_brief_files
+from app.content_pipeline.video_studio import (
+    VideoStudioFailedError,
+    _split_brief_files,
+    extract_illustration_prompts,
+    generate_brief_files,
+)
 from app.models import (
+    GenerationContentType,
     GenerationJob,
     GenerationStatus,
     Subscription,
@@ -371,3 +378,174 @@ def test_video_generation_free_tier_hits_402(client: TestClient) -> None:
         f"/video-projects/{project['id']}/video-generation", headers=headers
     )
     assert response.status_code == 402
+
+
+def _brief_ready_project(client: TestClient, headers: dict[str, str], style: str = "blocks") -> dict:
+    project = _create_project(client, headers)
+    client.patch(
+        f"/video-projects/{project['id']}",
+        json={"script": "сценарий", "style": style},
+        headers=headers,
+    )
+    files = [
+        {"filename": "voiceover.md", "title": "Аудио", "content": "текст"},
+        {
+            "filename": "production.md",
+            "title": "Продакшн",
+            "content": "1. ноутбук со стикерами\n2. тающие часы",
+        },
+        {"filename": "edit.md", "title": "Монтаж", "content": "план"},
+    ]
+    with patch("app.routers.video_projects.generate_brief_files", return_value=files):
+        client.post(f"/video-projects/{project['id']}/brief", headers=headers)
+    return project
+
+
+def test_illustrations_rejected_for_filmed_styles(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    project = _brief_ready_project(client, headers, style="cinematic")
+    response = client.post(
+        f"/video-projects/{project['id']}/illustrations", headers=headers
+    )
+    assert response.status_code == 400
+
+
+def test_illustrations_require_brief(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    project = _create_project(client, headers)
+    client.patch(
+        f"/video-projects/{project['id']}",
+        json={"script": "сценарий", "style": "blocks"},
+        headers=headers,
+    )
+    response = client.post(
+        f"/video-projects/{project['id']}/illustrations", headers=headers
+    )
+    assert response.status_code == 400
+    assert "бриф" in response.json()["detail"]
+
+
+def test_illustrations_create_image_jobs_and_surface_on_project(
+    client: TestClient, db: Session
+) -> None:
+    headers = _auth_headers(client)
+    project = _brief_ready_project(client, headers)
+    prompts = ["ноутбук со стикерами, тёмный фон", "тающие часы, тёмный фон"]
+    with patch(
+        "app.routers.video_projects.extract_illustration_prompts", return_value=prompts
+    ):
+        response = client.post(
+            f"/video-projects/{project['id']}/illustrations", headers=headers
+        )
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["illustrations"]) == 2
+    assert [i["prompt"] for i in body["illustrations"]] == prompts
+    # task_always_eager ran the real image generator without
+    # credentials -- jobs exist and reached a terminal/queued state.
+    assert all(
+        i["status"] in ("queued", "processing", "completed", "failed")
+        for i in body["illustrations"]
+    )
+    jobs = db.scalars(
+        select(GenerationJob).where(
+            GenerationJob.content_type == GenerationContentType.image
+        )
+    ).all()
+    assert len(jobs) == 2
+    assert all(job.input_payload["image_kind"] == "illustration" for job in jobs)
+
+
+def test_illustrations_free_tier_limit_is_atomic(client: TestClient) -> None:
+    # free tier allows 3 images/month -- a 4-prompt brief must charge
+    # nothing and start nothing.
+    headers = _auth_headers(client)
+    project = _brief_ready_project(client, headers)
+    prompts = ["a", "b", "c", "d"]
+    with patch(
+        "app.routers.video_projects.extract_illustration_prompts", return_value=prompts
+    ):
+        response = client.post(
+            f"/video-projects/{project['id']}/illustrations", headers=headers
+        )
+    assert response.status_code == 402
+    body = client.get(f"/video-projects/{project['id']}", headers=headers).json()
+    assert body["illustrations"] is None
+
+
+def test_illustration_extraction_failure_does_not_charge(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    project = _brief_ready_project(client, headers)
+    with patch(
+        "app.routers.video_projects.extract_illustration_prompts",
+        side_effect=VideoStudioFailedError("не разобрали"),
+    ):
+        response = client.post(
+            f"/video-projects/{project['id']}/illustrations", headers=headers
+        )
+    assert response.status_code == 502
+    # image limit untouched: 3 real generations must still fit
+    prompts = ["a", "b", "c"]
+    with patch(
+        "app.routers.video_projects.extract_illustration_prompts", return_value=prompts
+    ):
+        response = client.post(
+            f"/video-projects/{project['id']}/illustrations", headers=headers
+        )
+    assert response.status_code == 200
+
+
+def test_styles_expose_generates_illustrations_flag(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    styles = {s["id"]: s for s in client.get("/video-projects/styles", headers=headers).json()}
+    assert styles["blocks"]["generates_illustrations"] is True
+    assert styles["cartoon"]["generates_illustrations"] is True
+    assert styles["cinematic"]["generates_illustrations"] is False
+    assert styles["veo_auto"]["generates_illustrations"] is False
+
+
+def test_extract_illustration_prompts_parses_json_array() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "candidates": [
+                    {"content": {"parts": [{"text": '```json\n["промпт 1", "промпт 2"]\n```'}]}}
+                ]
+            },
+        )
+
+    prompts = extract_illustration_prompts(
+        "1. промпт 1\n2. промпт 2", client=httpx.Client(transport=httpx.MockTransport(handler))
+    )
+    assert prompts == ["промпт 1", "промпт 2"]
+
+
+def test_extract_illustration_prompts_rejects_non_json() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"candidates": [{"content": {"parts": [{"text": "вот промпты: раз, два"}]}}]},
+        )
+
+    with pytest.raises(VideoStudioFailedError):
+        extract_illustration_prompts(
+            "план", client=httpx.Client(transport=httpx.MockTransport(handler))
+        )
+
+
+def test_extract_illustration_prompts_caps_at_ten() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "candidates": [
+                    {"content": {"parts": [{"text": json.dumps([f"p{i}" for i in range(15)])}]}}
+                ]
+            },
+        )
+
+    prompts = extract_illustration_prompts(
+        "план", client=httpx.Client(transport=httpx.MockTransport(handler))
+    )
+    assert len(prompts) == 10

@@ -11,10 +11,15 @@ so adding a style is a backend-only change.
 
 `brief_guidance` is folded into the brief-generation prompt and is
 what actually differentiates the files each style produces.
+
+`generates_illustrations` (CIN-137) marks styles whose visuals are
+generated rather than filmed -- for those the studio can produce the
+production plan's illustrations itself through the image pipeline.
 """
 
-VIDEO_STYLES: dict[str, dict[str, str]] = {
+VIDEO_STYLES: dict[str, dict[str, str | bool]] = {
     "blocks": {
+        "generates_illustrations": True,
         "title": "По блокам",
         "description": (
             "Текст на тёмном фоне + сгенерированные иллюстрации с лёгкой 2D-анимацией. "
@@ -33,6 +38,7 @@ VIDEO_STYLES: dict[str, dict[str, str]] = {
         ),
     },
     "cinematic": {
+        "generates_illustrations": False,
         "title": "Киношный",
         "description": (
             "Живые атмосферные кадры, б-ролл, закадровый голос. Нужна съёмка на телефон "
@@ -49,6 +55,7 @@ VIDEO_STYLES: dict[str, dict[str, str]] = {
         ),
     },
     "cartoon": {
+        "generates_illustrations": True,
         "title": "Мультяшный",
         "description": (
             "Анимационные сцены в едином рисованном стиле. Снимать не нужно — сцены "
@@ -65,6 +72,7 @@ VIDEO_STYLES: dict[str, dict[str, str]] = {
         ),
     },
     "talking_head": {
+        "generates_illustrations": False,
         "title": "Говорящая голова",
         "description": (
             "Вы в кадре говорите на камеру, с перебивками и текстом на экране. Нужна "
@@ -82,6 +90,7 @@ VIDEO_STYLES: dict[str, dict[str, str]] = {
         ),
     },
     "screencast": {
+        "generates_illustrations": False,
         "title": "Скринкаст / демо",
         "description": (
             "Запись экрана продукта с закадровым голосом. Нужна только запись экрана."
@@ -97,6 +106,7 @@ VIDEO_STYLES: dict[str, dict[str, str]] = {
         ),
     },
     "veo_auto": {
+        "generates_illustrations": False,
         "title": "Полное авто (Veo)",
         "description": (
             "Готовый 8-секундный клип генерируется автоматически по сценарию. Ничего "

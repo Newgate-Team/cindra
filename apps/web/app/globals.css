@@ -660,3 +660,30 @@ a.list-row {
   text-decoration: none;
   color: inherit;
 }
+
+.illustrations-block {
+  margin-top: 16px;
+}
+
+.illustrations-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px;
+  margin: 12px 0;
+}
+
+.illustration-card {
+  margin: 0;
+  padding: 8px;
+}
+
+.illustration-card img {
+  width: 100%;
+  border-radius: 6px;
+  display: block;
+}
+
+.illustration-card figcaption {
+  font-size: 12px;
+  margin-top: 6px;
+}

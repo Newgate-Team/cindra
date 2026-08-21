@@ -311,6 +311,16 @@ class BriefFileOut(BaseModel):
     content: str
 
 
+class IllustrationOut(BaseModel):
+    """One auto-generated brief illustration (CIN-137) -- mirrors the
+    linked image GenerationJob, resolved by the router."""
+
+    prompt: str
+    status: GenerationStatus
+    image_url: str | None
+    error_message: str | None
+
+
 class VideoProjectOut(BaseModel):
     id: uuid.UUID
     topic: str
@@ -325,6 +335,9 @@ class VideoProjectOut(BaseModel):
     video_url: str | None
     video_status: GenerationStatus | None
     video_error: str | None
+    # CIN-137: auto-generated illustrations for blocks/cartoon briefs
+    # (None when never requested for this project).
+    illustrations: list[IllustrationOut] | None
     # draft -> script_ready -> brief_ready -> video_ready, derived
     # from field presence (see router _project_status).
     status: str
@@ -339,3 +352,5 @@ class VideoStyleOut(BaseModel):
     # "brief": produces a production brief to shoot from;
     # "clip": generates the finished clip itself (veo_auto).
     produces: str
+    # CIN-137: the studio can generate this style's visuals itself.
+    generates_illustrations: bool = False
