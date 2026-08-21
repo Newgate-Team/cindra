@@ -260,3 +260,46 @@ class SocialAccount(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
+
+
+class VideoProject(Base):
+    """A video-studio project (CIN-135): script -> style -> brief ->
+    finished video. Unlike a one-shot GenerationJob this is long-lived
+    state the user returns to across days (shoot the footage, come
+    back, download the brief again), so it's a first-class table.
+    Status is derived from which fields are filled -- see the router's
+    _project_status -- rather than stored, so it can never contradict
+    the data."""
+
+    __tablename__ = "video_projects"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    topic: Mapped[str] = mapped_column(String(5000), nullable=False)
+    brand_guide: Mapped[str | None] = mapped_column(String(5000), nullable=True)
+    script: Mapped[str | None] = mapped_column(String(20000), nullable=True)
+    # A key from video_styles.VIDEO_STYLES -- validated at the API
+    # boundary, a loose string here so adding styles needs no migration.
+    style: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    # list of {"filename", "title", "content"} -- the generated brief,
+    # rendered in-app and downloadable as separate .md files.
+    brief_files: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB, nullable=True)
+    # The finished video: either uploaded by the user (edited outside
+    # the app from the brief) or produced by the veo_auto style via the
+    # linked generation job. video_url wins when both exist.
+    video_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    video_generation_job_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("generation_jobs.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )

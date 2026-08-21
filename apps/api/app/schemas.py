@@ -286,3 +286,56 @@ class MetricsSummary(BaseModel):
 class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"
+
+
+class VideoProjectCreate(BaseModel):
+    topic: str = Field(min_length=1, max_length=5000)
+    brand_guide: str | None = Field(default=None, max_length=5000)
+
+
+class VideoProjectUpdate(BaseModel):
+    """Edit a studio project (CIN-135): all fields optional, only what's
+    passed changes (exclude_unset in the router). `script` covers the
+    review-and-edit step after generation; `style` is validated against
+    the VIDEO_STYLES catalog in the router."""
+
+    topic: str | None = Field(default=None, min_length=1, max_length=5000)
+    brand_guide: str | None = Field(default=None, max_length=5000)
+    script: str | None = Field(default=None, min_length=1, max_length=20000)
+    style: str | None = None
+
+
+class BriefFileOut(BaseModel):
+    filename: str
+    title: str
+    content: str
+
+
+class VideoProjectOut(BaseModel):
+    id: uuid.UUID
+    topic: str
+    brand_guide: str | None
+    script: str | None
+    style: str | None
+    brief_files: list[BriefFileOut] | None
+    # The finished video: uploaded file or completed veo_auto job
+    # output -- resolved by the router, which also surfaces the linked
+    # job's in-flight status/error here so the wizard needs no second
+    # polling endpoint.
+    video_url: str | None
+    video_status: GenerationStatus | None
+    video_error: str | None
+    # draft -> script_ready -> brief_ready -> video_ready, derived
+    # from field presence (see router _project_status).
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class VideoStyleOut(BaseModel):
+    id: str
+    title: str
+    description: str
+    # "brief": produces a production brief to shoot from;
+    # "clip": generates the finished clip itself (veo_auto).
+    produces: str
