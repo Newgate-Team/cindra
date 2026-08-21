@@ -34,6 +34,23 @@ def test_video_script_guidance() -> None:
     assert "таймкодами" in prompt
 
 
+def test_video_script_guidance_includes_hook_and_retention_structure() -> None:
+    # CIN-132: hook-in-first-seconds + beat cadence + on-mute captions +
+    # explicit CTA, grounded in the run-social-content skill's
+    # create-viral-short-videos pattern-library/evidence-base.
+    prompt = build_text_prompt("тема", SocialPlatform.instagram, content_kind="video_script")
+    assert "1-3 секунды" in prompt
+    assert "без звука" in prompt
+    assert "призывом к действию" in prompt
+
+
+def test_quality_guidance_present_for_every_content_kind() -> None:
+    for kind in ("post", "story", "video_script"):
+        prompt = build_text_prompt("тема", SocialPlatform.telegram, content_kind=kind)
+        assert "не начинай с приветствия" in prompt
+        assert "Не выдумывай цифры" in prompt
+
+
 def test_single_attachment_text_uses_generic_label() -> None:
     prompt = build_text_prompt(
         "тема", SocialPlatform.telegram, attachment_texts=["план запуска"]
