@@ -72,3 +72,22 @@ def test_facebook_has_its_own_guidance_and_does_not_raise() -> None:
     # uncaught KeyError inside the Celery task.
     prompt = build_text_prompt("тема", SocialPlatform.facebook)
     assert "Facebook" in prompt
+
+
+def test_tone_guidance_applied_when_set() -> None:
+    # CIN-138: tone presets are opt-in prompt templating.
+    prompt = build_text_prompt("тема", SocialPlatform.telegram, tone="provocative")
+    assert "Тон: провокационный" in prompt
+
+
+def test_no_tone_guidance_by_default() -> None:
+    prompt = build_text_prompt("тема", SocialPlatform.telegram)
+    assert "Тон:" not in prompt
+
+
+def test_every_tone_preset_produces_guidance() -> None:
+    from app.content_pipeline.prompts import TONE_GUIDANCE
+
+    for tone in TONE_GUIDANCE:
+        prompt = build_text_prompt("тема", SocialPlatform.telegram, tone=tone)
+        assert "Тон:" in prompt

@@ -42,6 +42,29 @@ _CONTENT_KIND_GUIDANCE = {
     ),
 }
 
+# CIN-138: optional tone presets for the Посты page -- pure prompt
+# templating on top of CIN-132's quality guidance. Keys are the API
+# contract (GenerationRequest.tone); the UI renders its own labels.
+TONE_GUIDANCE = {
+    "expert": (
+        "Тон: экспертный. Пиши как практик, который делал это руками: точные "
+        "формулировки, термины по делу без канцелярита, уверенные выводы."
+    ),
+    "conversational": (
+        "Тон: разговорный. Пиши как в личной переписке с приятелем: простые "
+        "короткие фразы, живые слова, без официоза."
+    ),
+    "provocative": (
+        "Тон: провокационный. Начни с утверждения, с которым захочется спорить, "
+        "и обоснуй его. Заостряй формулировки, но не выдумывай фактов и не "
+        "переходи на оскорбления."
+    ),
+    "storytelling": (
+        "Тон: сторителлинг. Подай мысль через одну конкретную историю с "
+        "героем, напряжением и развязкой, из которой вывод следует сам."
+    ),
+}
+
 # CIN-132: applies to every content_kind -- distilled from the
 # run-social-content skill's create-social-text-posts reference
 # (quality-rubric.md's common failure modes + post-patterns.md's hook
@@ -65,6 +88,7 @@ def build_text_prompt(
     content_kind: str = "post",
     brand_guide: str | None = None,
     attachment_texts: list[str] | None = None,
+    tone: str | None = None,
 ) -> str:
     """Build the user-message prompt for text generation.
 
@@ -82,6 +106,8 @@ def build_text_prompt(
         _CONTENT_KIND_GUIDANCE.get(content_kind, _CONTENT_KIND_GUIDANCE["post"]),
         _QUALITY_GUIDANCE,
     ]
+    if tone in TONE_GUIDANCE:
+        lines.append(TONE_GUIDANCE[tone])
     if brand_guide:
         lines.append(f"Бренд-гайд (соблюдать тон и стиль): {brand_guide}")
     for i, text in enumerate(attachment_texts or [], start=1):

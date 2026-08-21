@@ -81,6 +81,7 @@ def gemini_text_generator(
         content_kind=payload.get("content_kind", "post"),
         brand_guide=payload.get("brand_guide"),
         attachment_texts=attachment_texts,
+        tone=payload.get("tone"),
     )
 
     parts: list[dict[str, Any]] = [{"text": prompt}]

@@ -9,6 +9,7 @@ from app.content_pipeline.attachments import (
     TooManyAttachmentsError,
     validate_attachment_set,
 )
+from app.content_pipeline.prompts import TONE_GUIDANCE
 from app.models import (
     GenerationContentType,
     GenerationStatus,
@@ -72,11 +73,23 @@ class GenerationRequest(BaseModel):
     content_type: GenerationContentType = GenerationContentType.text
     content_kind: str = "post"
     brand_guide: str | None = None
+    # CIN-138: optional tone preset -- a key of prompts.TONE_GUIDANCE.
+    # None = the model's default voice.
+    tone: str | None = None
     # Optional context files (CIN-97, extended to a list in CIN-107) --
     # set by the client after successful POST /content/attachment
     # upload(s), one call per file. Up to 5 total, video/audio capped
     # at 1 each -- see content_pipeline/attachments.py.validate_attachment_set.
     attachments: list[AttachmentRef] = Field(default_factory=list, max_length=5)
+
+    @field_validator("tone")
+    @classmethod
+    def _validate_tone(cls, value: str | None) -> str | None:
+        if value is not None and value not in TONE_GUIDANCE:
+            raise ValueError(
+                f"Неизвестный тон: {value}. Доступные: {', '.join(sorted(TONE_GUIDANCE))}"
+            )
+        return value
 
     @model_validator(mode="after")
     def _validate_attachment_set(self) -> "GenerationRequest":

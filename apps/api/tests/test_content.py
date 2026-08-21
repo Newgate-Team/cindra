@@ -396,3 +396,21 @@ def test_generate_flagged_content_reports_status(client: TestClient, db: Session
         headers=headers,
     )
     assert response.json()["status"] == "flagged"
+
+
+def test_generate_rejects_unknown_tone(client: TestClient, db: Session) -> None:
+    # CIN-138: tone must be a known preset key.
+    headers = _auth_headers(client)
+    account_id = _account_id(db)
+    response = client.post(
+        "/content/generate",
+        json={
+            "topic": "тема",
+            "target_account_ids": [account_id],
+            "content_type": "text",
+            "tone": "sarcastic",
+        },
+        headers=headers,
+    )
+    assert response.status_code == 422
+    assert "Неизвестный тон" in response.text

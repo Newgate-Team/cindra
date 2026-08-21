@@ -17,6 +17,15 @@ import type {
 import { TikTokPublishFields, useTikTokPublishOptions } from "./TikTokPublishFields";
 
 const TERMINAL_STATUSES = new Set(["completed", "failed", "flagged"]);
+
+// CIN-138: mirrors prompts.TONE_GUIDANCE keys on the backend.
+const TONE_OPTIONS = [
+  { value: "", label: "По умолчанию" },
+  { value: "expert", label: "Экспертный" },
+  { value: "conversational", label: "Разговорный" },
+  { value: "provocative", label: "Провокационный" },
+  { value: "storytelling", label: "Сторителлинг" },
+];
 const POLL_INTERVAL_MS = 2000;
 
 // datetime-local's `min` needs "yyyy-MM-ddTHH:mm" -- called fresh on
@@ -303,6 +312,7 @@ export function GenerationForm({
   const [contentType, setContentType] = useState<GenerationContentType>(lockedContentType ?? "text");
   const [contentKind, setContentKind] = useState(lockedContentKind ?? "post");
   const [brandGuide, setBrandGuide] = useState("");
+  const [tone, setTone] = useState("");
   const [attachments, setAttachments] = useState<NamedAttachment[]>([]);
   const [uploadingAttachment, setUploadingAttachment] = useState(false);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
@@ -434,6 +444,7 @@ export function GenerationForm({
           content_type: contentType,
           content_kind: contentKind,
           brand_guide: brandGuide || null,
+          tone: tone || null,
           attachments: attachments.map((a) => ({ url: a.url, attachment_type: a.attachment_type })),
         },
         token
@@ -539,6 +550,16 @@ export function GenerationForm({
             </select>
           </label>
         )}
+        <label>
+          Тон (необязательно)
+          <select value={tone} onChange={(e) => setTone(e.target.value)}>
+            {TONE_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
         <label>
           Бренд-гайд (необязательно)
           <textarea
