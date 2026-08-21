@@ -642,3 +642,21 @@ article li {
 .google-signin {
   margin-top: 16px;
 }
+
+.brief-content {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 13px;
+  line-height: 1.55;
+  background: var(--surface-2, rgba(255, 255, 255, 0.04));
+  border-radius: 8px;
+  padding: 12px;
+  overflow-x: auto;
+}
+
+.badge.draft { opacity: 0.7; }
+
+a.list-row {
+  text-decoration: none;
+  color: inherit;
+}

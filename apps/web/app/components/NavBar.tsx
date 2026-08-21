@@ -8,8 +8,8 @@ import { useAuth } from "@/lib/auth-context";
 import { CalendarIcon, CardIcon, ClapperboardIcon, FeedIcon, ShareIcon, WandIcon } from "./icons";
 
 const NAV_LINKS = [
-  { href: "/generate", label: "Генерация", icon: WandIcon },
-  { href: "/video-script", label: "Сценарий видео", icon: ClapperboardIcon },
+  { href: "/generate", label: "Посты", icon: WandIcon },
+  { href: "/video", label: "Видео", icon: ClapperboardIcon },
   { href: "/calendar", label: "Календарь", icon: CalendarIcon },
   { href: "/feed", label: "Лента", icon: FeedIcon },
   { href: "/social-accounts", label: "Соцсети", icon: ShareIcon },
