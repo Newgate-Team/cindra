@@ -83,6 +83,24 @@ def login_with_google(payload: GoogleLoginRequest, db: Session = Depends(get_db)
         db.add(Subscription(user_id=user.id))
         db.commit()
         db.refresh(user)
+    elif user.hashed_password is not None:
+        # CIN-140 -- account pre-hijacking defence. /auth/register does
+        # not verify the address (there is no mail infrastructure), so
+        # anyone can register somebody else's email with a password of
+        # their choosing. Without this branch, the real owner's first
+        # "Sign in with Google" would drop them straight into that
+        # attacker-created account, which the attacker still holds the
+        # password to -- and this app stores connected social accounts
+        # and can publish through them.
+        #
+        # Google has just proven control of the address; the password
+        # holder never proved anything, so the password is dropped and
+        # the account becomes Google-only. A legitimate user who set
+        # that password themselves keeps full access through the same
+        # Google account (/auth/login already tells them where to go).
+        user.hashed_password = None
+        db.commit()
+        db.refresh(user)
     return Token(access_token=create_access_token(user.id))
 
 

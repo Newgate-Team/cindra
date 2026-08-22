@@ -102,7 +102,7 @@ Frontend и backend на разных языках (TypeScript / Python) — к�
 Модуль на каждую платформу (Telegram, Instagram, Facebook, TikTok): OAuth-подключение аккаунта, публикация по расписанию, обработка rate limits и ошибок API, статус публикации.
 
 **Аутентификация**
-Email + пароль и вход через Google ([CIN-133](https://dalmonded.atlassian.net/browse/CIN-133), Google Identity Services; у Google-аккаунтов пароля нет). Подключение Telegram-канала требует доказательства прав: одноразовый код в описании канала ([CIN-128](https://dalmonded.atlassian.net/browse/CIN-128)) — редактировать описание может только администратор.
+Email + пароль и вход через Google ([CIN-133](https://dalmonded.atlassian.net/browse/CIN-133), Google Identity Services; у Google-аккаунтов пароля нет). Регистрация по email не подтверждает адрес (почтовой инфраструктуры нет), поэтому вход через Google по адресу, на который уже заведён парольный аккаунт, **отключает этот пароль** — иначе тот, кто первым занял чужой email, сохранил бы доступ к аккаунту владельца ([CIN-140](https://dalmonded.atlassian.net/browse/CIN-140)). Google в этот момент — единственная сторона, доказавшая владение адресом. Подключение Telegram-канала требует доказательства прав: одноразовый код в описании канала ([CIN-128](https://dalmonded.atlassian.net/browse/CIN-128)) — редактировать описание может только администратор.
 
 ## 7. Метрики успеха MVP
 
