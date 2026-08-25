@@ -142,8 +142,9 @@ def test_google_login_reuses_existing_email_account(
     assert response.status_code == 200
     users = db.scalars(select(User).where(User.email == "google-user@gmail.com")).all()
     assert len(users) == 1
-    # the pre-existing password stays intact -- both login methods work
-    assert users[0].hashed_password is not None
+    # CIN-140: the pre-existing password is dropped -- see the
+    # pre-hijacking defence in login_with_google.
+    assert users[0].hashed_password is None
 
 
 def test_google_login_rejects_invalid_token(
@@ -174,3 +175,37 @@ def test_password_login_on_google_only_account_names_the_fix(
     )
     assert response.status_code == 401
     assert "Google" in response.json()["detail"]
+
+
+def test_google_login_disables_a_password_set_by_someone_else(
+    client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CIN-140: account pre-hijacking defence.
+
+    Registration doesn't verify the address, so an attacker can claim
+    somebody else's email with a password first. When the real owner
+    signs in with Google, that password must stop working -- otherwise
+    the attacker keeps a way into an account that owns connected social
+    accounts.
+    """
+    monkeypatch.setattr(
+        get_settings(), "google_client_id", "test-client-id.apps.googleusercontent.com"
+    )
+    attacker_credentials = {"email": "google-user@gmail.com", "password": "attacker-pass1"}
+    client.post("/auth/register", json=attacker_credentials)
+    assert client.post("/auth/login", json=attacker_credentials).status_code == 200
+
+    with patch("app.routers.auth.verify_google_id_token", return_value=_google_claims()):
+        google_login = client.post("/auth/google", json={"id_token": "valid-google-token"})
+    assert google_login.status_code == 200
+
+    # the attacker's password no longer opens the account
+    locked_out = client.post("/auth/login", json=attacker_credentials)
+    assert locked_out.status_code == 401
+    assert "Google" in locked_out.json()["detail"]
+
+    # and the real owner keeps access through Google
+    with patch("app.routers.auth.verify_google_id_token", return_value=_google_claims()):
+        again = client.post("/auth/google", json={"id_token": "valid-google-token"})
+    assert again.status_code == 200
+    assert len(db.scalars(select(User).where(User.email == "google-user@gmail.com")).all()) == 1
