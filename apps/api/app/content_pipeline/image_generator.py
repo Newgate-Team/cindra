@@ -60,7 +60,15 @@ def _build_image_prompt(payload: dict[str, Any], attachment_texts: list[str] | N
     # request succeeds in AI Studio without this instruction). Whether
     # text belongs on the image is now entirely up to the user's own
     # topic/brand_guide.
-    lines = [f"Фотореалистичное изображение на тему: {payload['topic']}."]
+    # CIN-137: studio illustrations (blocks/cartoon styles) are drawn
+    # assets, not photos -- the photorealistic lead and the "natural
+    # moment, not a stock pose" composition line would fight the
+    # illustration prompt, so they get their own minimal wrapper.
+    is_illustration = payload.get("image_kind") == "illustration"
+    if is_illustration:
+        lines = [f"Иллюстрация: {payload['topic']}."]
+    else:
+        lines = [f"Фотореалистичное изображение на тему: {payload['topic']}."]
     # CIN-125: image models are structurally unreliable at rendering
     # long text correctly (confirmed in production -- real generated
     # photos with a full Russian sentence baked in came back with
@@ -82,13 +90,19 @@ def _build_image_prompt(payload: dict[str, Any], attachment_texts: list[str] | N
     # only accidental artifacts (garbled background writing), not text
     # in general -- CIN-117's blanket "no text" prohibition must not
     # creep back in.
-    lines.append(
-        "Кадр должен быть композиционно чистым и правдоподобным: естественный момент, "
-        "а не постановочная стоковая поза. Оставь немного свободного пространства у "
-        "одного из краёв на случай подписи поверх фото. Без искажённых лиц, лишних "
-        "пальцев, поддельных интерфейсов и нечитаемых случайных надписей на заднем "
-        "плане."
-    )
+    if is_illustration:
+        lines.append(
+            "Чистая композиция с одним главным объектом. Без случайного текста и "
+            "нечитаемых надписей."
+        )
+    else:
+        lines.append(
+            "Кадр должен быть композиционно чистым и правдоподобным: естественный момент, "
+            "а не постановочная стоковая поза. Оставь немного свободного пространства у "
+            "одного из краёв на случай подписи поверх фото. Без искажённых лиц, лишних "
+            "пальцев, поддельных интерфейсов и нечитаемых случайных надписей на заднем "
+            "плане."
+        )
     brand_guide = payload.get("brand_guide")
     if brand_guide:
         lines.append(f"Стиль и бренд-гайд (соблюдать): {brand_guide}")
@@ -219,7 +233,10 @@ def nano_banana_image_generator(
     # CIN-114: a real caption, not just the raw topic, for the "Подпись"
     # field on the review-and-publish screen -- best-effort, never
     # fails the (already successful, already paid-for) image itself.
-    caption = generate_caption(payload, client=client)
-    if caption:
-        result["text"] = caption
+    # Studio illustrations (CIN-137) are never published as posts, so
+    # the extra paid caption call is skipped for them.
+    if payload.get("image_kind") != "illustration":
+        caption = generate_caption(payload, client=client)
+        if caption:
+            result["text"] = caption
     return result

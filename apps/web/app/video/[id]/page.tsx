@@ -200,22 +200,21 @@ function VideoProjectWizard() {
     api.get<VideoStyle[]>("/video-projects/styles", token).then(setStyles).catch(() => {});
   }, [token, params.id]);
 
-  // While a Veo generation is in flight, poll the project until the
-  // linked job reaches a terminal state.
+  // While a Veo generation or any illustration job is in flight, poll
+  // the project until every linked job reaches a terminal state.
   useEffect(() => {
     if (!token || !project) return;
     const inFlight =
-      project.video_status === "queued" || project.video_status === "processing";
+      project.video_status === "queued" ||
+      project.video_status === "processing" ||
+      (project.illustrations ?? []).some(
+        (i) => i.status === "queued" || i.status === "processing"
+      );
     if (!inFlight) return;
     pollRef.current = setInterval(() => {
       api
         .get<VideoProject>(`/video-projects/${project.id}`, token)
-        .then((fresh) => {
-          setProject(fresh);
-          if (fresh.video_status !== "queued" && fresh.video_status !== "processing") {
-            if (pollRef.current) clearInterval(pollRef.current);
-          }
-        })
+        .then(setProject)
         .catch(() => {});
     }, VIDEO_POLL_INTERVAL_MS);
     return () => {
@@ -262,6 +261,12 @@ function VideoProjectWizard() {
   function generateBrief() {
     run("brief", () =>
       api.post<VideoProject>(`/video-projects/${params.id}/brief`, undefined, token)
+    );
+  }
+
+  function generateIllustrations() {
+    run("illustrations", () =>
+      api.post<VideoProject>(`/video-projects/${params.id}/illustrations`, undefined, token)
     );
   }
 
@@ -379,6 +384,60 @@ function VideoProjectWizard() {
               <button type="button" onClick={generateBrief} disabled={busy !== null}>
                 {busy === "brief" ? "Собираем бриф…" : "Перегенерировать бриф"}
               </button>
+              {selectedStyle.generates_illustrations && (
+                <div className="illustrations-block">
+                  <h3>Иллюстрации</h3>
+                  {project.illustrations === null ? (
+                    <>
+                      <p className="muted">
+                        Cindra может сгенерировать иллюстрации из продакшн-плана сама —
+                        каждая считается как одна генерация изображения по тарифу.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={generateIllustrations}
+                        disabled={busy !== null}
+                      >
+                        {busy === "illustrations"
+                          ? "Запускаем…"
+                          : "Сгенерировать иллюстрации"}
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <div className="illustrations-grid">
+                        {project.illustrations.map((illustration, index) => (
+                          <figure key={index} className="card illustration-card">
+                            {illustration.image_url ? (
+                               
+                              <a href={illustration.image_url} target="_blank" rel="noreferrer">
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img src={illustration.image_url} alt={illustration.prompt} />
+                              </a>
+                            ) : illustration.status === "failed" ? (
+                              <p className="error">
+                                {illustration.error_message ?? "Не удалось сгенерировать"}
+                              </p>
+                            ) : (
+                              <p className="muted">Генерируем…</p>
+                            )}
+                            <figcaption className="muted">{illustration.prompt}</figcaption>
+                          </figure>
+                        ))}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={generateIllustrations}
+                        disabled={busy !== null}
+                      >
+                        {busy === "illustrations"
+                          ? "Запускаем…"
+                          : "Перегенерировать иллюстрации"}
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
             </>
           )}
         </section>

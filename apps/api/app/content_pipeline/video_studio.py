@@ -160,3 +160,52 @@ def generate_brief_files(
 ) -> list[dict[str, str]]:
     raw = _call_gemini(_brief_prompt(topic, script, style_id, brand_guide), client=client)
     return _split_brief_files(raw)
+
+
+# CIN-137: the production plan already contains ready generation
+# prompts (the blocks/cartoon brief_guidance asks for them explicitly)
+# -- this pulls them back out as data so the studio can run the image
+# pipeline itself instead of the user copy-pasting into an external
+# generator.
+_MAX_ILLUSTRATIONS = 10
+
+_JSON_FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.MULTILINE)
+
+
+def extract_illustration_prompts(
+    production_content: str, client: httpx.Client | None = None
+) -> list[str]:
+    """Extract the illustration-generation prompts from production.md.
+
+    Returns at most _MAX_ILLUSTRATIONS non-empty prompt strings.
+    Raises VideoStudioFailedError when the model's answer isn't a JSON
+    array of strings -- a garbled list is worse than asking the user
+    to regenerate the brief."""
+    import json
+
+    prompt = (
+        "Ниже — производственный план короткого видео, в котором перечислены "
+        "иллюстрации с готовыми промптами для генерации изображений. Верни только "
+        "JSON-массив строк — по одному полному промпту на иллюстрацию, в порядке "
+        "появления, без нумерации и пояснений. Если промпт написан на двух языках, "
+        "возьми его целиком. Никакого текста вне JSON.\n\n"
+        f"{production_content}"
+    )
+    raw = _call_gemini(prompt, client=client).strip()
+    raw = _JSON_FENCE_RE.sub("", raw).strip()
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise VideoStudioFailedError(
+            "Не удалось разобрать список иллюстраций из брифа — перегенерируйте бриф"
+        ) from exc
+    if not isinstance(parsed, list) or not all(isinstance(item, str) for item in parsed):
+        raise VideoStudioFailedError(
+            "Не удалось разобрать список иллюстраций из брифа — перегенерируйте бриф"
+        )
+    prompts = [item.strip() for item in parsed if item.strip()]
+    if not prompts:
+        raise VideoStudioFailedError(
+            "В производственном плане не нашлось промптов иллюстраций"
+        )
+    return prompts[:_MAX_ILLUSTRATIONS]

@@ -9,6 +9,7 @@ from app.content_pipeline.media_storage import upload_bytes
 from app.content_pipeline.tasks import run_generation_job
 from app.content_pipeline.video_studio import (
     VideoStudioFailedError,
+    extract_illustration_prompts,
     generate_brief_files,
     generate_script_text,
 )
@@ -23,12 +24,13 @@ from app.models import (
     VideoProject,
 )
 from app.schemas import (
+    IllustrationOut,
     VideoProjectCreate,
     VideoProjectOut,
     VideoProjectUpdate,
     VideoStyleOut,
 )
-from app.usage import enforce_and_record_usage
+from app.usage import enforce_and_record_usage, enforce_and_record_usage_bulk
 from app.video_styles import VIDEO_STYLES
 
 router = APIRouter(prefix="/video-projects", tags=["video-projects"])
@@ -65,6 +67,26 @@ def _project_status(project: VideoProject, job: GenerationJob | None) -> str:
     return "draft"
 
 
+def _illustrations_out(project: VideoProject, db: Session) -> list[IllustrationOut] | None:
+    if not project.illustration_job_ids:
+        return None
+    illustrations = []
+    for job_id in project.illustration_job_ids:
+        job = db.get(GenerationJob, uuid.UUID(job_id))
+        if job is None:
+            continue
+        output = job.output_payload or {}
+        illustrations.append(
+            IllustrationOut(
+                prompt=job.input_payload.get("topic", ""),
+                status=job.status,
+                image_url=output.get("image_url"),
+                error_message=job.error_message,
+            )
+        )
+    return illustrations
+
+
 def _to_out(project: VideoProject, db: Session) -> VideoProjectOut:
     job: GenerationJob | None = None
     if project.video_generation_job_id is not None:
@@ -82,6 +104,7 @@ def _to_out(project: VideoProject, db: Session) -> VideoProjectOut:
         video_url=video_url,
         video_status=job.status if job is not None else None,
         video_error=job.error_message if job is not None else None,
+        illustrations=_illustrations_out(project, db),
         status=_project_status(project, job),
         created_at=project.created_at,
         updated_at=project.updated_at,
@@ -96,6 +119,7 @@ def list_styles(current_user: User = Depends(get_current_user)) -> list[VideoSty
             title=style["title"],
             description=style["description"],
             produces=style["produces"],
+            generates_illustrations=style["generates_illustrations"],
         )
         for style_id, style in VIDEO_STYLES.items()
     ]
@@ -234,6 +258,77 @@ def generate_brief(
         db.rollback()
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
     db.commit()
+    db.refresh(project)
+    return _to_out(project, db)
+
+
+@router.post("/{project_id}/illustrations", response_model=VideoProjectOut)
+def generate_illustrations(
+    project_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> VideoProjectOut:
+    """Generate the brief's illustrations through the image pipeline
+    (CIN-137) -- blocks/cartoon styles only, whose production plan
+    lists ready generation prompts. The prompt list is extracted
+    first (no charge on failure), then the whole set is checked
+    atomically against the image-generation limit: either every
+    illustration fits, or nothing is charged/started."""
+    project = _owned_project(db, project_id, current_user)
+    style = VIDEO_STYLES.get(project.style or "")
+    if style is None or not style["generates_illustrations"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Автогенерация иллюстраций доступна для стилей «По блокам» и «Мультяшный»",
+        )
+    if not project.brief_files:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Сначала сгенерируйте бриф"
+        )
+    production = next(
+        (f for f in project.brief_files if f["filename"].startswith("production")),
+        None,
+    )
+    production_content = (
+        production["content"]
+        if production is not None
+        else "\n\n".join(f["content"] for f in project.brief_files)
+    )
+    try:
+        prompts = extract_illustration_prompts(production_content)
+    except TransientGenerationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        ) from exc
+    except VideoStudioFailedError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+    enforce_and_record_usage_bulk(
+        db,
+        current_user,
+        UsageEventType.generation,
+        count=len(prompts),
+        content_type=GenerationContentType.image,
+    )
+    jobs = []
+    for prompt in prompts:
+        job = GenerationJob(
+            user_id=current_user.id,
+            content_type=GenerationContentType.image,
+            input_payload={
+                "topic": prompt,
+                "image_kind": "illustration",
+                "brand_guide": project.brand_guide,
+                "content_kind": "post",
+            },
+        )
+        db.add(job)
+        jobs.append(job)
+    db.flush()
+    project.illustration_job_ids = [str(job.id) for job in jobs]
+    db.commit()
+    for job in jobs:
+        run_generation_job.delay(str(job.id))
     db.refresh(project)
     return _to_out(project, db)
 

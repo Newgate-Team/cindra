@@ -95,6 +95,13 @@ export interface BriefFile {
   content: string;
 }
 
+export interface Illustration {
+  prompt: string;
+  status: GenerationStatus;
+  image_url: string | null;
+  error_message: string | null;
+}
+
 export interface VideoProject {
   id: string;
   topic: string;
@@ -102,6 +109,7 @@ export interface VideoProject {
   script: string | null;
   style: string | null;
   brief_files: BriefFile[] | null;
+  illustrations: Illustration[] | null;
   video_url: string | null;
   video_status: "queued" | "processing" | "completed" | "failed" | "flagged" | null;
   video_error: string | null;
@@ -115,4 +123,5 @@ export interface VideoStyle {
   title: string;
   description: string;
   produces: "brief" | "clip";
+  generates_illustrations: boolean;
 }

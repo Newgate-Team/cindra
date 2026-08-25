@@ -425,3 +425,41 @@ def test_last_image_in_steps_is_used_when_multiple_are_present() -> None:
     ) as upload:
         nano_banana_image_generator(payload, client=_client(handler))
     upload.assert_called_once_with(b"last", "image/png", "png")
+
+
+def test_illustration_kind_uses_illustration_wrapper_and_skips_caption() -> None:
+    # CIN-137: studio illustrations are drawn assets -- the
+    # photorealistic lead would fight the illustration prompt, and the
+    # caption call is wasted money for an asset that never becomes a
+    # post.
+    captured = {"calls": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["calls"] += 1
+        if "interactions" in str(request.url):
+            captured["body"] = json.loads(request.content)
+            return httpx.Response(
+                200,
+                json={
+                    "status": "completed",
+                    "output_image": {"data": "ZmFrZS1pbWFnZQ==", "mime_type": "image/png"},
+                },
+            )
+        return httpx.Response(200, json={"candidates": []})
+
+    payload = {
+        "topic": "тающие часы, тёмный фон",
+        "image_kind": "illustration",
+        "content_kind": "post",
+    }
+    with patch(
+        "app.content_pipeline.image_generator.upload_bytes",
+        return_value="https://media.cindra.example/illustration.png",
+    ):
+        result = nano_banana_image_generator(payload, client=_client(handler))
+    prompt = captured["body"]["input"]
+    assert prompt.startswith("Иллюстрация:")
+    assert "Фотореалистичное" not in prompt
+    # only the image call itself -- no caption generateContent call
+    assert captured["calls"] == 1
+    assert "text" not in result
