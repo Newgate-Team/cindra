@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
+import GoogleSignInButton from "@/app/components/GoogleSignInButton";
 import { ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import type { UserRole } from "@/lib/types";
@@ -65,6 +66,7 @@ export default function RegisterPage() {
           {submitting ? "Создаём аккаунт…" : "Зарегистрироваться"}
         </button>
       </form>
+      <GoogleSignInButton onError={setError} />
     </>
   );
 }

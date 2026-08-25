@@ -638,3 +638,7 @@ article ol {
 article li {
   margin-bottom: 4px;
 }
+
+.google-signin {
+  margin-top: 16px;
+}
