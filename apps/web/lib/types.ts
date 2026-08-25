@@ -88,3 +88,31 @@ export interface Post {
   platform: SocialPlatform;
   account_label: string;
 }
+
+export interface BriefFile {
+  filename: string;
+  title: string;
+  content: string;
+}
+
+export interface VideoProject {
+  id: string;
+  topic: string;
+  brand_guide: string | null;
+  script: string | null;
+  style: string | null;
+  brief_files: BriefFile[] | null;
+  video_url: string | null;
+  video_status: "queued" | "processing" | "completed" | "failed" | "flagged" | null;
+  video_error: string | null;
+  status: "draft" | "script_ready" | "brief_ready" | "video_ready";
+  created_at: string;
+  updated_at: string;
+}
+
+export interface VideoStyle {
+  id: string;
+  title: string;
+  description: string;
+  produces: "brief" | "clip";
+}
