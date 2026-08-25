@@ -19,8 +19,40 @@ _DEFAULT_PLATFORM_GUIDANCE = "Формат: обычный пост в соцс�
 _CONTENT_KIND_GUIDANCE = {
     "post": "Обычный пост.",
     "story": "Сторис: короче, разговорнее, с одним явным призывом к действию.",
-    "video_script": "Сценарий короткого видео: покадрово, с таймкодами и репликами.",
+    # CIN-132: expanded from a bare "покадрово, с таймкодами и репликами" --
+    # grounded in the run-social-content skill's create-viral-short-videos
+    # reference (pattern-library.md's hook families + evidence-base.md's
+    # v1 hook associations: concrete numbers/diagnosis/consequence hooks
+    # modestly over-index vs. hype adjectives in the calibrated corpus;
+    # "first-person before evidence" under-indexes). Kept concise --
+    # operative constraints only, not the underlying evidence commentary.
+    "video_script": (
+        "Сценарий короткого вертикального видео (Reels/Shorts/TikTok). Хук в первые "
+        "1-3 секунды: конкретная цифра, точный диагноз узнаваемой проблемы или "
+        "наглядный результат -- без «привет, сегодня расскажу». Дальше -- покадрово, "
+        "с таймкодами и репликами, смена кадра или ракурса каждые 2-4 секунды, чтобы "
+        "не терять внимание. Результат, обещанный в хуке, должен реально прозвучать "
+        "в видео, а не остаться только в начале. Сценарий должен быть понятен и без "
+        "звука -- закладывай текст на экране для ключевых моментов. Заверши явным "
+        "призывом к действию."
+    ),
 }
+
+# CIN-132: applies to every content_kind -- distilled from the
+# run-social-content skill's create-social-text-posts reference
+# (quality-rubric.md's common failure modes + post-patterns.md's hook
+# families). Kept short by design: a few load-bearing constraints the
+# model can actually follow, not the full rubric/pattern library.
+_QUALITY_GUIDANCE = (
+    "Стандарт качества: не начинай с приветствия или анонса темы -- сразу дай "
+    "главный факт, результат или конкретную проблему. Опирайся на что-то "
+    "конкретное -- цифру, механизм, пример, ограничение или точный диагноз "
+    "проблемы -- вместо общих фраз вроде «раскройте потенциал» или «измените "
+    "подход». Обещанная польза должна прозвучать внутри текста, а не только в "
+    "заголовке. Один текст -- один посыл и не больше одного явного призыва к "
+    "действию. Не выдумывай цифры, отзывы, кейсы или факты, которых нет в теме, "
+    "бренд-гайде или вложениях."
+)
 
 
 def build_text_prompt(
@@ -44,6 +76,7 @@ def build_text_prompt(
         f"Тема: {topic}",
         _PLATFORM_GUIDANCE.get(platform, _DEFAULT_PLATFORM_GUIDANCE),
         _CONTENT_KIND_GUIDANCE.get(content_kind, _CONTENT_KIND_GUIDANCE["post"]),
+        _QUALITY_GUIDANCE,
     ]
     if brand_guide:
         lines.append(f"Бренд-гайд (соблюдать тон и стиль): {brand_guide}")
