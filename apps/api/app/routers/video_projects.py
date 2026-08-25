@@ -30,7 +30,7 @@ from app.schemas import (
     VideoProjectUpdate,
     VideoStyleOut,
 )
-from app.usage import enforce_and_record_usage, enforce_and_record_usage_bulk
+from app.usage import check_usage_limit, record_usage
 from app.video_styles import VIDEO_STYLES
 
 router = APIRouter(prefix="/video-projects", tags=["video-projects"])
@@ -67,12 +67,26 @@ def _project_status(project: VideoProject, job: GenerationJob | None) -> str:
     return "draft"
 
 
-def _illustrations_out(project: VideoProject, db: Session) -> list[IllustrationOut] | None:
+def _has_illustrations_in_flight(project: VideoProject, db: Session) -> bool:
+    for job_id in project.illustration_job_ids or []:
+        job = db.get(GenerationJob, uuid.UUID(job_id))
+        if job is not None and job.status in (
+            GenerationStatus.queued,
+            GenerationStatus.processing,
+        ):
+            return True
+    return False
+
+
+def _illustrations_out(
+    project: VideoProject, db: Session, jobs: dict[uuid.UUID, GenerationJob] | None = None
+) -> list[IllustrationOut] | None:
     if not project.illustration_job_ids:
         return None
     illustrations = []
     for job_id in project.illustration_job_ids:
-        job = db.get(GenerationJob, uuid.UUID(job_id))
+        key = uuid.UUID(job_id)
+        job = jobs.get(key) if jobs is not None else db.get(GenerationJob, key)
         if job is None:
             continue
         output = job.output_payload or {}
@@ -87,10 +101,19 @@ def _illustrations_out(project: VideoProject, db: Session) -> list[IllustrationO
     return illustrations
 
 
-def _to_out(project: VideoProject, db: Session) -> VideoProjectOut:
+def _to_out(
+    project: VideoProject, db: Session, jobs: dict[uuid.UUID, GenerationJob] | None = None
+) -> VideoProjectOut:
+    """`jobs` is an optional prefetched {id: job} map -- the list
+    endpoint loads every linked job in one query instead of one per
+    illustration per project (CIN-139)."""
     job: GenerationJob | None = None
     if project.video_generation_job_id is not None:
-        job = db.get(GenerationJob, project.video_generation_job_id)
+        job = (
+            jobs.get(project.video_generation_job_id)
+            if jobs is not None
+            else db.get(GenerationJob, project.video_generation_job_id)
+        )
     video_url = project.video_url
     if video_url is None and job is not None and job.output_payload:
         video_url = job.output_payload.get("video_url")
@@ -104,7 +127,7 @@ def _to_out(project: VideoProject, db: Session) -> VideoProjectOut:
         video_url=video_url,
         video_status=job.status if job is not None else None,
         video_error=job.error_message if job is not None else None,
-        illustrations=_illustrations_out(project, db),
+        illustrations=_illustrations_out(project, db, jobs),
         status=_project_status(project, job),
         created_at=project.created_at,
         updated_at=project.updated_at,
@@ -134,7 +157,22 @@ def list_projects(
         .where(VideoProject.user_id == current_user.id)
         .order_by(VideoProject.created_at.desc())
     ).all()
-    return [_to_out(project, db) for project in projects]
+    job_ids: set[uuid.UUID] = set()
+    for project in projects:
+        if project.video_generation_job_id is not None:
+            job_ids.add(project.video_generation_job_id)
+        job_ids.update(uuid.UUID(i) for i in project.illustration_job_ids or [])
+    jobs = (
+        {
+            job.id: job
+            for job in db.scalars(
+                select(GenerationJob).where(GenerationJob.id.in_(job_ids))
+            ).all()
+        }
+        if job_ids
+        else {}
+    )
+    return [_to_out(project, db, jobs) for project in projects]
 
 
 @router.post("", response_model=VideoProjectOut, status_code=status.HTTP_201_CREATED)
@@ -203,19 +241,17 @@ def generate_script(
     a flash-lite text call answers in seconds, so no job queue; counted
     against the text-generation limit like any other text generation."""
     project = _owned_project(db, project_id, current_user)
-    enforce_and_record_usage(
-        db, current_user, UsageEventType.generation, GenerationContentType.text
-    )
+    check_usage_limit(db, current_user, UsageEventType.generation, GenerationContentType.text)
     try:
-        project.script = generate_script_text(project.topic, project.brand_guide)
+        script = generate_script_text(project.topic, project.brand_guide)
     except TransientGenerationError as exc:
-        db.rollback()
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
         ) from exc
     except VideoStudioFailedError as exc:
-        db.rollback()
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    record_usage(db, current_user, UsageEventType.generation, GenerationContentType.text)
+    project.script = script
     db.commit()
     db.refresh(project)
     return _to_out(project, db)
@@ -242,21 +278,19 @@ def generate_brief(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Этот стиль генерирует готовый ролик, а не бриф",
         )
-    enforce_and_record_usage(
-        db, current_user, UsageEventType.generation, GenerationContentType.text
-    )
+    check_usage_limit(db, current_user, UsageEventType.generation, GenerationContentType.text)
     try:
-        project.brief_files = generate_brief_files(
+        brief_files = generate_brief_files(
             project.topic, project.script, project.style, project.brand_guide
         )
     except TransientGenerationError as exc:
-        db.rollback()
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
         ) from exc
     except VideoStudioFailedError as exc:
-        db.rollback()
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    record_usage(db, current_user, UsageEventType.generation, GenerationContentType.text)
+    project.brief_files = brief_files
     db.commit()
     db.refresh(project)
     return _to_out(project, db)
@@ -285,6 +319,13 @@ def generate_illustrations(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Сначала сгенерируйте бриф"
         )
+    # CIN-139: a second click while the first batch is still running
+    # would charge the image quota again and orphan the running jobs.
+    if _has_illustrations_in_flight(project, db):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Иллюстрации ещё генерируются — дождитесь окончания",
+        )
     production = next(
         (f for f in project.brief_files if f["filename"].startswith("production")),
         None,
@@ -303,12 +344,12 @@ def generate_illustrations(
     except VideoStudioFailedError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
-    enforce_and_record_usage_bulk(
+    check_usage_limit(
         db,
         current_user,
         UsageEventType.generation,
+        GenerationContentType.image,
         count=len(prompts),
-        content_type=GenerationContentType.image,
     )
     jobs = []
     for prompt in prompts:
@@ -326,7 +367,13 @@ def generate_illustrations(
         jobs.append(job)
     db.flush()
     project.illustration_job_ids = [str(job.id) for job in jobs]
-    db.commit()
+    record_usage(
+        db,
+        current_user,
+        UsageEventType.generation,
+        GenerationContentType.image,
+        count=len(jobs),
+    )
     for job in jobs:
         run_generation_job.delay(str(job.id))
     db.refresh(project)
@@ -354,9 +401,19 @@ def start_video_generation(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Сначала сгенерируйте сценарий",
         )
-    enforce_and_record_usage(
-        db, current_user, UsageEventType.generation, GenerationContentType.video
-    )
+    # CIN-139: Veo generation is the single most expensive call in the
+    # app -- never start a second one while the first is still running.
+    if project.video_generation_job_id is not None:
+        running = db.get(GenerationJob, project.video_generation_job_id)
+        if running is not None and running.status in (
+            GenerationStatus.queued,
+            GenerationStatus.processing,
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Ролик уже генерируется — дождитесь окончания",
+            )
+    check_usage_limit(db, current_user, UsageEventType.generation, GenerationContentType.video)
     job = GenerationJob(
         user_id=current_user.id,
         content_type=GenerationContentType.video,
@@ -372,8 +429,8 @@ def start_video_generation(
     db.add(job)
     db.flush()
     project.video_generation_job_id = job.id
-    db.commit()
-    db.refresh(project)
+    # commits the job, the link and the usage event together
+    record_usage(db, current_user, UsageEventType.generation, GenerationContentType.video)
     run_generation_job.delay(str(job.id))
     db.refresh(project)
     return _to_out(project, db)

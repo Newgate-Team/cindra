@@ -50,6 +50,45 @@ def _check_limit(
             )
 
 
+def check_usage_limit(
+    db: Session,
+    user: User,
+    event_type: UsageEventType,
+    content_type: GenerationContentType | None = None,
+    count: int = 1,
+) -> None:
+    """Raise 402 if `count` more events wouldn't fit the tier limit,
+    without recording anything (CIN-139).
+
+    Split out of enforce_and_record_usage for the synchronous studio
+    endpoints: those know within the same request whether the
+    generation actually succeeded, so they check first, call the model,
+    and only then record -- a Gemini outage must not burn the user's
+    monthly quota. The async job endpoints keep charging up front,
+    since there the result only arrives in a worker long after the
+    response.
+    """
+    _check_limit(db, user, event_type, content_type, count=count)
+
+
+def record_usage(
+    db: Session,
+    user: User,
+    event_type: UsageEventType,
+    content_type: GenerationContentType | None = None,
+    count: int = 1,
+) -> None:
+    """Record `count` usage events without re-checking the limit --
+    pairs with check_usage_limit around a fallible operation."""
+    db.add_all(
+        [
+            UsageEvent(user_id=user.id, event_type=event_type, content_type=content_type)
+            for _ in range(count)
+        ]
+    )
+    db.commit()
+
+
 def enforce_and_record_usage(
     db: Session,
     user: User,

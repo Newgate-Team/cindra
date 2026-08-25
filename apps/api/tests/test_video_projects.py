@@ -549,3 +549,124 @@ def test_extract_illustration_prompts_caps_at_ten() -> None:
         "план", client=httpx.Client(transport=httpx.MockTransport(handler))
     )
     assert len(prompts) == 10
+
+
+def _usage_count(db: Session, content_type: GenerationContentType) -> int:
+    from app.models import UsageEvent
+
+    return len(
+        db.scalars(
+            select(UsageEvent).where(UsageEvent.content_type == content_type)
+        ).all()
+    )
+
+
+def test_failed_script_generation_does_not_consume_quota(
+    client: TestClient, db: Session
+) -> None:
+    # CIN-139: the studio knows within the request whether Gemini
+    # answered -- a failure must not burn a text generation.
+    headers = _auth_headers(client)
+    project = _create_project(client, headers)
+    with patch(
+        "app.routers.video_projects.generate_script_text",
+        side_effect=TransientGenerationError("Gemini API 503"),
+    ):
+        assert (
+            client.post(f"/video-projects/{project['id']}/script", headers=headers).status_code
+            == 503
+        )
+    assert _usage_count(db, GenerationContentType.text) == 0
+
+
+def test_successful_script_generation_consumes_one_text_generation(
+    client: TestClient, db: Session
+) -> None:
+    headers = _auth_headers(client)
+    project = _create_project(client, headers)
+    with patch(
+        "app.routers.video_projects.generate_script_text", return_value="сценарий"
+    ):
+        client.post(f"/video-projects/{project['id']}/script", headers=headers)
+    assert _usage_count(db, GenerationContentType.text) == 1
+
+
+def test_failed_brief_generation_does_not_consume_quota(
+    client: TestClient, db: Session
+) -> None:
+    headers = _auth_headers(client)
+    project = _create_project(client, headers)
+    client.patch(
+        f"/video-projects/{project['id']}",
+        json={"script": "сценарий", "style": "blocks"},
+        headers=headers,
+    )
+    with patch(
+        "app.routers.video_projects.generate_brief_files",
+        side_effect=VideoStudioFailedError("Gemini 400"),
+    ):
+        assert (
+            client.post(f"/video-projects/{project['id']}/brief", headers=headers).status_code
+            == 502
+        )
+    assert _usage_count(db, GenerationContentType.text) == 0
+
+
+def test_second_illustration_run_while_in_flight_returns_409(
+    client: TestClient, db: Session
+) -> None:
+    # CIN-139: double-clicking must not charge the image quota twice
+    # and orphan the running jobs.
+    headers = _auth_headers(client)
+    project = _brief_ready_project(client, headers)
+    with patch(
+        "app.routers.video_projects.extract_illustration_prompts", return_value=["a"]
+    ):
+        client.post(f"/video-projects/{project['id']}/illustrations", headers=headers)
+    job = db.scalars(
+        select(GenerationJob).where(
+            GenerationJob.content_type == GenerationContentType.image
+        )
+    ).first()
+    job.status = GenerationStatus.processing
+    db.commit()
+    with patch(
+        "app.routers.video_projects.extract_illustration_prompts", return_value=["b"]
+    ):
+        response = client.post(
+            f"/video-projects/{project['id']}/illustrations", headers=headers
+        )
+    assert response.status_code == 409
+    assert _usage_count(db, GenerationContentType.image) == 1
+
+
+def test_second_veo_run_while_in_flight_returns_409(client: TestClient, db: Session) -> None:
+    headers = _auth_headers(client)
+    db.execute(
+        update(Subscription)
+        .where(
+            Subscription.user_id
+            == select(User.id).where(User.email == "studio@cindra.dev").scalar_subquery()
+        )
+        .values(tier=SubscriptionTier.pro)
+    )
+    db.commit()
+    project = _create_project(client, headers)
+    client.patch(
+        f"/video-projects/{project['id']}",
+        json={"script": "сценарий", "style": "veo_auto"},
+        headers=headers,
+    )
+    client.post(f"/video-projects/{project['id']}/video-generation", headers=headers)
+    job = db.scalars(
+        select(GenerationJob).where(
+            GenerationJob.content_type == GenerationContentType.video
+        )
+    ).first()
+    job.status = GenerationStatus.processing
+    db.commit()
+    response = client.post(
+        f"/video-projects/{project['id']}/video-generation", headers=headers
+    )
+    assert response.status_code == 409
+    assert _usage_count(db, GenerationContentType.video) == 1
