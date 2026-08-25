@@ -24,6 +24,15 @@ def test_telegram_alone_allows_everything() -> None:
     }
 
 
+def test_tiktok_only_allows_video_posts() -> None:
+    assert allowed_content_types_for({SocialPlatform.tiktok}) == {
+        GenerationContentType.video
+    }
+    assert allowed_content_kinds_for(
+        {SocialPlatform.tiktok}, GenerationContentType.video
+    ) == {"post"}
+
+
 def test_mixed_targets_intersect_to_media_only() -> None:
     result = allowed_content_types_for({SocialPlatform.instagram, SocialPlatform.telegram})
     assert result == {GenerationContentType.image, GenerationContentType.video}

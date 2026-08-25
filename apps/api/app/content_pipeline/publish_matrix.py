@@ -12,6 +12,7 @@ ALLOWED_CONTENT_TYPES: dict[SocialPlatform, frozenset[GenerationContentType]] = 
     SocialPlatform.telegram: frozenset({_TEXT, _IMAGE, _VIDEO}),
     SocialPlatform.facebook: frozenset({_TEXT, _IMAGE, _VIDEO}),
     SocialPlatform.instagram: frozenset({_IMAGE, _VIDEO}),
+    SocialPlatform.tiktok: frozenset({_VIDEO}),
 }
 
 # content_kind per platform+content_type. "story" only exists as a
@@ -31,6 +32,9 @@ ALLOWED_CONTENT_KINDS: dict[SocialPlatform, dict[GenerationContentType, frozense
     SocialPlatform.instagram: {
         _IMAGE: frozenset({"post", "story"}),
         _VIDEO: frozenset({"post", "story"}),
+    },
+    SocialPlatform.tiktok: {
+        _VIDEO: frozenset({"post"}),
     },
 }
 

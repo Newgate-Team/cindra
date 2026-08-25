@@ -1,4 +1,6 @@
 import secrets
+from datetime import UTC, datetime, timedelta
+from urllib.parse import urlencode
 
 import jwt
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -15,13 +17,19 @@ from app.schemas import (
     TelegramConnectRequest,
     TelegramStartVerificationOut,
     TelegramStartVerificationRequest,
+    TikTokConnectRequest,
+    TikTokCreatorInfoOut,
+    TikTokOAuthStartOut,
+    TikTokPublishStatusOut,
 )
 from app.security import (
     create_telegram_verification_token,
+    create_tiktok_oauth_state,
     decode_telegram_verification_token,
+    decode_tiktok_oauth_state,
 )
 from app.social_accounts import upsert_social_account
-from app.social_integrations import instagram
+from app.social_integrations import instagram, tiktok
 from app.social_integrations.errors import PermanentPublishError, TransientPublishError
 from app.social_integrations.telegram import get_chat, get_chat_member, get_me
 
@@ -195,6 +203,142 @@ def connect_instagram(
     )
 
     return instagram_account
+
+
+@router.post("/tiktok/start", response_model=TikTokOAuthStartOut)
+def start_tiktok_oauth(
+    current_user: User = Depends(get_current_user),
+) -> TikTokOAuthStartOut:
+    settings = get_settings()
+    if not settings.tiktok_client_key or not settings.tiktok_client_secret:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="TikTok App ещё не настроено на сервере",
+        )
+    state_token = create_tiktok_oauth_state(current_user.id)
+    query = urlencode(
+        {
+            "client_key": settings.tiktok_client_key,
+            "response_type": "code",
+            "scope": "user.info.basic,video.upload,video.publish",
+            "redirect_uri": settings.tiktok_redirect_uri,
+            "state": state_token,
+        }
+    )
+    return TikTokOAuthStartOut(
+        authorization_url=f"https://www.tiktok.com/v2/auth/authorize/?{query}"
+    )
+
+
+@router.post(
+    "/tiktok/connect", response_model=SocialAccountOut, status_code=status.HTTP_201_CREATED
+)
+def connect_tiktok(
+    payload: TikTokConnectRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> SocialAccount:
+    try:
+        state_user_id = decode_tiktok_oauth_state(payload.state)
+    except (jwt.InvalidTokenError, ValueError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="TikTok OAuth state истёк или недействителен — начните подключение заново",
+        ) from None
+    if state_user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="TikTok OAuth был начат другим пользователем",
+        )
+
+    settings = get_settings()
+    try:
+        token = tiktok.exchange_code_for_token(
+            payload.code,
+            settings.tiktok_client_key,
+            settings.tiktok_client_secret,
+            settings.tiktok_redirect_uri,
+        )
+        granted_scopes = {value.strip() for value in token.get("scope", "").split(",")}
+        if "video.publish" not in granted_scopes:
+            raise PermanentPublishError(
+                "разрешение video.publish не выдано — повторите вход и подтвердите публикацию"
+            )
+        creator = tiktok.query_creator_info(token["access_token"])
+        account = upsert_social_account(
+            db,
+            current_user,
+            platform=SocialPlatform.tiktok,
+            external_account_id=token["open_id"],
+            access_token=token["access_token"],
+            refresh_token=token["refresh_token"],
+            token_expires_at=datetime.now(UTC)
+            + timedelta(seconds=int(token["expires_in"])),
+            display_name=creator.get("creator_nickname")
+            or creator.get("creator_username"),
+        )
+    except (KeyError, ValueError, PermanentPublishError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Не удалось подключить TikTok: {exc}",
+        ) from exc
+    except TransientPublishError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        ) from exc
+    return account
+
+
+def _owned_tiktok_account(db: Session, account_id: str, user: User) -> SocialAccount:
+    account = db.get(SocialAccount, account_id)
+    if (
+        account is None
+        or account.user_id != user.id
+        or account.platform != SocialPlatform.tiktok
+    ):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="TikTok аккаунт не найден")
+    return account
+
+
+@router.get("/{account_id}/tiktok/creator-info", response_model=TikTokCreatorInfoOut)
+def get_tiktok_creator_info(
+    account_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> TikTokCreatorInfoOut:
+    account = _owned_tiktok_account(db, account_id, current_user)
+    try:
+        access_token = tiktok.ensure_fresh_access_token(account)
+        creator = tiktok.query_creator_info(access_token)
+        db.commit()
+        return TikTokCreatorInfoOut.model_validate(creator)
+    except (ValueError, PermanentPublishError) as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except TransientPublishError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        ) from exc
+
+
+@router.get("/{account_id}/tiktok/publish-status", response_model=TikTokPublishStatusOut)
+def get_tiktok_publish_status(
+    account_id: str,
+    publish_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> TikTokPublishStatusOut:
+    account = _owned_tiktok_account(db, account_id, current_user)
+    try:
+        access_token = tiktok.ensure_fresh_access_token(account)
+        result = tiktok.fetch_publish_status(access_token, publish_id)
+        db.commit()
+        return TikTokPublishStatusOut.model_validate(result)
+    except (ValueError, PermanentPublishError) as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except TransientPublishError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        ) from exc
 
 
 @router.get("", response_model=list[SocialAccountOut])

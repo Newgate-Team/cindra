@@ -1,5 +1,5 @@
 export type UserRole = "agency" | "solo";
-export type SocialPlatform = "telegram" | "instagram" | "facebook";
+export type SocialPlatform = "telegram" | "instagram" | "facebook" | "tiktok";
 export type GenerationContentType = "text" | "image" | "video";
 export type AttachmentType = "image" | "video" | "audio" | "document";
 export type GenerationStatus = "queued" | "processing" | "completed" | "failed" | "flagged";
@@ -43,6 +43,17 @@ export interface SocialAccount {
   display_name: string | null;
   token_expires_at: string | null;
   created_at: string;
+}
+
+export interface TikTokCreatorInfo {
+  creator_username: string;
+  creator_nickname: string;
+  creator_avatar_url: string | null;
+  privacy_level_options: string[];
+  comment_disabled: boolean;
+  duet_disabled: boolean;
+  stitch_disabled: boolean;
+  max_video_post_duration_sec: number;
 }
 
 export interface Page<T> {
