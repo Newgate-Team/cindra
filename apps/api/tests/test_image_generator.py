@@ -97,6 +97,36 @@ def test_enhancer_failure_falls_back_to_baseline_prompt() -> None:
     assert "Фотореалистичное изображение" in captured["body"]["input"]
 
 
+def test_template_directive_survives_enhancer_fallback() -> None:
+    # CIN-143: the user picked a template -- its art direction must not
+    # silently disappear just because the enhancer call failed.
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "interactions" in str(request.url):
+            captured["body"] = json.loads(request.content)
+            return httpx.Response(
+                200,
+                json={
+                    "status": "completed",
+                    "output_image": {"data": "ZmFrZS1pbWFnZQ==", "mime_type": "image/png"},
+                },
+            )
+        return httpx.Response(500, json={"error": {"status": "INTERNAL"}})
+
+    payload = {
+        "topic": "новая кофемашина",
+        "platform": "instagram",
+        "image_template": "product_shot",
+    }
+    with patch(
+        "app.content_pipeline.image_generator.upload_bytes",
+        return_value="https://media.cindra.example/abc.png",
+    ):
+        nano_banana_image_generator(payload, client=_client(handler))
+    assert "Template: product shot." in captured["body"]["input"]
+
+
 def test_429_is_transient() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(429, json={"error": {"status": "RESOURCE_EXHAUSTED"}})

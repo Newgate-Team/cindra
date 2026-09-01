@@ -125,3 +125,10 @@ export interface VideoStyle {
   produces: "brief" | "clip";
   generates_illustrations: boolean;
 }
+
+// CIN-143: catalog served by GET /content/image-templates.
+export interface ImageTemplate {
+  id: string;
+  title: string;
+  description: string;
+}

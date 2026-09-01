@@ -10,6 +10,7 @@ from app.content_pipeline.errors import TransientGenerationError
 from app.content_pipeline.media_storage import upload_bytes
 from app.content_pipeline.prompt_enhancer import enhance_image_prompt
 from app.content_pipeline.text_generator import generate_caption
+from app.image_templates import IMAGE_TEMPLATES
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +105,13 @@ def _build_image_prompt(payload: dict[str, Any], attachment_texts: list[str] | N
             "пальцев, поддельных интерфейсов и нечитаемых случайных надписей на заднем "
             "плане."
         )
+    # CIN-143: the template's art direction must survive the enhancer
+    # falling back -- appended here in English as-is (the image model
+    # follows English direction fine inside a Russian prompt).
+    if not is_illustration:
+        template = IMAGE_TEMPLATES.get(payload.get("image_template") or "")
+        if template:
+            lines.append(template["directive"])
     brand_guide = payload.get("brand_guide")
     if brand_guide:
         lines.append(f"Стиль и бренд-гайд (соблюдать): {brand_guide}")
