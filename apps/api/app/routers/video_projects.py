@@ -414,7 +414,19 @@ def start_video_generation(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Ролик уже генерируется — дождитесь окончания",
             )
-    check_usage_limit(db, current_user, UsageEventType.generation, GenerationContentType.video)
+    # CIN-144: Seedance (long clip, native audio -- the whole script in
+    # one take) when fal.ai is configured, Veo otherwise. Decided here,
+    # at enqueue time, because it also picks which quota to charge.
+    provider = "seedance" if get_settings().fal_key else "veo"
+    # CIN-146: a Seedance clip costs ~15x a Veo one, so it draws on its
+    # own small counter instead of the ordinary video quota.
+    usage_event = (
+        UsageEventType.long_video_generation
+        if provider == "seedance"
+        else UsageEventType.generation
+    )
+    usage_content_type = None if provider == "seedance" else GenerationContentType.video
+    check_usage_limit(db, current_user, usage_event, usage_content_type)
     job = GenerationJob(
         user_id=current_user.id,
         content_type=GenerationContentType.video,
@@ -429,18 +441,14 @@ def start_video_generation(
             # pinned here explicitly rather than guessed from platforms
             # (the project has no publish targets yet at this point).
             "aspect_ratio": "9:16",
-            # CIN-144: Seedance (30s, native audio -- the whole script
-            # in one clip) when fal.ai is configured, Veo otherwise.
-            # Decided at enqueue time so the job record shows which
-            # provider actually ran it.
-            "provider": "seedance" if get_settings().fal_key else "veo",
+            "provider": provider,
         },
     )
     db.add(job)
     db.flush()
     project.video_generation_job_id = job.id
     # commits the job, the link and the usage event together
-    record_usage(db, current_user, UsageEventType.generation, GenerationContentType.video)
+    record_usage(db, current_user, usage_event, usage_content_type)
     run_generation_job.delay(str(job.id))
     db.refresh(project)
     return _to_out(project, db)

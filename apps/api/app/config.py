@@ -48,9 +48,14 @@ class Settings(BaseSettings):
     seedance_model: str = "bytedance/seedance-2.5/text-to-video"
     # Strings by fal's schema (unlike Veo's numeric durationSeconds,
     # CIN-112): duration "auto"|"4".."30", resolution "480p"|"720p"
-    # (720p is Seedance 2.5's ceiling). 30s is the whole point -- an
-    # entire short in one generation.
-    seedance_duration: str = "30"
+    # (720p is Seedance 2.5's ceiling).
+    #
+    # 15s, not the model's 30s maximum: billing is per second
+    # (~$0.473/s at 720p), so 30s doubles the cost of every clip to
+    # ~$14 while 15s is already a full short-form video. CIN-146's
+    # plan limits are priced off this number -- raising it means
+    # re-deriving max_long_videos_per_month.
+    seedance_duration: str = "15"
     seedance_resolution: str = "720p"
     # OAuth 2.0 Web client ID from Google Cloud Console (CIN-133).
     # Empty until the client is created there (requires browser access
