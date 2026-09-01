@@ -26,7 +26,13 @@ const TIER_PRICE: Record<SubscriptionTier, string> = { free: "0 $", pro: "19 $",
 const TIER_FEATURES: Record<SubscriptionTier, string[]> = {
   free: ["20 текстов, 3 фото в месяц", "10 публикаций в месяц", "1 подключённый аккаунт"],
   pro: ["300 текстов, 60 фото, 6 видео в месяц", "Без лимита публикаций", "Без лимита аккаунтов"],
-  business: ["600 текстов, 150 фото, 55 видео в месяц", "Без лимита публикаций", "Без лимита аккаунтов"],
+  business: [
+    "600 текстов, 150 фото, 55 видео в месяц",
+    // CIN-146: the long-clip counter is separate from the video quota
+    "3 длинных AI-ролика со звуком в месяц",
+    "Без лимита публикаций",
+    "Без лимита аккаунтов",
+  ],
 };
 
 const PAYPAL_CLIENT_ID = process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID ?? "";

@@ -72,8 +72,10 @@ def test_submits_polls_downloads_and_uploads_to_r2() -> None:
     assert captured["submit_headers"]["authorization"] == "Key test-fal-key"
     body = captured["submit_body"]
     assert "утренний кофе" in body["prompt"]
-    # Strings by fal's schema -- unlike Veo's numeric durationSeconds (CIN-112)
-    assert body["duration"] == "30"
+    # Strings by fal's schema -- unlike Veo's numeric durationSeconds
+    # (CIN-112). 15s, not the model's 30s max: fal bills per second, and
+    # CIN-146's long-clip plan limits are priced off this number.
+    assert body["duration"] == "15"
     assert body["resolution"] == "720p"
     assert body["aspect_ratio"] == "9:16"
     assert body["generate_audio"] is True

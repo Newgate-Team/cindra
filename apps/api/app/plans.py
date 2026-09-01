@@ -12,6 +12,11 @@ class PlanLimits:
     max_generations_per_format: dict[GenerationContentType, int | None]
     max_publications_per_month: int | None
     max_connected_accounts: int | None
+    # CIN-146: long AI clips (Seedance, CIN-144) are billed separately
+    # from the 8-second Veo clips counted in max_generations_per_format
+    # -- at ~$7 apiece they'd blow a tier's whole margin in a handful
+    # of generations.
+    max_long_videos_per_month: int | None = 0
 
 
 # Values fixed in CIN-59, derived from real per-generation AI cost
@@ -19,6 +24,14 @@ class PlanLimits:
 # per tier -- see the unit-economics report linked from that ticket.
 # `None` means unlimited; text limits are a soft-cap against abuse
 # rather than a real cost constraint (text is ~$0.0001/generation).
+#
+# CIN-146 re-checked these against official pricing on 2026-09-01 and
+# left the per-format numbers as they are: on Veo 3.1 Fast ($0.12/s,
+# so $0.96 per 8s clip) Pro costs ~$8.7 against $19 and Business ~$60
+# against $100. The long-video counter is new: a 15s Seedance 2.5 clip
+# at 720p runs ~$7.10 ($0.473/s), so Business gets 3 (~$21 on top of
+# ~$60) and the cheaper tiers none -- one 30s clip per user would cost
+# more than a whole Pro subscription.
 PLAN_LIMITS: dict[SubscriptionTier, PlanLimits] = {
     SubscriptionTier.free: PlanLimits(
         max_generations_per_format={
@@ -37,6 +50,7 @@ PLAN_LIMITS: dict[SubscriptionTier, PlanLimits] = {
         },
         max_publications_per_month=None,
         max_connected_accounts=None,
+        max_long_videos_per_month=0,
     ),
     SubscriptionTier.business: PlanLimits(
         max_generations_per_format={
@@ -46,6 +60,7 @@ PLAN_LIMITS: dict[SubscriptionTier, PlanLimits] = {
         },
         max_publications_per_month=None,
         max_connected_accounts=None,
+        max_long_videos_per_month=3,
     ),
 }
 
@@ -65,4 +80,6 @@ def limit_for(
         if content_type is None:
             raise ValueError("content_type is required to look up a generation limit")
         return limits.max_generations_per_format[content_type]
+    if event_type is UsageEventType.long_video_generation:
+        return limits.max_long_videos_per_month
     return limits.max_publications_per_month

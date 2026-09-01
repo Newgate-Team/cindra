@@ -14,6 +14,18 @@ from app.models import (
 from app.plans import limit_for
 
 
+def _kind_label(
+    event_type: UsageEventType, content_type: GenerationContentType | None
+) -> str:
+    # This ends up in a 402 shown to the user, so the long-clip counter
+    # (CIN-146) needs a phrase rather than its raw enum value.
+    if event_type is UsageEventType.long_video_generation:
+        return "длинных AI-роликов"
+    if content_type is None:
+        return event_type.value
+    return f"{content_type.value} {event_type.value}"
+
+
 def _current_period_start() -> datetime:
     now = datetime.now(UTC)
     return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
@@ -40,12 +52,11 @@ def _check_limit(
             query = query.where(UsageEvent.content_type == content_type)
         current_usage = db.scalar(query)
         if current_usage + count > limit:
-            kind = event_type.value if content_type is None else f"{content_type.value} {event_type.value}"
             raise HTTPException(
                 status_code=status.HTTP_402_PAYMENT_REQUIRED,
                 detail=(
-                    f"Лимит тарифа исчерпан: {limit} {kind} в месяц "
-                    f"на тарифе {subscription.tier.value}"
+                    f"Лимит тарифа исчерпан: {limit} {_kind_label(event_type, content_type)} "
+                    f"в месяц на тарифе {subscription.tier.value}"
                 ),
             )
 

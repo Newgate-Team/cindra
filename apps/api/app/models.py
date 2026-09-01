@@ -55,6 +55,13 @@ class SubscriptionStore(str, enum.Enum):
 class UsageEventType(str, enum.Enum):
     generation = "generation"
     publication = "publication"
+    # CIN-146: a Seedance clip (CIN-144) costs ~15x a Veo one, so it
+    # gets its own small counter instead of eating the video quota.
+    # Deliberately an event type rather than a GenerationContentType
+    # value: that enum is shared with generation_jobs.content_type and
+    # is user-supplied on /content/generate, and a long clip is still
+    # an ordinary video everywhere except billing.
+    long_video_generation = "long_video_generation"
 
 
 class GenerationContentType(str, enum.Enum):

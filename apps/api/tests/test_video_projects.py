@@ -23,6 +23,8 @@ from app.models import (
     GenerationStatus,
     Subscription,
     SubscriptionTier,
+    UsageEvent,
+    UsageEventType,
     User,
     VideoProject,
 )
@@ -241,13 +243,14 @@ def test_video_generation_prefers_seedance_when_fal_key_configured(
     client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # CIN-144: the provider is decided at enqueue time from the config
-    # and recorded on the job.
+    # and recorded on the job. CIN-146: a Seedance clip draws on the
+    # long-video counter, which only Business has -- hence business here.
     monkeypatch.setattr(get_settings(), "fal_key", "test-fal-key")
     headers = _auth_headers(client)
     db.execute(
         update(Subscription)
         .where(Subscription.user_id == select(User.id).where(User.email == "studio@cindra.dev").scalar_subquery())
-        .values(tier=SubscriptionTier.pro)
+        .values(tier=SubscriptionTier.business)
     )
     db.commit()
     project = _create_project(client, headers)
@@ -262,6 +265,71 @@ def test_video_generation_prefers_seedance_when_fal_key_configured(
     job_id = db.scalar(select(GenerationJob.id).where(GenerationJob.user_id == user_id))
     job = db.get(GenerationJob, job_id)
     assert job.input_payload["provider"] == "seedance"
+    # CIN-146: charged to the long-video counter, not the video quota
+    events = db.scalars(select(UsageEvent).where(UsageEvent.user_id == user_id)).all()
+    assert [e.event_type for e in events] == [UsageEventType.long_video_generation]
+    assert events[0].content_type is None
+
+
+def test_long_video_blocked_on_pro_tier(
+    client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # CIN-146: Pro has 0 long clips -- one costs more than the whole
+    # subscription. The ordinary video quota must not cover for it.
+    monkeypatch.setattr(get_settings(), "fal_key", "test-fal-key")
+    headers = _auth_headers(client)
+    db.execute(
+        update(Subscription)
+        .where(Subscription.user_id == select(User.id).where(User.email == "studio@cindra.dev").scalar_subquery())
+        .values(tier=SubscriptionTier.pro)
+    )
+    db.commit()
+    project = _create_project(client, headers)
+    client.patch(
+        f"/video-projects/{project['id']}",
+        json={"script": "сценарий", "style": "veo_auto"},
+        headers=headers,
+    )
+    response = client.post(
+        f"/video-projects/{project['id']}/video-generation", headers=headers
+    )
+    assert response.status_code == 402
+    assert "длинных AI-роликов" in response.json()["detail"]
+    user_id = db.scalar(select(User.id).where(User.email == "studio@cindra.dev"))
+    assert db.scalar(select(GenerationJob.id).where(GenerationJob.user_id == user_id)) is None
+
+
+def test_business_long_video_quota_runs_out_after_three(
+    client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(get_settings(), "fal_key", "test-fal-key")
+    headers = _auth_headers(client)
+    user_id = db.scalar(select(User.id).where(User.email == "studio@cindra.dev"))
+    db.execute(
+        update(Subscription)
+        .where(Subscription.user_id == user_id)
+        .values(tier=SubscriptionTier.business)
+    )
+    # Three long clips already generated this period.
+    for _ in range(3):
+        db.add(
+            UsageEvent(
+                user_id=user_id, event_type=UsageEventType.long_video_generation
+            )
+        )
+    db.commit()
+
+    project = _create_project(client, headers)
+    client.patch(
+        f"/video-projects/{project['id']}",
+        json={"script": "сценарий", "style": "veo_auto"},
+        headers=headers,
+    )
+    response = client.post(
+        f"/video-projects/{project['id']}/video-generation", headers=headers
+    )
+    assert response.status_code == 402
+    assert "3 длинных AI-роликов" in response.json()["detail"]
 
 
 def test_completed_veo_job_marks_project_video_ready(
