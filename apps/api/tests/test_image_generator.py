@@ -16,6 +16,10 @@ def _client(handler) -> httpx.Client:
 
 
 def test_sends_correct_request_shape_and_parses_response() -> None:
+    # CIN-142: the image model receives the enhancer's engineered
+    # English prompt, not the raw Russian wrapper -- the wrapper is
+    # exercised separately as the fallback path below.
+    engineered = "A steaming cup of coffee on a sunlit wooden table, soft morning light"
     captured = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -35,8 +39,13 @@ def test_sends_correct_request_shape_and_parses_response() -> None:
                     },
                 },
             )
-        # CIN-114: nano_banana_image_generator also generates a caption
-        # via a separate generateContent call after the image succeeds.
+        # generateContent serves two internal calls: the prompt
+        # enhancer (CIN-142, before the image) and the caption
+        # (CIN-114, after it) -- told apart by the meta-prompt marker.
+        if b"prompt engineer" in request.content:
+            return httpx.Response(
+                200, json={"candidates": [{"content": {"parts": [{"text": engineered}]}}]}
+            )
         return httpx.Response(
             200, json={"candidates": [{"content": {"parts": [{"text": "Подпись"}]}}]}
         )
@@ -50,12 +59,42 @@ def test_sends_correct_request_shape_and_parses_response() -> None:
 
     upload.assert_called_once_with(b"fake-image", "image/png", "png")
     assert result["image_url"] == "https://media.cindra.example/abc.png"
-    assert "утренний кофе" in result["prompt"]
+    assert result["prompt"] == engineered
+    assert result["text"] == "Подпись"
     assert captured["url"] == "https://generativelanguage.googleapis.com/v1beta/interactions"
     assert "x-goog-api-key" in captured["headers"]
     body = json.loads(captured["body"])
     assert body["model"] == "gemini-2.5-flash-image"
-    assert "утренний кофе" in body["input"]
+    assert body["input"] == engineered
+
+
+def test_enhancer_failure_falls_back_to_baseline_prompt() -> None:
+    # CIN-142: the enhancer is best-effort -- when it fails, the image
+    # is still generated with _build_image_prompt's wrapper (which the
+    # CIN-117/125/132 tests below pin down in detail).
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "interactions" in str(request.url):
+            captured["body"] = json.loads(request.content)
+            return httpx.Response(
+                200,
+                json={
+                    "status": "completed",
+                    "output_image": {"data": "ZmFrZS1pbWFnZQ==", "mime_type": "image/png"},
+                },
+            )
+        return httpx.Response(500, json={"error": {"status": "INTERNAL"}})
+
+    payload = {"topic": "утренний кофе", "platform": "instagram"}
+    with patch(
+        "app.content_pipeline.image_generator.upload_bytes",
+        return_value="https://media.cindra.example/abc.png",
+    ):
+        result = nano_banana_image_generator(payload, client=_client(handler))
+    assert result["image_url"] == "https://media.cindra.example/abc.png"
+    assert "утренний кофе" in captured["body"]["input"]
+    assert "Фотореалистичное изображение" in captured["body"]["input"]
 
 
 def test_429_is_transient() -> None:
@@ -221,8 +260,11 @@ def test_missing_output_image_logs_raw_response_for_diagnosis(caplog: pytest.Log
             {"topic": "x", "platform": "instagram"}, client=_client(handler)
         )
 
-    assert len(caplog.records) == 1
-    message = caplog.records[0].getMessage()
+    # only this module's diagnostic record -- the prompt enhancer
+    # (CIN-142) legitimately logs its own fallback warning here too
+    records = [r for r in caplog.records if r.name == "app.content_pipeline.image_generator"]
+    assert len(records) == 1
+    message = records[0].getMessage()
     assert "status=completed" in message
     assert '"steps"' in message
 
