@@ -228,6 +228,10 @@ def test_video_generation_links_job_and_surfaces_result(
     user_id = db.scalar(select(User.id).where(User.email == "studio@cindra.dev"))
     job_id = db.scalar(select(GenerationJob.id).where(GenerationJob.user_id == user_id))
     assert job_id is not None
+    # CIN-145: the studio's clip is a vertical short -- pinned in the
+    # payload rather than derived (no publish targets exist yet here).
+    job = db.get(GenerationJob, job_id)
+    assert job.input_payload["aspect_ratio"] == "9:16"
 
 
 def test_completed_veo_job_marks_project_video_ready(

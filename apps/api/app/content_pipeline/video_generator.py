@@ -5,6 +5,7 @@ from typing import Any
 import httpx
 
 from app.config import get_settings
+from app.content_pipeline.aspect_ratio import video_aspect_ratio
 from app.content_pipeline.attachments import build_attachment_context
 from app.content_pipeline.errors import TransientGenerationError
 from app.content_pipeline.media_storage import upload_bytes
@@ -102,19 +103,23 @@ def veo_video_generator(
     get = client.get if client is not None else httpx.get
     params = {"key": settings.gemini_api_key}
 
+    parameters: dict[str, Any] = {
+        "durationSeconds": settings.veo_duration_seconds,
+        "resolution": settings.veo_resolution,
+    }
+    # CIN-145: vertical for TikTok/stories and the video studio's
+    # shorts; everywhere else the field is omitted (model default).
+    ratio = video_aspect_ratio(payload)
+    if ratio:
+        parameters["aspectRatio"] = ratio
+
     start_url = f"{_GEMINI_BASE_URL}/models/{settings.veo_model}:predictLongRunning"
     try:
         start_response = post(
             start_url,
             params=params,
             headers={"content-type": "application/json"},
-            json={
-                "instances": [{"prompt": prompt}],
-                "parameters": {
-                    "durationSeconds": settings.veo_duration_seconds,
-                    "resolution": settings.veo_resolution,
-                },
-            },
+            json={"instances": [{"prompt": prompt}], "parameters": parameters},
             timeout=30.0,
         )
     except httpx.TransportError as exc:

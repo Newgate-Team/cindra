@@ -424,6 +424,10 @@ def start_video_generation(
             "topic": f"{project.topic}. Сценарий ролика: {project.script[:2000]}",
             "brand_guide": project.brand_guide,
             "content_kind": "post",
+            # CIN-145: the studio's product is a vertical short --
+            # pinned here explicitly rather than guessed from platforms
+            # (the project has no publish targets yet at this point).
+            "aspect_ratio": "9:16",
         },
     )
     db.add(job)

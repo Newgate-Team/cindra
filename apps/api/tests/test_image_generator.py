@@ -97,6 +97,41 @@ def test_enhancer_failure_falls_back_to_baseline_prompt() -> None:
     assert "Фотореалистичное изображение" in captured["body"]["input"]
 
 
+def test_aspect_ratio_follows_content_kind_and_platform() -> None:
+    # CIN-145: story -> vertical, instagram feed post -> square,
+    # anything else -> no response_format at all (model default).
+    def run(payload: dict) -> dict:
+        captured = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if "interactions" in str(request.url):
+                captured["body"] = json.loads(request.content)
+                return httpx.Response(
+                    200,
+                    json={
+                        "status": "completed",
+                        "output_image": {"data": "ZmFrZS1pbWFnZQ==", "mime_type": "image/png"},
+                    },
+                )
+            return httpx.Response(500, json={"error": {"status": "INTERNAL"}})
+
+        with patch(
+            "app.content_pipeline.image_generator.upload_bytes",
+            return_value="https://media.cindra.example/abc.png",
+        ):
+            nano_banana_image_generator(payload, client=_client(handler))
+        return captured["body"]
+
+    story = run({"topic": "x", "platform": "instagram", "content_kind": "story"})
+    assert story["response_format"] == {"type": "image", "aspect_ratio": "9:16"}
+
+    feed_post = run({"topic": "x", "platform": "instagram", "content_kind": "post"})
+    assert feed_post["response_format"] == {"type": "image", "aspect_ratio": "1:1"}
+
+    telegram_post = run({"topic": "x", "platform": "telegram", "content_kind": "post"})
+    assert "response_format" not in telegram_post
+
+
 def test_template_directive_survives_enhancer_fallback() -> None:
     # CIN-143: the user picked a template -- its art direction must not
     # silently disappear just because the enhancer call failed.
