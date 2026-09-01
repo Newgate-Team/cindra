@@ -8,6 +8,7 @@ from app.config import get_settings
 from app.content_pipeline.attachments import build_attachment_context
 from app.content_pipeline.errors import TransientGenerationError
 from app.content_pipeline.media_storage import upload_bytes
+from app.content_pipeline.prompt_enhancer import enhance_image_prompt
 from app.content_pipeline.text_generator import generate_caption
 
 logger = logging.getLogger(__name__)
@@ -173,6 +174,18 @@ def nano_banana_image_generator(
             )
 
     prompt = _build_image_prompt(payload, attachment_texts=attachment_texts)
+    # CIN-142: for user-facing images the raw topic goes through a
+    # prompt-engineering rewrite first (detailed English prompt) -- the
+    # wrapper above stays as the fallback when the enhancer hiccups, so
+    # generation never fails because of the improver. Studio
+    # illustrations skip it: their prompts are already model-written
+    # from the brief (CIN-137).
+    if payload.get("image_kind") != "illustration":
+        enhanced = enhance_image_prompt(
+            payload, attachment_texts=attachment_texts, client=client
+        )
+        if enhanced:
+            prompt = enhanced
 
     input_field: Any
     if reference_images:
