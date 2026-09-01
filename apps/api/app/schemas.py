@@ -10,6 +10,7 @@ from app.content_pipeline.attachments import (
     validate_attachment_set,
 )
 from app.content_pipeline.prompts import TONE_GUIDANCE
+from app.image_templates import IMAGE_TEMPLATES
 from app.models import (
     GenerationContentType,
     GenerationStatus,
@@ -76,6 +77,11 @@ class GenerationRequest(BaseModel):
     # CIN-138: optional tone preset -- a key of prompts.TONE_GUIDANCE.
     # None = the model's default voice.
     tone: str | None = None
+    # CIN-143: optional image template -- a key of IMAGE_TEMPLATES.
+    # Only meaningful for content_type=image (other generators ignore
+    # it); None = free-form, CIN-142's enhancer works from the topic
+    # alone.
+    image_template: str | None = None
     # Optional context files (CIN-97, extended to a list in CIN-107) --
     # set by the client after successful POST /content/attachment
     # upload(s), one call per file. Up to 5 total, video/audio capped
@@ -88,6 +94,15 @@ class GenerationRequest(BaseModel):
         if value is not None and value not in TONE_GUIDANCE:
             raise ValueError(
                 f"Неизвестный тон: {value}. Доступные: {', '.join(sorted(TONE_GUIDANCE))}"
+            )
+        return value
+
+    @field_validator("image_template")
+    @classmethod
+    def _validate_image_template(cls, value: str | None) -> str | None:
+        if value is not None and value not in IMAGE_TEMPLATES:
+            raise ValueError(
+                f"Неизвестный шаблон: {value}. Доступные: {', '.join(sorted(IMAGE_TEMPLATES))}"
             )
         return value
 
@@ -356,6 +371,14 @@ class VideoProjectOut(BaseModel):
     status: str
     created_at: datetime
     updated_at: datetime
+
+
+class ImageTemplateOut(BaseModel):
+    # CIN-143: the English `directive` is deliberately not exposed --
+    # it's prompt internals, the UI only needs id/title/description.
+    id: str
+    title: str
+    description: str
 
 
 class VideoStyleOut(BaseModel):

@@ -9,6 +9,7 @@ import type {
   Attachment,
   GenerationContentType,
   GenerationJob,
+  ImageTemplate,
   Post,
   SocialAccount,
   SocialPlatform,
@@ -313,6 +314,10 @@ export function GenerationForm({
   const [contentKind, setContentKind] = useState(lockedContentKind ?? "post");
   const [brandGuide, setBrandGuide] = useState("");
   const [tone, setTone] = useState("");
+  // CIN-143: image templates come from the backend catalog -- the
+  // frontend renders whatever GET /content/image-templates returns.
+  const [imageTemplates, setImageTemplates] = useState<ImageTemplate[]>([]);
+  const [imageTemplate, setImageTemplate] = useState("");
   const [attachments, setAttachments] = useState<NamedAttachment[]>([]);
   const [uploadingAttachment, setUploadingAttachment] = useState(false);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
@@ -326,6 +331,12 @@ export function GenerationForm({
       setAccounts(list);
       setAccountsLoaded(true);
     });
+  }, [token]);
+
+  useEffect(() => {
+    // Best-effort: if the catalog fails to load, the select simply
+    // stays hidden and generation works template-less as before.
+    api.get<ImageTemplate[]>("/content/image-templates", token).then(setImageTemplates).catch(() => {});
   }, [token]);
 
   // Only accounts that can actually publish the locked content type
@@ -445,6 +456,7 @@ export function GenerationForm({
           content_kind: contentKind,
           brand_guide: brandGuide || null,
           tone: tone || null,
+          image_template: contentType === "image" && imageTemplate ? imageTemplate : null,
           attachments: attachments.map((a) => ({ url: a.url, attachment_type: a.attachment_type })),
         },
         token
@@ -545,6 +557,19 @@ export function GenerationForm({
               {allowedContentKinds.map((value) => (
                 <option key={value} value={value}>
                   {CONTENT_KIND_LABELS[value] ?? value}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        {contentType === "image" && imageTemplates.length > 0 && (
+          <label>
+            Шаблон (необязательно)
+            <select value={imageTemplate} onChange={(e) => setImageTemplate(e.target.value)}>
+              <option value="">По умолчанию</option>
+              {imageTemplates.map((t) => (
+                <option key={t.id} value={t.id} title={t.description}>
+                  {t.title}
                 </option>
               ))}
             </select>

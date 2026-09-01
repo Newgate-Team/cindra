@@ -414,3 +414,39 @@ def test_generate_rejects_unknown_tone(client: TestClient, db: Session) -> None:
     )
     assert response.status_code == 422
     assert "Неизвестный тон" in response.text
+
+
+def test_generate_rejects_unknown_image_template(client: TestClient, db: Session) -> None:
+    # CIN-143: image_template must be a known catalog key.
+    headers = _auth_headers(client)
+    account_id = _account_id(db)
+    response = client.post(
+        "/content/generate",
+        json={
+            "topic": "тема",
+            "target_account_ids": [account_id],
+            "content_type": "image",
+            "image_template": "vaporwave",
+        },
+        headers=headers,
+    )
+    assert response.status_code == 422
+    assert "Неизвестный шаблон" in response.text
+
+
+def test_image_templates_catalog_is_served(client: TestClient) -> None:
+    # CIN-143: single source of truth for the «Посты» template select --
+    # id/title/description only, the English prompt directive stays
+    # internal.
+    headers = _auth_headers(client)
+    response = client.get("/content/image-templates", headers=headers)
+    assert response.status_code == 200
+    templates = response.json()
+    ids = {t["id"] for t in templates}
+    assert "product_shot" in ids
+    assert all(set(t) == {"id", "title", "description"} for t in templates)
+    assert all(t["title"] and t["description"] for t in templates)
+
+
+def test_image_templates_catalog_requires_auth(client: TestClient) -> None:
+    assert client.get("/content/image-templates").status_code == 401

@@ -16,8 +16,14 @@ from app.content_pipeline.publish_matrix import (
 from app.content_pipeline.tasks import run_generation_job
 from app.db import get_db
 from app.deps import get_current_user
+from app.image_templates import IMAGE_TEMPLATES
 from app.models import GenerationJob, SocialAccount, UsageEventType, User
-from app.schemas import AttachmentOut, GenerationJobOut, GenerationRequest
+from app.schemas import (
+    AttachmentOut,
+    GenerationJobOut,
+    GenerationRequest,
+    ImageTemplateOut,
+)
 from app.usage import enforce_and_record_usage
 
 router = APIRouter(prefix="/content", tags=["content"])
@@ -126,6 +132,21 @@ def generate_content(
     # expiration state, so it picks up whatever the task committed.
     db.refresh(job)
     return job
+
+
+# CIN-143: registered before GET /{job_id} -- that catch-all would
+# otherwise swallow "image-templates" as a job id.
+@router.get("/image-templates", response_model=list[ImageTemplateOut])
+def list_image_templates(
+    current_user: User = Depends(get_current_user),
+) -> list[ImageTemplateOut]:
+    """Image template catalog for the «Посты» page -- the frontend
+    renders whatever is here (single source of truth, like
+    /video-projects/styles)."""
+    return [
+        ImageTemplateOut(id=template_id, title=t["title"], description=t["description"])
+        for template_id, t in IMAGE_TEMPLATES.items()
+    ]
 
 
 @router.get("/{job_id}", response_model=GenerationJobOut)

@@ -4,6 +4,7 @@ from typing import Any
 import httpx
 
 from app.config import get_settings
+from app.image_templates import IMAGE_TEMPLATES
 
 logger = logging.getLogger(__name__)
 
@@ -27,8 +28,8 @@ _META_PROMPT = (
     "composition and framing; lighting and mood; photographic or artistic "
     "style; color palette.\n"
     "Rules:\n"
-    "- Photorealistic by default; use a different style only if the request or "
-    "brand guide clearly asks for one.\n"
+    "- Photorealistic by default; use a different style only if the request, "
+    "brand guide or selected template clearly asks for one.\n"
     "- A natural, believable moment rather than a staged stock pose; keep some "
     "clear negative space near one edge for a caption overlay.\n"
     "- If the request implies text on the image (a sign, slogan, screen, "
@@ -48,6 +49,11 @@ def _build_enhancer_input(
     payload: dict[str, Any], attachment_texts: list[str] | None = None
 ) -> str:
     lines = [_META_PROMPT, f"Request (may be in Russian): {payload['topic']}"]
+    # CIN-143: the selected template's art direction outranks the
+    # model's own inclinations but not the user's explicit request.
+    template = IMAGE_TEMPLATES.get(payload.get("image_template") or "")
+    if template:
+        lines.append(f"Selected template to follow: {template['directive']}")
     brand_guide = payload.get("brand_guide")
     if brand_guide:
         lines.append(f"Brand guide to respect: {brand_guide}")

@@ -67,6 +67,29 @@ def test_meta_prompt_keeps_production_lessons() -> None:
     assert "no text on the image" not in sent.lower()
 
 
+def test_selected_template_directive_is_included() -> None:
+    # CIN-143: the template's art direction rides along into the
+    # enhancer input; no template -- no "Selected template" line.
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(
+            200, json={"candidates": [{"content": {"parts": [{"text": "ok"}]}}]}
+        )
+
+    enhance_image_prompt(
+        {"topic": "новая кофемашина", "image_template": "product_shot"},
+        client=_client(handler),
+    )
+    sent = captured["body"]["contents"][0]["parts"][0]["text"]
+    assert "Selected template to follow: Template: product shot." in sent
+
+    enhance_image_prompt({"topic": "новая кофемашина"}, client=_client(handler))
+    sent = captured["body"]["contents"][0]["parts"][0]["text"]
+    assert "Selected template" not in sent
+
+
 def test_http_error_returns_none() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(500, json={"error": {"status": "INTERNAL"}})
