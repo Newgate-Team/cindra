@@ -40,6 +40,18 @@ class Settings(BaseSettings):
     # (confirmed against a real, paid production call, CIN-112).
     veo_duration_seconds: int = 8
     veo_resolution: str = "1080p"
+    # fal.ai API key (CIN-144): one key unlocks Seedance and the rest
+    # of fal's model catalog. Empty until the owner creates a fal.ai
+    # account (gate, like the other keys above) -- while empty the
+    # video studio's «Полное авто» keeps using Veo.
+    fal_key: str = ""
+    seedance_model: str = "bytedance/seedance-2.5/text-to-video"
+    # Strings by fal's schema (unlike Veo's numeric durationSeconds,
+    # CIN-112): duration "auto"|"4".."30", resolution "480p"|"720p"
+    # (720p is Seedance 2.5's ceiling). 30s is the whole point -- an
+    # entire short in one generation.
+    seedance_duration: str = "30"
+    seedance_resolution: str = "720p"
     # OAuth 2.0 Web client ID from Google Cloud Console (CIN-133).
     # Empty until the client is created there (requires browser access
     # to console.cloud.google.com) -- POST /auth/google returns 503

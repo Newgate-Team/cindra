@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.content_pipeline.errors import TransientGenerationError
 from app.content_pipeline.media_storage import upload_bytes
 from app.content_pipeline.tasks import run_generation_job
@@ -428,6 +429,11 @@ def start_video_generation(
             # pinned here explicitly rather than guessed from platforms
             # (the project has no publish targets yet at this point).
             "aspect_ratio": "9:16",
+            # CIN-144: Seedance (30s, native audio -- the whole script
+            # in one clip) when fal.ai is configured, Veo otherwise.
+            # Decided at enqueue time so the job record shows which
+            # provider actually ran it.
+            "provider": "seedance" if get_settings().fal_key else "veo",
         },
     )
     db.add(job)

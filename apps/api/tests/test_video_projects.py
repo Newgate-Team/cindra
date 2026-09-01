@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.content_pipeline.errors import TransientGenerationError
 from app.content_pipeline.video_studio import (
     VideoStudioFailedError,
@@ -232,6 +233,35 @@ def test_video_generation_links_job_and_surfaces_result(
     # payload rather than derived (no publish targets exist yet here).
     job = db.get(GenerationJob, job_id)
     assert job.input_payload["aspect_ratio"] == "9:16"
+    # CIN-144: no FAL_KEY in the test environment -> Veo
+    assert job.input_payload["provider"] == "veo"
+
+
+def test_video_generation_prefers_seedance_when_fal_key_configured(
+    client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # CIN-144: the provider is decided at enqueue time from the config
+    # and recorded on the job.
+    monkeypatch.setattr(get_settings(), "fal_key", "test-fal-key")
+    headers = _auth_headers(client)
+    db.execute(
+        update(Subscription)
+        .where(Subscription.user_id == select(User.id).where(User.email == "studio@cindra.dev").scalar_subquery())
+        .values(tier=SubscriptionTier.pro)
+    )
+    db.commit()
+    project = _create_project(client, headers)
+    client.patch(
+        f"/video-projects/{project['id']}",
+        json={"script": "сценарий", "style": "veo_auto"},
+        headers=headers,
+    )
+    client.post(f"/video-projects/{project['id']}/video-generation", headers=headers)
+
+    user_id = db.scalar(select(User.id).where(User.email == "studio@cindra.dev"))
+    job_id = db.scalar(select(GenerationJob.id).where(GenerationJob.user_id == user_id))
+    job = db.get(GenerationJob, job_id)
+    assert job.input_payload["provider"] == "seedance"
 
 
 def test_completed_veo_job_marks_project_video_ready(

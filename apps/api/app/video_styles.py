@@ -105,12 +105,17 @@ VIDEO_STYLES: dict[str, dict[str, str | bool]] = {
             "вынести на экран."
         ),
     },
+    # The id stays "veo_auto" even though the provider is now
+    # config-dependent (CIN-144) -- it's persisted in
+    # video_projects.style, and a rename would need a data migration
+    # for zero user-facing benefit.
     "veo_auto": {
         "generates_illustrations": False,
-        "title": "Полное авто (Veo)",
+        "title": "Полное авто",
         "description": (
-            "Готовый 8-секундный клип генерируется автоматически по сценарию. Ничего "
-            "снимать и монтировать не нужно."
+            "Готовый клип генерируется автоматически по сценарию: до 30 секунд с "
+            "озвучкой (Seedance) или 8-секундный ролик (Veo) — зависит от "
+            "конфигурации сервера. Ничего снимать и монтировать не нужно."
         ),
         "produces": "clip",
         "brief_guidance": "",

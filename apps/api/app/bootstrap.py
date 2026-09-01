@@ -3,7 +3,7 @@ import logging
 from app.content_pipeline.image_generator import nano_banana_image_generator
 from app.content_pipeline.registry import register_generator
 from app.content_pipeline.text_generator import gemini_text_generator
-from app.content_pipeline.video_generator import veo_video_generator
+from app.content_pipeline.video_dispatch import dispatch_video_generator
 from app.models import GenerationContentType, SocialPlatform
 from app.scheduler.registry import register_publisher
 from app.social_integrations import facebook, instagram, telegram, tiktok
@@ -22,7 +22,9 @@ def bootstrap() -> None:
     """
     register_generator(GenerationContentType.text, gemini_text_generator)
     register_generator(GenerationContentType.image, nano_banana_image_generator)
-    register_generator(GenerationContentType.video, veo_video_generator)
+    # CIN-144: a dispatcher, not a single provider -- routes to
+    # Seedance or Veo by the job's input_payload["provider"].
+    register_generator(GenerationContentType.video, dispatch_video_generator)
     register_publisher(SocialPlatform.telegram, telegram.publish)
     register_publisher(SocialPlatform.instagram, instagram.publish)
     register_publisher(SocialPlatform.facebook, facebook.publish)
