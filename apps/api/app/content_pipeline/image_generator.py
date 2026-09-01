@@ -5,6 +5,7 @@ from typing import Any
 import httpx
 
 from app.config import get_settings
+from app.content_pipeline.aspect_ratio import image_aspect_ratio
 from app.content_pipeline.attachments import build_attachment_context
 from app.content_pipeline.errors import TransientGenerationError
 from app.content_pipeline.media_storage import upload_bytes
@@ -201,12 +202,18 @@ def nano_banana_image_generator(
     else:
         input_field = prompt
 
+    request_json: dict[str, Any] = {"model": settings.image_model, "input": input_field}
+    # CIN-145: stories and the Instagram feed need specific geometry --
+    # omitted entirely (model default) everywhere else.
+    ratio = image_aspect_ratio(payload)
+    if ratio:
+        request_json["response_format"] = {"type": "image", "aspect_ratio": ratio}
     request_kwargs: dict[str, Any] = {
         "headers": {
             "x-goog-api-key": settings.gemini_api_key,
             "content-type": "application/json",
         },
-        "json": {"model": settings.image_model, "input": input_field},
+        "json": request_json,
         "timeout": 60.0,
     }
     try:
