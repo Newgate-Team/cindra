@@ -373,6 +373,48 @@ class VideoProjectOut(BaseModel):
     updated_at: datetime
 
 
+class LayoutSlotOut(BaseModel):
+    name: str
+    label: str
+    max_length: int
+    required: bool
+
+
+class LayoutTemplateOut(BaseModel):
+    # CIN-148: the `blocks` render spec stays server-side -- the UI only
+    # needs to know what to ask the user for and how to preview it.
+    id: str
+    title: str
+    description: str
+    supports_image: bool
+    slots: list[LayoutSlotOut]
+
+
+class LayoutRenderRequest(BaseModel):
+    template_id: str
+    canvas_format: str = "square"
+    theme: str = "dark"
+    # Optional brand accent, "#RRGGBB" -- overrides the theme's accent.
+    accent: str | None = Field(default=None, pattern=r"^#[0-9a-fA-F]{6}$")
+    values: dict[str, str] = Field(default_factory=dict)
+    # Only for templates with supports_image, and only a URL from our
+    # own media bucket (validated in the renderer).
+    background_url: str | None = None
+
+    @field_validator("values")
+    @classmethod
+    def _cap_value_sizes(cls, value: dict[str, str]) -> dict[str, str]:
+        # A cheap guard before the renderer's per-slot max_length: keeps
+        # a giant payload from being wrapped and measured at all.
+        if any(len(v) > 1000 for v in value.values()):
+            raise ValueError("Слишком длинное значение поля")
+        return value
+
+
+class LayoutRenderOut(BaseModel):
+    image_url: str
+
+
 class ImageTemplateOut(BaseModel):
     # CIN-143: the English `directive` is deliberately not exposed --
     # it's prompt internals, the UI only needs id/title/description.

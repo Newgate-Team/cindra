@@ -70,6 +70,10 @@ class UsageEventType(str, enum.Enum):
     # is user-supplied on /content/generate, and a long clip is still
     # an ordinary video everywhere except billing.
     long_video_generation = "long_video_generation"
+    # CIN-148: a laid-out template render costs no AI money at all --
+    # only CPU and a file in R2. Capped separately (generously) so it
+    # can't be looped to fill the bucket, not because it's expensive.
+    layout_render = "layout_render"
 
 
 class GenerationContentType(str, enum.Enum):

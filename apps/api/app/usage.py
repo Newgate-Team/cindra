@@ -21,6 +21,8 @@ def _kind_label(
     # (CIN-146) needs a phrase rather than its raw enum value.
     if event_type is UsageEventType.long_video_generation:
         return "длинных AI-роликов"
+    if event_type is UsageEventType.layout_render:
+        return "карточек по шаблону"
     if content_type is None:
         return event_type.value
     return f"{content_type.value} {event_type.value}"

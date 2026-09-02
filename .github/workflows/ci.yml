@@ -35,6 +35,11 @@ jobs:
           python-version: "3.12"
       - name: Install dependencies
         run: pip install -e ".[dev]"
+      # CIN-148: the template renderer needs a Cyrillic font, the same
+      # one the Dockerfile installs. Pinned here rather than trusting
+      # whatever fonts the runner image happens to ship.
+      - name: Install fonts
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends fonts-dejavu-core
       - name: Lint
         run: ruff check .
       - name: Run migrations
