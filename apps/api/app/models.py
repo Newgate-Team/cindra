@@ -3,7 +3,15 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Integer,
+    String,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -98,6 +106,12 @@ class User(Base):
     role: Mapped[UserRole] = mapped_column(
         Enum(UserRole, name="user_role"), default=UserRole.solo, nullable=False
     )
+    # CIN-147: staff flag for endpoints that expose data about the whole
+    # user base (/metrics/summary). Deliberately NOT a UserRole value:
+    # `role` is chosen by the user at registration and editable from
+    # their profile, so an "admin" role would be self-assignable. This
+    # column appears in no request schema -- it's set by hand in the DB.
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )

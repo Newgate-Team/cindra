@@ -1,6 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.metrics import (
@@ -142,10 +143,18 @@ def test_publish_success_rate_none_when_no_terminal_posts(db: Session, user: Use
     assert publish_success_rate(db) is None
 
 
-def test_metrics_summary_endpoint_with_no_data(client: TestClient) -> None:
-    payload = {"email": "ada@cindra.dev", "password": "supersecret1"}
+def _admin_token(client: TestClient, db: Session, email: str) -> str:
+    payload = {"email": email, "password": "supersecret1"}
     client.post("/auth/register", json=payload)
-    token = client.post("/auth/login", json=payload).json()["access_token"]
+    user = db.scalar(select(User).where(User.email == email))
+    # is_admin is set by hand in the DB (CIN-147) -- no API grants it.
+    user.is_admin = True
+    db.commit()
+    return client.post("/auth/login", json=payload).json()["access_token"]
+
+
+def test_metrics_summary_endpoint_with_no_data(client: TestClient, db: Session) -> None:
+    token = _admin_token(client, db, "ada@cindra.dev")
 
     response = client.get(
         "/metrics/summary", headers={"Authorization": f"Bearer {token}"}
@@ -160,3 +169,47 @@ def test_metrics_summary_endpoint_with_no_data(client: TestClient) -> None:
 
 def test_metrics_summary_requires_auth(client: TestClient) -> None:
     assert client.get("/metrics/summary").status_code == 401
+
+
+def test_metrics_summary_forbidden_for_ordinary_user(client: TestClient) -> None:
+    # CIN-147: registration is open and unverified, so plain
+    # authentication used to hand the whole user base's retention and
+    # conversion to anyone who signed up.
+    payload = {"email": "outsider@example.com", "password": "supersecret1"}
+    client.post("/auth/register", json=payload)
+    token = client.post("/auth/login", json=payload).json()["access_token"]
+
+    response = client.get(
+        "/metrics/summary", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 403
+
+
+def test_admin_cannot_be_self_assigned_through_the_api(
+    client: TestClient, db: Session
+) -> None:
+    # CIN-147: `role` is user-supplied at registration and editable in
+    # the profile, which is exactly why staff access hangs off a
+    # separate column. Neither entry point may set it.
+    email = "climber@example.com"
+    password = "supersecret1"
+    client.post(
+        "/auth/register",
+        json={"email": email, "password": password, "role": "agency", "is_admin": True},
+    )
+    token = client.post(
+        "/auth/login", json={"email": email, "password": password}
+    ).json()["access_token"]
+    client.patch(
+        "/auth/me",
+        json={"role": "agency", "is_admin": True},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert db.scalar(select(User).where(User.email == email)).is_admin is False
+    assert (
+        client.get(
+            "/metrics/summary", headers={"Authorization": f"Bearer {token}"}
+        ).status_code
+        == 403
+    )

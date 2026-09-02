@@ -29,3 +29,16 @@ def get_current_user(
     if user is None:
         raise unauthorized
     return user
+
+
+def require_admin(current_user: User = Depends(get_current_user)) -> User:
+    """Gate for endpoints exposing data about the whole user base
+    (CIN-147). Checks `is_admin`, never `role` -- the latter is picked
+    by the user at registration and editable from their profile, so it
+    grants nothing.
+    """
+    if not current_user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Недостаточно прав"
+        )
+    return current_user
