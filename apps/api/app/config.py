@@ -44,6 +44,14 @@ class Settings(BaseSettings):
     # of fal's model catalog. Empty until the owner creates a fal.ai
     # account (gate, like the other keys above) -- while empty the
     # video studio's «Полное авто» keeps using Veo.
+    # CIN-148: fonts for the laid-out image templates. Empty = fall back
+    # to the well-known system paths in layout_renderer (Debian's
+    # fonts-dejavu-core, installed in the Dockerfile). Point these at
+    # IBM Plex to match the web app's typeface once it's available on
+    # the host -- Debian ships it in contrib, which the slim image
+    # doesn't enable by default.
+    layout_font_regular: str = ""
+    layout_font_bold: str = ""
     fal_key: str = ""
     seedance_model: str = "bytedance/seedance-2.5/text-to-video"
     # Strings by fal's schema (unlike Veo's numeric durationSeconds,

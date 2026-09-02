@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, Response, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -7,6 +7,12 @@ from app.content_pipeline.attachments import (
     UnsupportedAttachmentError,
     classify_attachment,
     downscale_image_for_context,
+)
+from app.content_pipeline.layout_renderer import (
+    LayoutFontMissingError,
+    LayoutRenderError,
+    render_layout,
+    render_sample,
 )
 from app.content_pipeline.media_storage import upload_bytes
 from app.content_pipeline.publish_matrix import (
@@ -17,14 +23,18 @@ from app.content_pipeline.tasks import run_generation_job
 from app.db import get_db
 from app.deps import get_current_user
 from app.image_templates import IMAGE_TEMPLATES
+from app.layout_templates import LAYOUT_TEMPLATES
 from app.models import GenerationJob, SocialAccount, UsageEventType, User
 from app.schemas import (
     AttachmentOut,
     GenerationJobOut,
     GenerationRequest,
     ImageTemplateOut,
+    LayoutRenderOut,
+    LayoutRenderRequest,
+    LayoutTemplateOut,
 )
-from app.usage import enforce_and_record_usage
+from app.usage import check_usage_limit, enforce_and_record_usage, record_usage
 
 router = APIRouter(prefix="/content", tags=["content"])
 
@@ -132,6 +142,88 @@ def generate_content(
     # expiration state, so it picks up whatever the task committed.
     db.refresh(job)
     return job
+
+
+# CIN-148: like the catalog below, these sit before GET /{job_id} so
+# the catch-all doesn't swallow their paths as job ids.
+@router.get("/layout-templates", response_model=list[LayoutTemplateOut])
+def list_layout_templates(
+    current_user: User = Depends(get_current_user),
+) -> list[LayoutTemplateOut]:
+    """Catalog of code-rendered templates: what each one is and which
+    fields the user fills in."""
+    return [
+        LayoutTemplateOut(
+            id=template_id,
+            title=t["title"],
+            description=t["description"],
+            supports_image=t["supports_image"],
+            slots=t["slots"],
+        )
+        for template_id, t in LAYOUT_TEMPLATES.items()
+    ]
+
+
+@router.get("/layout-templates/{template_id}/preview")
+def preview_layout_template(
+    template_id: str,
+    canvas_format: str = "square",
+    theme: str = "dark",
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """Gallery thumbnail: the template filled with demo copy.
+
+    Rendered per request rather than stored -- it takes tens of
+    milliseconds, costs nothing, and never goes stale when a template
+    changes. Not metered for the same reason.
+    """
+    try:
+        png = render_sample(template_id, canvas_format, theme=theme)
+    except LayoutRenderError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except LayoutFontMissingError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        ) from exc
+    return Response(
+        content=png,
+        media_type="image/png",
+        # Same demo copy every time -- let the browser keep it.
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
+
+
+@router.post("/layout-render", response_model=LayoutRenderOut)
+def render_layout_template(
+    payload: LayoutRenderRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> LayoutRenderOut:
+    """Render a template with the user's own text and store it in R2.
+
+    Synchronous: no model call, so the result is known within the
+    request. Per CIN-139 the quota is therefore checked first and only
+    recorded once the render actually succeeded.
+    """
+    check_usage_limit(db, current_user, UsageEventType.layout_render)
+    try:
+        png = render_layout(
+            payload.template_id,
+            payload.canvas_format,
+            payload.values,
+            theme=payload.theme,
+            accent=payload.accent,
+            background_url=payload.background_url,
+        )
+    except LayoutRenderError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except LayoutFontMissingError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        ) from exc
+    image_url = upload_bytes(png, "image/png", "png")
+    record_usage(db, current_user, UsageEventType.layout_render)
+    return LayoutRenderOut(image_url=image_url)
 
 
 # CIN-143: registered before GET /{job_id} -- that catch-all would
