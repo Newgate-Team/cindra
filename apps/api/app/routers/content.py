@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response, UploadFile, sta
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.content_pipeline.attachments import (
     AttachmentTooLargeError,
     UnsupportedAttachmentError,
@@ -205,6 +206,15 @@ def render_layout_template(
     request. Per CIN-139 the quota is therefore checked first and only
     recorded once the render actually succeeded.
     """
+    # Without R2 the upload below dies deep inside boto3 with a bare
+    # ValueError ("Invalid endpoint: https://.r2.cloudflarestorage.com")
+    # and the user just sees a 500. Checked up front instead, the same
+    # way /auth/google reports its own missing config (CIN-133).
+    if not get_settings().r2_account_id:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Медиа-хранилище не настроено на сервере",
+        )
     check_usage_limit(db, current_user, UsageEventType.layout_render)
     try:
         png = render_layout(

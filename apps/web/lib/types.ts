@@ -132,3 +132,19 @@ export interface ImageTemplate {
   title: string;
   description: string;
 }
+
+// CIN-148: code-rendered layout templates, GET /content/layout-templates.
+export interface LayoutSlot {
+  name: string;
+  label: string;
+  max_length: number;
+  required: boolean;
+}
+
+export interface LayoutTemplate {
+  id: string;
+  title: string;
+  description: string;
+  supports_image: boolean;
+  slots: LayoutSlot[];
+}

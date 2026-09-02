@@ -5,11 +5,20 @@ import { useRouter } from "next/navigation";
 
 import { useAuth } from "@/lib/auth-context";
 
-import { CalendarIcon, CardIcon, ClapperboardIcon, FeedIcon, ShareIcon, WandIcon } from "./icons";
+import {
+  CalendarIcon,
+  CardIcon,
+  ClapperboardIcon,
+  FeedIcon,
+  LayoutIcon,
+  ShareIcon,
+  WandIcon,
+} from "./icons";
 
 const NAV_LINKS = [
   { href: "/generate", label: "Посты", icon: WandIcon },
   { href: "/video", label: "Видео", icon: ClapperboardIcon },
+  { href: "/templates", label: "Шаблоны", icon: LayoutIcon },
   { href: "/calendar", label: "Календарь", icon: CalendarIcon },
   { href: "/feed", label: "Лента", icon: FeedIcon },
   { href: "/social-accounts", label: "Соцсети", icon: ShareIcon },

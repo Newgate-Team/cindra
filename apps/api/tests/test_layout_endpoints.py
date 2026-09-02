@@ -5,9 +5,18 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.models import Subscription, SubscriptionTier, UsageEvent, UsageEventType, User
 
 _RENDERED_URL = "https://media.cindra.example/card.png"
+
+
+@pytest.fixture(autouse=True)
+def _media_storage_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The endpoint refuses to render without R2 configured, and the
+    # test settings have no credentials -- upload_bytes itself is
+    # patched per test, so a placeholder account id is enough.
+    monkeypatch.setattr(get_settings(), "r2_account_id", "test-account")
 
 
 def _auth_headers(client: TestClient, email: str = "layout@cindra.dev") -> dict[str, str]:
@@ -84,6 +93,20 @@ def test_render_uploads_and_records_usage(client: TestClient, db: Session) -> No
     user_id = db.scalar(select(User.id).where(User.email == "layout@cindra.dev"))
     events = db.scalars(select(UsageEvent).where(UsageEvent.user_id == user_id)).all()
     assert [e.event_type for e in events] == [UsageEventType.layout_render]
+
+
+def test_render_without_media_storage_configured_is_503(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Otherwise boto3 fails deep inside with "Invalid endpoint:
+    # https://.r2.cloudflarestorage.com" and the user sees a bare 500
+    # for what is a server configuration gap (seen live before the fix).
+    monkeypatch.setattr(get_settings(), "r2_account_id", "")
+    response = client.post(
+        "/content/layout-render", json=_render_body(), headers=_auth_headers(client)
+    )
+    assert response.status_code == 503
+    assert "хранилище" in response.json()["detail"]
 
 
 def test_render_rejects_unknown_template(client: TestClient) -> None:
