@@ -687,3 +687,80 @@ a.list-row {
   font-size: 12px;
   margin-top: 6px;
 }
+
+/* CIN-149: template studio -- the gallery of code-rendered layouts and
+   the two-column controls above it. */
+.grid-2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+@media (max-width: 640px) {
+  .grid-2 {
+    grid-template-columns: 1fr;
+  }
+}
+
+.template-gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 16px;
+  border: none;
+  padding: 0;
+  margin: 16px 0 0;
+}
+
+.template-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  text-align: left;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+
+.template-card:hover {
+  border-color: var(--ember-soft);
+}
+
+.template-card.selected {
+  border-color: var(--ember);
+  background: oklch(58% 0.208 27.5 / 0.12);
+}
+
+.template-card img {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: contain;
+  border-radius: 8px;
+  background: var(--background);
+}
+
+.template-card-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 1;
+  font-size: 13px;
+}
+
+.template-card span {
+  font-size: 13px;
+}
+
+.link-button {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--ember-soft);
+  cursor: pointer;
+  font: inherit;
+  text-decoration: underline;
+  width: fit-content;
+}
