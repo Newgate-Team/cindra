@@ -1,6 +1,12 @@
 from dataclasses import dataclass
 
-from app.models import GenerationContentType, SubscriptionTier, UsageEventType
+from app.models import (
+    GenerationContentType,
+    Subscription,
+    SubscriptionStatus,
+    SubscriptionTier,
+    UsageEventType,
+)
 
 
 @dataclass(frozen=True)
@@ -69,6 +75,25 @@ PLAN_LIMITS: dict[SubscriptionTier, PlanLimits] = {
         max_layout_renders_per_month=None,
     ),
 }
+
+
+def effective_tier(subscription: Subscription) -> SubscriptionTier:
+    """The tier actually entitled to quota right now (CIN-153).
+
+    `subscription.tier` only ever moves forward -- confirm_paypal_
+    subscription sets it once and nothing resets it, by design: it
+    records what the user last paid for, which the billing page shows
+    alongside `status` ("Business · canceled") so a lapsed subscriber
+    can see what to renew. But that means `tier` alone is NOT a safe
+    input to quota checks -- a cancelled or payment-failed subscriber
+    would otherwise keep premium limits forever. Everything that
+    enforces a limit must go through this, not `subscription.tier`
+    directly; nothing currently justifies a grace period for past_due,
+    so it drops straight to free like cancelled does.
+    """
+    if subscription.status is not SubscriptionStatus.active:
+        return SubscriptionTier.free
+    return subscription.tier
 
 
 def limit_for(
