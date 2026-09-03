@@ -131,6 +131,8 @@ export interface ImageTemplate {
   id: string;
   title: string;
   description: string;
+  // CIN-150: null until staff have generated an example.
+  preview_url: string | null;
 }
 
 // CIN-148: code-rendered layout templates, GET /content/layout-templates.

@@ -14,9 +14,13 @@ celery_app.conf.update(task_always_eager=True, task_eager_propagates=True)
 
 
 @pytest.fixture(autouse=True)
-def _clean_users_table() -> None:
+def _clean_tables() -> None:
     with SessionLocal() as session:
-        session.execute(text("TRUNCATE TABLE users CASCADE"))
+        # Everything user-owned goes with the cascade. image_template
+        # _previews (CIN-150) is keyed by template id and has no FK to
+        # users, so it survives that and has to be named explicitly --
+        # otherwise one test's stored previews leak into the next.
+        session.execute(text("TRUNCATE TABLE users, image_template_previews CASCADE"))
         session.commit()
 
 

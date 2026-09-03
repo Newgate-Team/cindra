@@ -423,6 +423,23 @@ export function GenerationForm({
             </select>
           </label>
         )}
+        {/* CIN-150: an example of the selected template, once staff
+            have generated one -- the select alone doesn't convey what
+            "Лайфстайл-сцена" actually looks like. */}
+        {contentType === "image" &&
+          (() => {
+            const selected = imageTemplates.find((t) => t.id === imageTemplate);
+            if (!selected?.preview_url) return null;
+            return (
+              <figure className="template-example">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={selected.preview_url} alt={`Пример: ${selected.title}`} />
+                <figcaption className="muted">
+                  Пример шаблона «{selected.title}». Ваше изображение будет на вашу тему.
+                </figcaption>
+              </figure>
+            );
+          })()}
         <label>
           Тон (необязательно)
           <select value={tone} onChange={(e) => setTone(e.target.value)}>

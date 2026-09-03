@@ -10,6 +10,7 @@ from app.content_pipeline.errors import ContentModeratedError
 from app.content_pipeline.registry import register_generator
 from app.models import (
     GenerationContentType,
+    ImageTemplatePreview,
     SocialPlatform,
     Subscription,
     SubscriptionTier,
@@ -437,15 +438,103 @@ def test_generate_rejects_unknown_image_template(client: TestClient, db: Session
 def test_image_templates_catalog_is_served(client: TestClient) -> None:
     # CIN-143: single source of truth for the «Посты» template select --
     # id/title/description only, the English prompt directive stays
-    # internal.
+    # internal. CIN-150 adds preview_url, null until staff generate one.
     headers = _auth_headers(client)
     response = client.get("/content/image-templates", headers=headers)
     assert response.status_code == 200
     templates = response.json()
     ids = {t["id"] for t in templates}
     assert "product_shot" in ids
-    assert all(set(t) == {"id", "title", "description"} for t in templates)
+    assert "flat_lay" in ids
+    assert all(set(t) == {"id", "title", "description", "preview_url"} for t in templates)
     assert all(t["title"] and t["description"] for t in templates)
+    assert all(t["preview_url"] is None for t in templates)
+
+
+def test_every_image_template_has_a_preview_topic() -> None:
+    # CIN-150: the preview generator reads this for every entry, so a
+    # template added without one would only fail at generation time.
+    from app.image_templates import IMAGE_TEMPLATES
+
+    assert len(IMAGE_TEMPLATES) >= 12
+    for template_id, template in IMAGE_TEMPLATES.items():
+        assert template["preview_topic"].strip(), template_id
+        assert template["directive"].startswith("Template:"), template_id
+
+
+def test_stored_preview_is_returned_in_the_catalog(client: TestClient, db: Session) -> None:
+    db.add(
+        ImageTemplatePreview(
+            template_id="product_shot",
+            preview_url="https://media.cindra.example/preview.png",
+        )
+    )
+    db.commit()
+    response = client.get("/content/image-templates", headers=_auth_headers(client))
+    previews = {t["id"]: t["preview_url"] for t in response.json()}
+    assert previews["product_shot"] == "https://media.cindra.example/preview.png"
+    assert previews["lifestyle"] is None
+
+
+def test_preview_generation_is_staff_only(client: TestClient) -> None:
+    # It spends a real image generation per template (CIN-150).
+    response = client.post("/content/image-templates/previews", headers=_auth_headers(client))
+    assert response.status_code == 403
+
+
+def test_preview_generation_stores_urls_and_reports_failures(
+    client: TestClient, db: Session
+) -> None:
+    headers = _auth_headers(client)
+    user = db.scalar(select(User).where(User.email == "ada@cindra.dev"))
+    user.is_admin = True
+    db.commit()
+
+    calls: list[str] = []
+
+    def fake_generator(payload: dict) -> dict:
+        calls.append(payload["image_template"])
+        if payload["image_template"] == "diagram":
+            raise RuntimeError("модель отказалась")
+        return {"image_url": f"https://media.cindra.example/{payload['image_template']}.png"}
+
+    with patch("app.routers.content.nano_banana_image_generator", side_effect=fake_generator):
+        response = client.post("/content/image-templates/previews", headers=headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    # One template failing must not abort the rest of the run.
+    assert "diagram" in body["failed"]
+    assert "product_shot" in body["generated"]
+    assert len(calls) == len(body["generated"]) + len(body["failed"])
+
+    stored = {
+        row.template_id: row.preview_url
+        for row in db.scalars(select(ImageTemplatePreview)).all()
+    }
+    assert stored["product_shot"] == "https://media.cindra.example/product_shot.png"
+    assert "diagram" not in stored
+
+
+def test_regenerating_a_preview_replaces_the_row(client: TestClient, db: Session) -> None:
+    db.add(ImageTemplatePreview(template_id="venue", preview_url="https://old.example/v.png"))
+    db.commit()
+    headers = _auth_headers(client)
+    user = db.scalar(select(User).where(User.email == "ada@cindra.dev"))
+    user.is_admin = True
+    db.commit()
+
+    with patch(
+        "app.routers.content.nano_banana_image_generator",
+        return_value={"image_url": "https://new.example/v.png"},
+    ):
+        client.post("/content/image-templates/previews", headers=headers)
+
+    rows = db.scalars(
+        select(ImageTemplatePreview).where(ImageTemplatePreview.template_id == "venue")
+    ).all()
+    assert len(rows) == 1
+    assert rows[0].preview_url == "https://new.example/v.png"
 
 
 def test_image_templates_catalog_requires_auth(client: TestClient) -> None:
