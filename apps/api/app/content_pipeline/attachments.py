@@ -7,6 +7,8 @@ from docx import Document
 from PIL import Image
 from pypdf import PdfReader
 
+from app.social_integrations.media_validation import is_own_media_url
+
 # Gemini's tile count is aspect-ratio-driven, not size-driven, above
 # this threshold (crop_unit = floor(min(w,h)/1.5), tiles = ceil(w/
 # crop_unit) * ceil(h/crop_unit)) -- verified by hand: a 4000x3000
@@ -201,7 +203,23 @@ def fetch_attachment_bytes(url: str, client: httpx.Client | None = None) -> byte
     """Download an attachment previously uploaded to R2 (public URL) so a
     generator can read it as context. Public bucket URL, no auth header
     needed -- same pattern video_generator.py uses to re-download from
-    Google's own signed video URI."""
+    Google's own signed video URI.
+
+    CIN-161: GenerationRequest.attachments[].url is a plain client-
+    supplied string, not verified against anything POST /content/
+    attachment actually returned -- without this check, any
+    authenticated user can point it at an internal address and have
+    the response (as "document" text, it decodes straight into the
+    generation prompt -- see extract_document_text's text/plain
+    fallback) come back through the generated post. Same SSRF class
+    already closed for TikTok/Telegram (CIN-134/CIN-156), reused here
+    via is_own_media_url rather than duplicated.
+    """
+    if not is_own_media_url(url):
+        raise UnsupportedAttachmentError(
+            "Вложение должно ссылаться на файл, загруженный через "
+            "POST /content/attachment"
+        )
     response = (
         client.get(url, timeout=30.0) if client is not None else httpx.get(url, timeout=30.0)
     )

@@ -1,4 +1,5 @@
 import io
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -18,6 +19,11 @@ from app.content_pipeline.attachments import (
     validate_attachment_set,
 )
 
+# CIN-161: fetch_attachment_bytes only downloads from Cindra's own R2
+# bucket -- tests that exercise the download must point at this bucket,
+# not an arbitrary example.com URL.
+_R2_BASE = "https://media.cindra.test"
+
 
 def _png_bytes(width: int, height: int) -> bytes:
     image = Image.new("RGB", (width, height), color=(200, 50, 50))
@@ -28,6 +34,13 @@ def _png_bytes(width: int, height: int) -> bytes:
 
 def _client(handler) -> httpx.Client:
     return httpx.Client(transport=httpx.MockTransport(handler))
+
+
+def _r2_settings():
+    return patch(
+        "app.social_integrations.media_validation.get_settings",
+        return_value=SimpleNamespace(r2_public_url_base=_R2_BASE),
+    )
 
 
 def test_classify_attachment_image_ok() -> None:
@@ -136,16 +149,41 @@ def test_fetch_attachment_bytes() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, content=b"raw-bytes")
 
-    assert fetch_attachment_bytes("https://r2.example/x.jpg", client=_client(handler)) == b"raw-bytes"
+    with _r2_settings():
+        result = fetch_attachment_bytes(f"{_R2_BASE}/x.jpg", client=_client(handler))
+    assert result == b"raw-bytes"
+
+
+def test_fetch_attachment_bytes_rejects_url_outside_r2_bucket() -> None:
+    # CIN-161: GenerationRequest.attachments[].url is client-supplied
+    # and unrelated to anything actually uploaded via POST
+    # /content/attachment -- without this guard, fetch_attachment_bytes
+    # is an SSRF proxy reachable straight from POST /content/generate.
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("must not fetch an off-bucket URL")
+
+    with _r2_settings(), pytest.raises(UnsupportedAttachmentError):
+        fetch_attachment_bytes("https://evil.example.com/x.jpg", client=_client(handler))
+
+
+def test_fetch_attachment_bytes_rejects_internal_address() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("must not fetch an off-bucket URL")
+
+    with _r2_settings(), pytest.raises(UnsupportedAttachmentError):
+        fetch_attachment_bytes(
+            "http://169.254.169.254/latest/meta-data/", client=_client(handler)
+        )
 
 
 def test_build_attachment_context_document_extracts_text() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, content=b"Some plain text content")
 
-    context = build_attachment_context(
-        "https://r2.example/notes.txt", "document", client=_client(handler)
-    )
+    with _r2_settings():
+        context = build_attachment_context(
+            f"{_R2_BASE}/notes.txt", "document", client=_client(handler)
+        )
     assert context == {"kind": "text", "text": "Some plain text content"}
 
 
@@ -153,9 +191,10 @@ def test_build_attachment_context_image_returns_raw_bytes() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, content=b"fake-image-bytes")
 
-    context = build_attachment_context(
-        "https://r2.example/photo.png", "image", client=_client(handler)
-    )
+    with _r2_settings():
+        context = build_attachment_context(
+            f"{_R2_BASE}/photo.png", "image", client=_client(handler)
+        )
     assert context == {"kind": "media", "mime_type": "image/png", "data": b"fake-image-bytes"}
 
 
