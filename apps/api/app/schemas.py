@@ -421,6 +421,14 @@ class ImageTemplateOut(BaseModel):
     id: str
     title: str
     description: str
+    # CIN-150: a stored example, or None until staff have generated one
+    # (it costs a real image generation, unlike the layout previews).
+    preview_url: str | None = None
+
+
+class ImageTemplatePreviewsOut(BaseModel):
+    generated: list[str]
+    failed: dict[str, str]
 
 
 class VideoStyleOut(BaseModel):

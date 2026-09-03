@@ -1,5 +1,8 @@
+from datetime import UTC, datetime
+
 from fastapi import APIRouter, Depends, HTTPException, Response, UploadFile, status
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -9,6 +12,7 @@ from app.content_pipeline.attachments import (
     classify_attachment,
     downscale_image_for_context,
 )
+from app.content_pipeline.image_generator import nano_banana_image_generator
 from app.content_pipeline.layout_renderer import (
     LayoutFontMissingError,
     LayoutRenderError,
@@ -22,15 +26,22 @@ from app.content_pipeline.publish_matrix import (
 )
 from app.content_pipeline.tasks import run_generation_job
 from app.db import get_db
-from app.deps import get_current_user
+from app.deps import get_current_user, require_admin
 from app.image_templates import IMAGE_TEMPLATES
 from app.layout_templates import LAYOUT_TEMPLATES
-from app.models import GenerationJob, SocialAccount, UsageEventType, User
+from app.models import (
+    GenerationJob,
+    ImageTemplatePreview,
+    SocialAccount,
+    UsageEventType,
+    User,
+)
 from app.schemas import (
     AttachmentOut,
     GenerationJobOut,
     GenerationRequest,
     ImageTemplateOut,
+    ImageTemplatePreviewsOut,
     LayoutRenderOut,
     LayoutRenderRequest,
     LayoutTemplateOut,
@@ -241,14 +252,69 @@ def render_layout_template(
 @router.get("/image-templates", response_model=list[ImageTemplateOut])
 def list_image_templates(
     current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> list[ImageTemplateOut]:
     """Image template catalog for the «Посты» page -- the frontend
     renders whatever is here (single source of truth, like
     /video-projects/styles)."""
+    previews = {
+        row.template_id: row.preview_url
+        for row in db.scalars(select(ImageTemplatePreview)).all()
+    }
     return [
-        ImageTemplateOut(id=template_id, title=t["title"], description=t["description"])
+        ImageTemplateOut(
+            id=template_id,
+            title=t["title"],
+            description=t["description"],
+            preview_url=previews.get(template_id),
+        )
         for template_id, t in IMAGE_TEMPLATES.items()
     ]
+
+
+@router.post("/image-templates/previews", response_model=ImageTemplatePreviewsOut)
+def generate_image_template_previews(
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> ImageTemplatePreviewsOut:
+    """Generate one example image per AI template and store it (CIN-150).
+
+    Staff-only and deliberately manual: this spends a real image
+    generation per template, so it runs when the catalog changes, not
+    on a schedule and never on a user's quota. Failures are reported
+    per template instead of aborting -- one template's refusal must not
+    cost the whole run.
+    """
+    generated: list[str] = []
+    failed: dict[str, str] = {}
+    for template_id, template in IMAGE_TEMPLATES.items():
+        try:
+            # Goes through the ordinary user path -- enhancer included
+            # (CIN-142) -- so the example shows what someone actually
+            # gets, not a differently-built approximation.
+            result = nano_banana_image_generator(
+                {"topic": template["preview_topic"], "image_template": template_id}
+            )
+        except Exception as exc:  # noqa: BLE001 -- reported per template below
+            failed[template_id] = str(exc)[:200]
+            continue
+        # Upsert rather than merge(): regenerating replaces the
+        # stored example, and ON CONFLICT keeps that correct even if two
+        # staff runs overlap.
+        db.execute(
+            pg_insert(ImageTemplatePreview)
+            .values(template_id=template_id, preview_url=result["image_url"])
+            .on_conflict_do_update(
+                index_elements=[ImageTemplatePreview.template_id],
+                set_={
+                    "preview_url": result["image_url"],
+                    "generated_at": datetime.now(UTC),
+                },
+            )
+        )
+        generated.append(template_id)
+    db.commit()
+    return ImageTemplatePreviewsOut(generated=generated, failed=failed)
 
 
 @router.get("/{job_id}", response_model=GenerationJobOut)

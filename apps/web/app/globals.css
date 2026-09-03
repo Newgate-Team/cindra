@@ -764,3 +764,22 @@ a.list-row {
   text-decoration: underline;
   width: fit-content;
 }
+
+/* CIN-150: example image for the selected AI template on «Посты». */
+.template-example {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.template-example img {
+  width: 100%;
+  max-width: 320px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+}
+
+.template-example figcaption {
+  font-size: 13px;
+}

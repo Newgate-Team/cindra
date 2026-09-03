@@ -121,6 +121,26 @@ class User(Base):
     )
 
 
+class ImageTemplatePreview(Base):
+    """One generated example per AI image template (CIN-150).
+
+    Unlike the code-rendered layout templates (CIN-148), whose previews
+    are drawn on the fly for free, an example for these costs a real
+    image generation -- so it is produced once by staff and stored,
+    not rendered per request. `template_id` is a key of
+    IMAGE_TEMPLATES, deliberately a plain string so adding or renaming
+    a template needs no migration.
+    """
+
+    __tablename__ = "image_template_previews"
+
+    template_id: Mapped[str] = mapped_column(String(50), primary_key=True)
+    preview_url: Mapped[str] = mapped_column(String(1024), nullable=False)
+    generated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+
+
 class Subscription(Base):
     __tablename__ = "subscriptions"
 
