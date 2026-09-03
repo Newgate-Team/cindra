@@ -123,6 +123,38 @@ def downscale_image_for_context(data: bytes) -> tuple[bytes, str]:
     return buffer.getvalue(), "image/jpeg"
 
 
+# CIN-151: backgrounds for the card renderer are resized for a canvas,
+# not for a model's tile budget -- 384px (the attachment bound above)
+# would be visibly soft behind 1080x1920. This bound covers every
+# canvas format with room for the cover-crop.
+_MAX_BACKGROUND_DIMENSION = 2160
+
+
+def downscale_image_for_background(data: bytes) -> tuple[bytes, str]:
+    """Resize an uploaded card background down to a canvas-appropriate
+    bound. Same validation and JPEG re-encode as the context path
+    (downscale_image_for_context), only a much larger target: this
+    image is displayed to people, not read by a model."""
+    try:
+        image = Image.open(io.BytesIO(data))
+        image.load()
+    except Exception as exc:
+        raise UnsupportedAttachmentError(
+            f"Повреждённый или неподдерживаемый файл изображения: {exc}"
+        ) from exc
+    width, height = image.size
+    if max(width, height) > _MAX_BACKGROUND_DIMENSION:
+        scale = _MAX_BACKGROUND_DIMENSION / max(width, height)
+        image = image.resize(
+            (round(width * scale), round(height * scale)), Image.Resampling.LANCZOS
+        )
+    if image.mode not in ("RGB", "L"):
+        image = image.convert("RGB")
+    buffer = io.BytesIO()
+    image.save(buffer, format="JPEG", quality=_IMAGE_JPEG_QUALITY)
+    return buffer.getvalue(), "image/jpeg"
+
+
 def classify_attachment(mime_type: str, size_bytes: int) -> str:
     """Validate an uploaded file and return its attachment_type
     (image/video/audio/document), or raise if the type is unsupported

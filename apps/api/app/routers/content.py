@@ -10,6 +10,7 @@ from app.content_pipeline.attachments import (
     AttachmentTooLargeError,
     UnsupportedAttachmentError,
     classify_attachment,
+    downscale_image_for_background,
     downscale_image_for_context,
 )
 from app.content_pipeline.image_generator import nano_banana_image_generator
@@ -42,6 +43,7 @@ from app.schemas import (
     GenerationRequest,
     ImageTemplateOut,
     ImageTemplatePreviewsOut,
+    LayoutBackgroundOut,
     LayoutRenderOut,
     LayoutRenderRequest,
     LayoutTemplateOut,
@@ -203,6 +205,48 @@ def preview_layout_template(
         # Same demo copy every time -- let the browser keep it.
         headers={"Cache-Control": "public, max-age=3600"},
     )
+
+
+@router.post(
+    "/layout-background",
+    response_model=LayoutBackgroundOut,
+    status_code=status.HTTP_201_CREATED,
+)
+async def upload_layout_background(
+    file: UploadFile, current_user: User = Depends(get_current_user)
+) -> LayoutBackgroundOut:
+    """Upload a background for a template that supports one (CIN-151).
+
+    Separate from /content/attachment because that path shrinks images
+    to 384px for the model's tile budget (CIN-98) -- fine as context,
+    visibly soft behind a 1080x1920 card. Like attachments, it isn't
+    metered: only the render itself is.
+    """
+    if not get_settings().r2_account_id:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Медиа-хранилище не настроено на сервере",
+        )
+    data = await file.read()
+    mime_type = file.content_type or "application/octet-stream"
+    try:
+        attachment_type = classify_attachment(mime_type, len(data))
+    except UnsupportedAttachmentError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
+    except AttachmentTooLargeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail=str(exc)
+        ) from None
+    if attachment_type != "image":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Подложкой может быть только изображение",
+        )
+    try:
+        data, mime_type = downscale_image_for_background(data)
+    except UnsupportedAttachmentError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
+    return LayoutBackgroundOut(background_url=upload_bytes(data, mime_type, "jpg"))
 
 
 @router.post("/layout-render", response_model=LayoutRenderOut)

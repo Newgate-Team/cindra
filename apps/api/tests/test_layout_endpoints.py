@@ -195,3 +195,73 @@ def test_render_accepts_every_canvas_format(client: TestClient, canvas_format: s
             headers=_auth_headers(client),
         )
     assert response.status_code == 200
+
+
+def _png_bytes(width: int = 3000, height: int = 2000) -> bytes:
+    from io import BytesIO
+
+    from PIL import Image
+
+    buffer = BytesIO()
+    Image.new("RGB", (width, height), (10, 120, 200)).save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def test_background_upload_downscales_for_the_canvas(client: TestClient) -> None:
+    # CIN-151: the attachment path shrinks to 384px for the model's
+    # tile budget -- unusable behind a 1080x1920 card, so backgrounds
+    # get their own, much larger bound.
+    from io import BytesIO
+
+    from PIL import Image
+
+    stored: dict = {}
+
+    def fake_upload(data: bytes, content_type: str, extension: str) -> str:
+        stored["data"] = data
+        stored["extension"] = extension
+        return "https://media.cindra.example/bg.jpg"
+
+    with patch("app.routers.content.upload_bytes", side_effect=fake_upload):
+        response = client.post(
+            "/content/layout-background",
+            files={"file": ("photo.png", _png_bytes(), "image/png")},
+            headers=_auth_headers(client),
+        )
+
+    assert response.status_code == 201
+    assert response.json()["background_url"] == "https://media.cindra.example/bg.jpg"
+    assert stored["extension"] == "jpg"
+    stored_image = Image.open(BytesIO(stored["data"]))
+    assert max(stored_image.size) == 2160
+    assert max(stored_image.size) > 384
+
+
+def test_background_upload_rejects_non_images(client: TestClient) -> None:
+    response = client.post(
+        "/content/layout-background",
+        files={"file": ("notes.txt", b"just text", "text/plain")},
+        headers=_auth_headers(client),
+    )
+    assert response.status_code == 400
+    assert "изображение" in response.json()["detail"]
+
+
+def test_background_upload_requires_auth(client: TestClient) -> None:
+    response = client.post(
+        "/content/layout-background",
+        files={"file": ("photo.png", _png_bytes(10, 10), "image/png")},
+    )
+    assert response.status_code == 401
+
+
+def test_background_upload_without_storage_is_503(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(get_settings(), "r2_account_id", "")
+    response = client.post(
+        "/content/layout-background",
+        files={"file": ("photo.png", _png_bytes(10, 10), "image/png")},
+        headers=_auth_headers(client),
+    )
+    assert response.status_code == 503

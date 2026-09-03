@@ -411,6 +411,10 @@ class LayoutRenderRequest(BaseModel):
         return value
 
 
+class LayoutBackgroundOut(BaseModel):
+    background_url: str
+
+
 class LayoutRenderOut(BaseModel):
     image_url: str
 

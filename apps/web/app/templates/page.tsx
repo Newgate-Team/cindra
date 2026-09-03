@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from "react";
 
 import { ApiError, api } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
@@ -75,6 +75,8 @@ function TemplateStudio() {
   const [accent, setAccent] = useState("");
   const [values, setValues] = useState<Record<string, string>>({});
   const [targetAccountIds, setTargetAccountIds] = useState<string[]>([]);
+  const [backgroundUrl, setBackgroundUrl] = useState<string | null>(null);
+  const [uploadingBackground, setUploadingBackground] = useState(false);
   const [renderedUrl, setRenderedUrl] = useState<string | null>(null);
   const [rendering, setRendering] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -104,6 +106,27 @@ function TemplateStudio() {
     setValues({});
     setRenderedUrl(null);
     setError(null);
+    setBackgroundUrl(null);
+  }
+
+  async function handleBackgroundChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setError(null);
+    setUploadingBackground(true);
+    try {
+      const uploaded = await api.upload<{ background_url: string }>(
+        "/content/layout-background",
+        file,
+        token
+      );
+      setBackgroundUrl(uploaded.background_url);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Не удалось загрузить подложку");
+    } finally {
+      setUploadingBackground(false);
+      event.target.value = "";
+    }
   }
 
   async function handleRender(event: FormEvent) {
@@ -121,6 +144,7 @@ function TemplateStudio() {
           theme,
           accent: accent || null,
           values,
+          background_url: selected.supports_image ? backgroundUrl : null,
         },
         token
       );
@@ -209,6 +233,21 @@ function TemplateStudio() {
               />
             </label>
           ))}
+          {selected.supports_image && (
+            <label>
+              Подложка — своё изображение
+              <input
+                type="file"
+                accept="image/*"
+                onChange={handleBackgroundChange}
+                disabled={uploadingBackground}
+              />
+              {uploadingBackground && <span className="muted">Загружаем…</span>}
+              {backgroundUrl && !uploadingBackground && (
+                <span className="muted">Подложка загружена</span>
+              )}
+            </label>
+          )}
           <label>
             Акцентный цвет (необязательно)
             <input
@@ -223,9 +262,15 @@ function TemplateStudio() {
             </button>
           )}
           {error && <p className="error">{error}</p>}
-          <button type="submit" disabled={rendering}>
+          <button
+            type="submit"
+            disabled={rendering || uploadingBackground || (selected.supports_image && !backgroundUrl)}
+          >
             {rendering ? "Собираем…" : "Собрать карточку"}
           </button>
+          {selected.supports_image && !backgroundUrl && (
+            <p className="muted">Этот макет строится поверх изображения — загрузите подложку.</p>
+          )}
         </form>
       )}
 
