@@ -102,6 +102,15 @@ class Settings(BaseSettings):
     # domain) -- uploaded keys are appended to this to build the URL
     # returned to callers.
     r2_public_url_base: str = ""
+    # CIN-160: separate Fernet key for scheduler/backup.py, deliberately
+    # not social_token_encryption_key -- different security domain.
+    # Postgres dumps go into this same R2 bucket (see CIN-91), which has
+    # to be publicly readable for media to work at all; R2's "public
+    # bucket" mode has no per-prefix ACL, so backups/ is exposed at the
+    # same unauthenticated URL base as every published post's image/
+    # video. Without this key, backup.upload_backup refuses to run
+    # rather than upload the dump in the clear.
+    backup_encryption_key: str = ""
     # CIN-18 (2026-08-04): provider switched from CloudPayments to
     # PayPal -- see that ticket for the full reasoning (CloudPayments
     # approval takes ~2 weeks; PayPal Business can be opened as a sole

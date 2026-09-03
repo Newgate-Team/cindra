@@ -64,12 +64,23 @@ PAYPAL_WEBHOOK_ID             # регистрируется после перв
 
 ## Бэкапы
 
-Railway Trial/Hobby не даёт автоматических бэкапов/PITR для managed Postgres (только на Pro). Вместо апгрейда -- см. CIN-91: `app.scheduler.tasks.backup_database`, Celery beat, ежедневно в 03:00 UTC. Дампает БД через `pg_dump`, гзипует и заливает в тот же R2-бакет, что и медиа (`backups/postgres/YYYY-MM-DD.sql.gz`), храня последние 14 дампов.
+Railway Trial/Hobby не даёт автоматических бэкапов/PITR для managed Postgres (только на Pro). Вместо апгрейда -- см. CIN-91: `app.scheduler.tasks.backup_database`, Celery beat, ежедневно в 03:00 UTC. Дампает БД через `pg_dump`, гзипует, шифрует (см. CIN-160 ниже) и заливает в тот же R2-бакет, что и медиа (`backups/postgres/YYYY-MM-DD.sql.gz.enc`), храня последние 14 дампов.
+
+**CIN-160: обязателен `BACKUP_ENCRYPTION_KEY`.** R2-бакет с медиа обязан быть публично читаемым (иначе не работает сама публикация постов), а у R2 нет per-prefix ACL -- значит `backups/` доступен по тому же публичному URL, что и любая опубликованная картинка/видео, без всякой авторизации. Дамп поэтому шифруется Fernet перед загрузкой (`app.scheduler.backup._fernet`); без ключа таск падает явно, а не грузит дамп открытым текстом. Сгенерировать ключ:
+
+```bash
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
 
 Восстановление из дампа:
 
 ```bash
-# скачать дамп конкретного дня из R2 (например через rclone/aws-cli, настроенный на R2-эндпоинт), затем:
+# скачать дамп конкретного дня из R2 (например через rclone/aws-cli, настроенный на R2-эндпоинт), затем расшифровать и распаковать:
+python -c "
+from cryptography.fernet import Fernet
+data = open('2026-08-04.sql.gz.enc', 'rb').read()
+open('2026-08-04.sql.gz', 'wb').write(Fernet('$BACKUP_ENCRYPTION_KEY').decrypt(data))
+"
 gunzip -c 2026-08-04.sql.gz | psql "$DATABASE_URL"
 ```
 
