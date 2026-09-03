@@ -29,6 +29,17 @@ def create_access_token(user_id: uuid.UUID) -> str:
 def decode_access_token(token: str) -> uuid.UUID:
     settings = get_settings()
     payload = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
+    # CIN-157: every special-purpose token below (oauth state, telegram
+    # verification) is signed with this same jwt_secret and also carries
+    # `sub` -- without this check, any of them decodes here as a fully
+    # valid access token for that user. That's a real escalation for the
+    # oauth state tokens specifically, since they're embedded in a URL
+    # handed to a third party (TikTok/Meta) and round-tripped through
+    # browser history/Referer, unlike an access token which never leaves
+    # our own Authorization header. A real access token never sets
+    # `typ`, so any token carrying one is, by construction, not one.
+    if payload.get("typ") is not None:
+        raise jwt.InvalidTokenError("not an access token")
     return uuid.UUID(payload["sub"])
 
 
