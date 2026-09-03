@@ -1,13 +1,16 @@
+import uuid
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 import jwt
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.models import SocialPlatform, User
+from app.security import create_meta_oauth_state
 from app.social_accounts import get_access_token, upsert_social_account
 from app.social_integrations.errors import PermanentPublishError
 from app.token_crypto import decrypt_token, encrypt_token
@@ -48,6 +51,10 @@ def _auth_headers(client: TestClient) -> dict[str, str]:
     client.post("/auth/register", json=payload)
     token = client.post("/auth/login", json=payload).json()["access_token"]
     return {"Authorization": f"Bearer {token}"}
+
+
+def _user_id(db: Session, email: str = "ada@cindra.dev") -> uuid.UUID:
+    return db.scalar(select(User.id).where(User.email == email))
 
 
 def test_list_social_accounts_excludes_tokens(client: TestClient, db: Session) -> None:
@@ -349,8 +356,25 @@ def test_connect_telegram_requires_auth(client: TestClient) -> None:
     assert response.status_code == 401
 
 
-def test_connect_instagram_creates_social_account(client: TestClient) -> None:
+def test_start_instagram_oauth_returns_state_bound_to_current_user(
+    client: TestClient, db: Session
+) -> None:
     headers = _auth_headers(client)
+    response = client.post("/social-accounts/instagram/start", headers=headers)
+    assert response.status_code == 200
+    state = response.json()["state"]
+    assert jwt.decode(state, get_settings().jwt_secret, algorithms=["HS256"])["sub"] == str(
+        _user_id(db)
+    )
+
+
+def test_start_instagram_oauth_requires_auth(client: TestClient) -> None:
+    assert client.post("/social-accounts/instagram/start").status_code == 401
+
+
+def test_connect_instagram_creates_social_account(client: TestClient, db: Session) -> None:
+    headers = _auth_headers(client)
+    state = create_meta_oauth_state(_user_id(db))
     with (
         patch(
             "app.routers.social_accounts.instagram.exchange_code_for_token",
@@ -369,7 +393,9 @@ def test_connect_instagram_creates_social_account(client: TestClient) -> None:
         ),
     ):
         response = client.post(
-            "/social-accounts/instagram/connect", json={"code": "auth-code"}, headers=headers
+            "/social-accounts/instagram/connect",
+            json={"code": "auth-code", "state": state},
+            headers=headers,
         )
 
     assert response.status_code == 201
@@ -379,8 +405,9 @@ def test_connect_instagram_creates_social_account(client: TestClient) -> None:
     assert body["display_name"] == "mybrand"
 
 
-def test_connect_instagram_also_connects_facebook_page(client: TestClient) -> None:
+def test_connect_instagram_also_connects_facebook_page(client: TestClient, db: Session) -> None:
     headers = _auth_headers(client)
+    state = create_meta_oauth_state(_user_id(db))
     with (
         patch(
             "app.routers.social_accounts.instagram.exchange_code_for_token",
@@ -398,7 +425,11 @@ def test_connect_instagram_also_connects_facebook_page(client: TestClient) -> No
             },
         ),
     ):
-        client.post("/social-accounts/instagram/connect", json={"code": "auth-code"}, headers=headers)
+        client.post(
+            "/social-accounts/instagram/connect",
+            json={"code": "auth-code", "state": state},
+            headers=headers,
+        )
 
     listed = client.get("/social-accounts", headers=headers).json()
     platforms = {account["platform"]: account for account in listed}
@@ -407,8 +438,9 @@ def test_connect_instagram_also_connects_facebook_page(client: TestClient) -> No
     assert platforms["facebook"]["display_name"] == "Cindra"
 
 
-def test_connect_instagram_no_linked_account_returns_400(client: TestClient) -> None:
+def test_connect_instagram_no_linked_account_returns_400(client: TestClient, db: Session) -> None:
     headers = _auth_headers(client)
+    state = create_meta_oauth_state(_user_id(db))
     with (
         patch(
             "app.routers.social_accounts.instagram.exchange_code_for_token",
@@ -424,7 +456,9 @@ def test_connect_instagram_no_linked_account_returns_400(client: TestClient) -> 
         ),
     ):
         response = client.post(
-            "/social-accounts/instagram/connect", json={"code": "auth-code"}, headers=headers
+            "/social-accounts/instagram/connect",
+            json={"code": "auth-code", "state": state},
+            headers=headers,
         )
 
     assert response.status_code == 400
@@ -432,5 +466,85 @@ def test_connect_instagram_no_linked_account_returns_400(client: TestClient) -> 
 
 
 def test_connect_instagram_requires_auth(client: TestClient) -> None:
-    response = client.post("/social-accounts/instagram/connect", json={"code": "auth-code"})
+    response = client.post(
+        "/social-accounts/instagram/connect", json={"code": "auth-code", "state": "irrelevant"}
+    )
     assert response.status_code == 401
+
+
+def test_connect_instagram_missing_state_is_rejected(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    response = client.post(
+        "/social-accounts/instagram/connect", json={"code": "auth-code"}, headers=headers
+    )
+    assert response.status_code == 422
+
+
+def test_connect_instagram_invalid_state_returns_400(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    response = client.post(
+        "/social-accounts/instagram/connect",
+        json={"code": "auth-code", "state": "not-a-real-token"},
+        headers=headers,
+    )
+    assert response.status_code == 400
+    assert "истёк" in response.json()["detail"] or "недействителен" in response.json()["detail"]
+
+
+def test_connect_instagram_expired_state_returns_400(client: TestClient, db: Session) -> None:
+    expired = jwt.encode(
+        {
+            "sub": str(_user_id(db)),
+            "nonce": "x",
+            "exp": datetime.now(UTC) - timedelta(minutes=1),
+            "typ": "meta_oauth_state",
+        },
+        get_settings().jwt_secret,
+        algorithm="HS256",
+    )
+    headers = _auth_headers(client)
+    response = client.post(
+        "/social-accounts/instagram/connect",
+        json={"code": "auth-code", "state": expired},
+        headers=headers,
+    )
+    assert response.status_code == 400
+
+
+def test_connect_instagram_wrong_token_type_is_rejected(client: TestClient, db: Session) -> None:
+    # A validly-signed token of the WRONG kind (e.g. a telegram
+    # verification token, or another user's access token) must not be
+    # accepted just because it's signed with our own secret.
+    wrong_kind = jwt.encode(
+        {
+            "sub": str(_user_id(db)),
+            "nonce": "x",
+            "exp": datetime.now(UTC) + timedelta(minutes=10),
+            "typ": "tiktok_oauth_state",
+        },
+        get_settings().jwt_secret,
+        algorithm="HS256",
+    )
+    headers = _auth_headers(client)
+    response = client.post(
+        "/social-accounts/instagram/connect",
+        json={"code": "auth-code", "state": wrong_kind},
+        headers=headers,
+    )
+    assert response.status_code == 400
+
+
+def test_connect_instagram_rejects_state_issued_for_a_different_user(
+    client: TestClient, db: Session
+) -> None:
+    # CIN-154's actual exploit: an attacker's own valid state (or a
+    # code paired with it) must not attach to the victim's account.
+    headers = _auth_headers(client)
+    someone_elses_state = create_meta_oauth_state(uuid.uuid4())
+    response = client.post(
+        "/social-accounts/instagram/connect",
+        json={"code": "auth-code", "state": someone_elses_state},
+        headers=headers,
+    )
+    assert response.status_code == 400
+    assert "другим пользователем" in response.json()["detail"]

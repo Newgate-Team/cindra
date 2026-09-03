@@ -25,13 +25,14 @@ function InstagramCallback() {
       return;
     }
     const code = searchParams.get("code");
-    if (!code) {
-      setError("В ответе от Meta нет кода авторизации");
+    const state = searchParams.get("state");
+    if (!code || !state) {
+      setError("В ответе от Meta нет кода авторизации или state");
       return;
     }
 
     api
-      .post("/social-accounts/instagram/connect", { code }, token)
+      .post("/social-accounts/instagram/connect", { code, state }, token)
       .then(() => router.push("/social-accounts"))
       .catch((err) => setError(err instanceof ApiError ? err.message : "Не удалось подключить Instagram"));
   }, [token, searchParams, router]);

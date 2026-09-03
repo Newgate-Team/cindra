@@ -82,3 +82,37 @@ def decode_tiktok_oauth_state(token: str) -> uuid.UUID:
     if payload.get("typ") != _TIKTOK_OAUTH_STATE_TYPE:
         raise jwt.InvalidTokenError("not a tiktok_oauth_state token")
     return uuid.UUID(payload["sub"])
+
+
+META_OAUTH_STATE_EXPIRE_MINUTES = 10
+_META_OAUTH_STATE_TYPE = "meta_oauth_state"
+
+
+def create_meta_oauth_state(user_id: uuid.UUID) -> str:
+    """Same purpose as create_tiktok_oauth_state (CIN-154): binds the
+    Meta (Instagram/Facebook) OAuth callback to the authenticated
+    Cindra user who started the flow. Without this, /instagram/connect
+    had no way to tell "this code came from whoever's browser is
+    calling us right now" apart from "this code came from the user who
+    actually completed Meta's consent screen" -- letting an attacker
+    who completes consent as themselves hand their own `code` to a
+    victim and get their Instagram/Facebook linked to the victim's
+    Cindra account (OAuth login CSRF, RFC 6749 section 10.12).
+    """
+    settings = get_settings()
+    expire = datetime.now(UTC) + timedelta(minutes=META_OAUTH_STATE_EXPIRE_MINUTES)
+    payload = {
+        "sub": str(user_id),
+        "nonce": uuid.uuid4().hex,
+        "exp": expire,
+        "typ": _META_OAUTH_STATE_TYPE,
+    }
+    return jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
+
+
+def decode_meta_oauth_state(token: str) -> uuid.UUID:
+    settings = get_settings()
+    payload = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
+    if payload.get("typ") != _META_OAUTH_STATE_TYPE:
+        raise jwt.InvalidTokenError("not a meta_oauth_state token")
+    return uuid.UUID(payload["sub"])

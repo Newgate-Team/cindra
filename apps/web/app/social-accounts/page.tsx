@@ -45,6 +45,8 @@ function SocialAccountsManager() {
   const [connecting, setConnecting] = useState(false);
   const [tiktokError, setTikTokError] = useState<string | null>(null);
   const [connectingTikTok, setConnectingTikTok] = useState(false);
+  const [instagramError, setInstagramError] = useState<string | null>(null);
+  const [connectingInstagram, setConnectingInstagram] = useState(false);
 
   function reload() {
     api.get<SocialAccount[]>("/social-accounts", token).then(setAccounts);
@@ -105,21 +107,38 @@ function SocialAccountsManager() {
     setConnectError(null);
   }
 
-  function handleConnectInstagram() {
+  async function handleConnectInstagram() {
     if (!META_APP_ID) return;
-    const url = new URL("https://www.facebook.com/v21.0/dialog/oauth");
-    url.searchParams.set("client_id", META_APP_ID);
-    url.searchParams.set("redirect_uri", META_REDIRECT_URI ?? "");
-    url.searchParams.set(
-      "scope",
-      // pages_manage_posts/pages_manage_engagement/pages_read_user_content
-      // added for CIN-65 (publishing to the Facebook Page itself, not
-      // just the Instagram account linked to it) -- connected in the
-      // same OAuth round-trip, no separate consent screen.
-      "instagram_basic,instagram_content_publish,pages_show_list,pages_read_engagement," +
-        "business_management,pages_manage_posts,pages_manage_engagement,pages_read_user_content"
-    );
-    window.location.href = url.toString();
+    setInstagramError(null);
+    setConnectingInstagram(true);
+    try {
+      // CIN-154: server-issued, user-bound state -- without it,
+      // whoever completes Meta's consent screen (not necessarily the
+      // person clicking this button) decides which Cindra account
+      // their Instagram/Facebook gets linked to.
+      const { state } = await api.post<{ state: string }>(
+        "/social-accounts/instagram/start",
+        {},
+        token
+      );
+      const url = new URL("https://www.facebook.com/v21.0/dialog/oauth");
+      url.searchParams.set("client_id", META_APP_ID);
+      url.searchParams.set("redirect_uri", META_REDIRECT_URI ?? "");
+      url.searchParams.set("state", state);
+      url.searchParams.set(
+        "scope",
+        // pages_manage_posts/pages_manage_engagement/pages_read_user_content
+        // added for CIN-65 (publishing to the Facebook Page itself, not
+        // just the Instagram account linked to it) -- connected in the
+        // same OAuth round-trip, no separate consent screen.
+        "instagram_basic,instagram_content_publish,pages_show_list,pages_read_engagement," +
+          "business_management,pages_manage_posts,pages_manage_engagement,pages_read_user_content"
+      );
+      window.location.href = url.toString();
+    } catch (err) {
+      setInstagramError(err instanceof ApiError ? err.message : "Не удалось начать вход через Meta");
+      setConnectingInstagram(false);
+    }
   }
 
   async function handleConnectTikTok() {
@@ -256,7 +275,10 @@ function SocialAccountsManager() {
                 Подробнее в документации Meta
               </a>
             </p>
-            <button onClick={handleConnectInstagram}>Войти через Meta</button>
+            <button onClick={handleConnectInstagram} disabled={connectingInstagram}>
+              {connectingInstagram ? "Переходим в Meta…" : "Войти через Meta"}
+            </button>
+            {instagramError && <p className="error">{instagramError}</p>}
             <p className="muted">
               Заодно подключится и сама Facebook-страница — она появится в списке выше отдельной
               записью, публиковать в неё можно так же, как в Telegram и Instagram.
