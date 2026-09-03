@@ -252,10 +252,16 @@ class TelegramConnectRequest(BaseModel):
     verification_token: str = Field(min_length=1)
 
 
+class MetaOAuthStartOut(BaseModel):
+    state: str
+
+
 class InstagramConnectRequest(BaseModel):
     code: str = Field(
         min_length=1, description="Authorization code от Meta OAuth-редиректа (см. CIN-52)"
     )
+    # CIN-154: CSRF-защита, тот же паттерн, что у TikTokConnectRequest.
+    state: str = Field(min_length=1)
 
 
 class TikTokOAuthStartOut(BaseModel):

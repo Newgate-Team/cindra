@@ -13,6 +13,7 @@ from app.deps import get_current_user
 from app.models import SocialAccount, SocialPlatform, User
 from app.schemas import (
     InstagramConnectRequest,
+    MetaOAuthStartOut,
     SocialAccountOut,
     TelegramConnectRequest,
     TelegramStartVerificationOut,
@@ -23,8 +24,10 @@ from app.schemas import (
     TikTokPublishStatusOut,
 )
 from app.security import (
+    create_meta_oauth_state,
     create_telegram_verification_token,
     create_tiktok_oauth_state,
+    decode_meta_oauth_state,
     decode_telegram_verification_token,
     decode_tiktok_oauth_state,
 )
@@ -148,6 +151,21 @@ def connect_telegram(
     )
 
 
+@router.post("/instagram/start", response_model=MetaOAuthStartOut)
+def start_instagram_oauth(
+    current_user: User = Depends(get_current_user),
+) -> MetaOAuthStartOut:
+    """Issues the CSRF state for the Meta OAuth dialog (CIN-154).
+
+    Unlike TikTok's /tiktok/start, this doesn't also build the full
+    authorization URL: NEXT_PUBLIC_META_APP_ID and
+    NEXT_PUBLIC_META_REDIRECT_URI are already public (the frontend
+    builds https://www.facebook.com/.../dialog/oauth itself), so the
+    only thing the backend needs to hand over is the signed state.
+    """
+    return MetaOAuthStartOut(state=create_meta_oauth_state(current_user.id))
+
+
 @router.post(
     "/instagram/connect", response_model=SocialAccountOut, status_code=status.HTTP_201_CREATED
 )
@@ -156,6 +174,21 @@ def connect_instagram(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> SocialAccount:
+    # CIN-154: reject before spending a Meta API round-trip on a code
+    # that didn't originate from this user's own OAuth start.
+    try:
+        state_user_id = decode_meta_oauth_state(payload.state)
+    except (jwt.InvalidTokenError, ValueError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="OAuth state истёк или недействителен — начните подключение заново",
+        ) from None
+    if state_user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="OAuth был начат другим пользователем",
+        )
+
     settings = get_settings()
     try:
         short_lived_token = instagram.exchange_code_for_token(
