@@ -217,6 +217,10 @@ def render_layout(
             continue
 
         if block["type"] == "rect":
+            if block.get("visible_with") and not (
+                values.get(block["visible_with"]) or ""
+            ).strip():
+                continue
             x0 = round(block["left"] * width)
             y0 = round(block["top"] * height)
             draw.rectangle(
@@ -225,7 +229,13 @@ def render_layout(
             )
             continue
 
-        text = (values.get(block["slot"]) or "").strip()
+        # A block draws either the user's text (`slot`) or a literal
+        # from the spec (`text`) -- step numbers are the latter. A
+        # literal tied to an optional slot via `visible_with` vanishes
+        # with it, so an unused third step doesn't leave a stray "3".
+        if block.get("visible_with") and not (values.get(block["visible_with"]) or "").strip():
+            continue
+        text = (block.get("text") or values.get(block.get("slot", "")) or "").strip()
         if not text:
             continue
         if block.get("uppercase"):
