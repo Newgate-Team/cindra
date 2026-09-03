@@ -11,7 +11,6 @@ from __future__ import annotations
 import tempfile
 from datetime import UTC, datetime, timedelta
 from typing import Any, BinaryIO
-from urllib.parse import urlparse
 
 import httpx
 
@@ -19,6 +18,7 @@ from app.config import get_settings
 from app.models import Post, SocialAccount
 from app.social_accounts import get_access_token, get_refresh_token
 from app.social_integrations.errors import PermanentPublishError, TransientPublishError
+from app.social_integrations.media_validation import validate_own_media_url
 from app.token_crypto import encrypt_token
 
 _API_BASE = "https://open.tiktokapis.com"
@@ -163,29 +163,13 @@ def ensure_fresh_access_token(
     return token["access_token"]
 
 
-def _validate_media_url(video_url: str) -> None:
-    """Only fetch media from Cindra's own configured public bucket.
-
-    Direct Post FILE_UPLOAD makes our worker download the URL first;
-    limiting it to the bucket prevents /posts from becoming an SSRF
-    proxy to arbitrary/private network addresses.
-    """
-    allowed_base = get_settings().r2_public_url_base.rstrip("/")
-    parsed = urlparse(video_url)
-    if (
-        not allowed_base
-        or parsed.scheme != "https"
-        or not video_url.startswith(f"{allowed_base}/")
-    ):
-        raise PermanentPublishError(
-            "TikTok может загрузить только видео из настроенного публичного Cindra media bucket"
-        )
-
-
 def _download_video(
     video_url: str, destination: BinaryIO, client: httpx.Client
 ) -> tuple[int, str]:
-    _validate_media_url(video_url)
+    # CIN-134, generalized in CIN-156: Direct Post's FILE_UPLOAD makes
+    # our worker download the URL first, so it's only ever allowed to
+    # be our own bucket -- see media_validation.py for why.
+    validate_own_media_url(video_url, "TikTok")
     size = 0
     with client.stream("GET", video_url, follow_redirects=False, timeout=120.0) as response:
         if response.status_code in _RETRYABLE_STATUS_CODES:
