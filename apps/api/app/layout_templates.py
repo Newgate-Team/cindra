@@ -40,6 +40,14 @@ DEFAULT_THEME = "dark"
 SAMPLE_VALUES: dict[str, str] = {
     "quote": "Хороший контент не кричит. Он попадает в то, о чём человек уже думал.",
     "author": "Аня Соколова, редактор",
+    "statement": "Публикуйте реже. Готовьте лучше.",
+    "left_title": "Было",
+    "left_body": "Три часа на пост: идея, текст, картинка, вычитка",
+    "right_title": "Стало",
+    "right_body": "Двадцать минут: тема, шаблон, публикация",
+    "step_1": "Опишите тему",
+    "step_2": "Выберите шаблон",
+    "step_3": "Опубликуйте",
     "value": "72%",
     "caption": "постов теряют читателя на первой строке",
     "headline": "Запускаем видео-студию",
@@ -172,6 +180,99 @@ LAYOUT_TEMPLATES: dict[str, dict[str, Any]] = {
             {
                 "type": "text", "slot": "item_3", "left": 0.15, "top": 0.715, "width": 0.77, "height": 0.13,
                 "max_size": 0.042, "min_size": 0.024, "weight": "regular", "color": "fg", "line_spacing": 1.25,
+            },
+        ],
+    },
+    # CIN-151: three more shapes the first five didn't cover -- a bare
+    # statement, a two-column comparison, and a numbered sequence.
+    "statement": {
+        "title": "Тезис",
+        "description": "Одна короткая фраза во весь кадр, без ничего лишнего.",
+        "supports_image": False,
+        "slots": [
+            {"name": "statement", "label": "Фраза", "max_length": 90, "required": True},
+        ],
+        "blocks": [
+            {
+                "type": "text", "slot": "statement", "left": 0.08, "top": 0.28, "width": 0.84, "height": 0.44,
+                "max_size": 0.130, "min_size": 0.050, "weight": "bold", "color": "fg", "line_spacing": 1.15,
+            },
+            {"type": "rect", "left": 0.08, "top": 0.80, "width": 0.14, "height": 0.012, "color": "accent"},
+        ],
+    },
+    "comparison": {
+        "title": "Было / стало",
+        "description": "Две колонки рядом: старый подход и новый.",
+        "supports_image": False,
+        "slots": [
+            {"name": "left_title", "label": "Заголовок слева", "max_length": 30, "required": True},
+            {"name": "left_body", "label": "Текст слева", "max_length": 120, "required": True},
+            {"name": "right_title", "label": "Заголовок справа", "max_length": 30, "required": True},
+            {"name": "right_body", "label": "Текст справа", "max_length": 120, "required": True},
+        ],
+        "blocks": [
+            {
+                "type": "text", "slot": "left_title", "left": 0.08, "top": 0.24, "width": 0.36, "height": 0.09,
+                "max_size": 0.055, "min_size": 0.030, "weight": "bold", "color": "muted",
+            },
+            {
+                "type": "text", "slot": "left_body", "left": 0.08, "top": 0.36, "width": 0.36, "height": 0.30,
+                "max_size": 0.042, "min_size": 0.022, "weight": "regular", "color": "fg", "line_spacing": 1.25,
+            },
+            # the divider doubles as the visual "versus"
+            {"type": "rect", "left": 0.494, "top": 0.24, "width": 0.004, "height": 0.42, "color": "accent"},
+            {
+                "type": "text", "slot": "right_title", "left": 0.56, "top": 0.24, "width": 0.36, "height": 0.09,
+                "max_size": 0.055, "min_size": 0.030, "weight": "bold", "color": "accent",
+            },
+            {
+                "type": "text", "slot": "right_body", "left": 0.56, "top": 0.36, "width": 0.36, "height": 0.30,
+                "max_size": 0.042, "min_size": 0.022, "weight": "regular", "color": "fg", "line_spacing": 1.25,
+            },
+        ],
+    },
+    "steps": {
+        "title": "Три шага",
+        "description": "Пронумерованная последовательность действий.",
+        "supports_image": False,
+        "slots": [
+            {"name": "headline", "label": "Заголовок", "max_length": 60, "required": False},
+            {"name": "step_1", "label": "Шаг 1", "max_length": 70, "required": True},
+            {"name": "step_2", "label": "Шаг 2", "max_length": 70, "required": True},
+            {"name": "step_3", "label": "Шаг 3", "max_length": 70, "required": False},
+        ],
+        "blocks": [
+            {
+                "type": "text", "slot": "headline", "left": 0.08, "top": 0.13, "width": 0.84, "height": 0.12,
+                "max_size": 0.060, "min_size": 0.032, "weight": "bold", "color": "fg", "line_spacing": 1.15,
+            },
+            # Literal numerals, not slots -- and each vanishes with its
+            # own step so an unused third one leaves no orphan "3".
+            {
+                "type": "text", "text": "1", "left": 0.08, "top": 0.365, "width": 0.09, "height": 0.10,
+                "max_size": 0.070, "min_size": 0.070, "weight": "bold", "color": "accent",
+            },
+            {
+                "type": "text", "slot": "step_1", "left": 0.19, "top": 0.375, "width": 0.73, "height": 0.12,
+                "max_size": 0.046, "min_size": 0.026, "weight": "regular", "color": "fg", "line_spacing": 1.2,
+            },
+            {
+                "type": "text", "text": "2", "left": 0.08, "top": 0.535, "width": 0.09, "height": 0.10,
+                "max_size": 0.070, "min_size": 0.070, "weight": "bold", "color": "accent",
+                "visible_with": "step_2",
+            },
+            {
+                "type": "text", "slot": "step_2", "left": 0.19, "top": 0.545, "width": 0.73, "height": 0.12,
+                "max_size": 0.046, "min_size": 0.026, "weight": "regular", "color": "fg", "line_spacing": 1.2,
+            },
+            {
+                "type": "text", "text": "3", "left": 0.08, "top": 0.705, "width": 0.09, "height": 0.10,
+                "max_size": 0.070, "min_size": 0.070, "weight": "bold", "color": "accent",
+                "visible_with": "step_3",
+            },
+            {
+                "type": "text", "slot": "step_3", "left": 0.19, "top": 0.715, "width": 0.73, "height": 0.12,
+                "max_size": 0.046, "min_size": 0.026, "weight": "regular", "color": "fg", "line_spacing": 1.2,
             },
         ],
     },

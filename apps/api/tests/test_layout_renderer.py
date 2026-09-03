@@ -160,3 +160,40 @@ def test_missing_font_raises_its_own_error(monkeypatch: pytest.MonkeyPatch) -> N
             render_layout("quote_card", "square", {"quote": "x"})
     finally:
         layout_renderer._font.cache_clear()
+
+
+def test_literal_number_blocks_disappear_with_their_step() -> None:
+    # CIN-151: step numerals are literals in the spec, not slots, so
+    # they need their own visibility rule -- an unused third step must
+    # not leave an orphan "3" on the card.
+    three = render_layout(
+        "steps", "square", {"step_1": "Первый", "step_2": "Второй", "step_3": "Третий"}
+    )
+    two = render_layout("steps", "square", {"step_1": "Первый", "step_2": "Второй"})
+    assert three != two
+
+    def ink(png: bytes) -> int:
+        return sum(1 for p in _open(png).convert("L").get_flattened_data() if p > 60)
+
+    # Dropping a step must remove ink, never add it.
+    assert ink(two) < ink(three)
+
+
+def test_comparison_renders_both_columns() -> None:
+    png = render_layout(
+        "comparison",
+        "square",
+        {
+            "left_title": "Было",
+            "left_body": "Долго",
+            "right_title": "Стало",
+            "right_body": "Быстро",
+        },
+    )
+    image = _open(png).convert("RGB")
+    # Ink on both sides of the divider, i.e. the two columns really are
+    # laid out side by side rather than overlapping.
+    left = image.crop((0, 0, 540, 1080)).convert("L")
+    right = image.crop((540, 0, 1080, 1080)).convert("L")
+    assert sum(1 for p in left.get_flattened_data() if p > 60) > 500
+    assert sum(1 for p in right.get_flattened_data() if p > 60) > 500
