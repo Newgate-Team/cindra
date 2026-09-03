@@ -8,11 +8,13 @@ from sqlalchemy.orm import Session
 from app.models import (
     GenerationContentType,
     Subscription,
+    SubscriptionStatus,
     SubscriptionTier,
     UsageEvent,
     UsageEventType,
     User,
 )
+from app.plans import effective_tier
 from app.usage import enforce_and_record_usage, enforce_and_record_usage_bulk
 
 
@@ -113,6 +115,87 @@ def test_business_tier_allows_far_more_video_than_pro(db: Session, user: User) -
         enforce_and_record_usage(
             db, user, UsageEventType.generation, GenerationContentType.video
         )
+
+
+def test_effective_tier_is_free_for_a_cancelled_business_subscription() -> None:
+    # CIN-153: subscription.tier only ever moves forward (set once by
+    # confirm_paypal_subscription, never reset) -- effective_tier is
+    # what everything enforcing a limit must use instead.
+    subscription = Subscription(
+        user_id=None, tier=SubscriptionTier.business, status=SubscriptionStatus.canceled
+    )
+    assert effective_tier(subscription) is SubscriptionTier.free
+
+
+def test_effective_tier_is_free_for_a_past_due_subscription() -> None:
+    subscription = Subscription(
+        user_id=None, tier=SubscriptionTier.pro, status=SubscriptionStatus.past_due
+    )
+    assert effective_tier(subscription) is SubscriptionTier.free
+
+
+def test_effective_tier_is_the_real_tier_when_active() -> None:
+    subscription = Subscription(
+        user_id=None, tier=SubscriptionTier.business, status=SubscriptionStatus.active
+    )
+    assert effective_tier(subscription) is SubscriptionTier.business
+
+
+def test_cancelled_business_subscription_gets_free_tier_quota(
+    db: Session, user: User
+) -> None:
+    # The concrete exploit CIN-153 closes: subscribe to Business once,
+    # cancel, and previously keep Business-level quota forever.
+    db.execute(
+        update(Subscription)
+        .where(Subscription.user_id == user.id)
+        .values(tier=SubscriptionTier.business, status=SubscriptionStatus.canceled)
+    )
+    db.commit()
+
+    for _ in range(3):  # free tier image limit, see app/plans.py
+        enforce_and_record_usage(
+            db, user, UsageEventType.generation, GenerationContentType.image
+        )
+    with pytest.raises(HTTPException) as exc_info:
+        enforce_and_record_usage(
+            db, user, UsageEventType.generation, GenerationContentType.image
+        )
+    assert exc_info.value.status_code == 402
+    # The 402 message must not claim a tier the user no longer has.
+    assert "business" not in exc_info.value.detail
+    assert "free" in exc_info.value.detail
+
+
+def test_past_due_pro_subscription_gets_free_tier_quota(db: Session, user: User) -> None:
+    db.execute(
+        update(Subscription)
+        .where(Subscription.user_id == user.id)
+        .values(tier=SubscriptionTier.pro, status=SubscriptionStatus.past_due)
+    )
+    db.commit()
+
+    # free tier has zero video generations -- pro would allow 6
+    with pytest.raises(HTTPException) as exc_info:
+        enforce_and_record_usage(
+            db, user, UsageEventType.generation, GenerationContentType.video
+        )
+    assert exc_info.value.status_code == 402
+
+
+def test_active_business_subscription_is_unaffected(db: Session, user: User) -> None:
+    db.execute(
+        update(Subscription)
+        .where(Subscription.user_id == user.id)
+        .values(tier=SubscriptionTier.business, status=SubscriptionStatus.active)
+    )
+    db.commit()
+
+    for _ in range(55):  # business tier video limit, unaffected by this fix
+        enforce_and_record_usage(
+            db, user, UsageEventType.generation, GenerationContentType.video
+        )
+    assert _usage_count(db, user) == 55
 
 
 def test_only_current_period_counts_toward_the_limit(db: Session, user: User) -> None:

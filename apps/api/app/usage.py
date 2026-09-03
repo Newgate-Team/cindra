@@ -11,7 +11,7 @@ from app.models import (
     UsageEventType,
     User,
 )
-from app.plans import limit_for
+from app.plans import effective_tier, limit_for
 
 
 def _kind_label(
@@ -37,7 +37,10 @@ def _check_limit(
     db: Session, user: User, event_type: UsageEventType, content_type: GenerationContentType | None, count: int
 ) -> None:
     subscription = db.scalar(select(Subscription).where(Subscription.user_id == user.id))
-    limit = limit_for(subscription.tier, event_type, content_type)
+    # CIN-153: never subscription.tier directly -- a cancelled or
+    # payment-failed subscription must not keep premium quota.
+    tier = effective_tier(subscription)
+    limit = limit_for(tier, event_type, content_type)
 
     if limit is not None:
         period_start = _current_period_start()
@@ -58,7 +61,7 @@ def _check_limit(
                 status_code=status.HTTP_402_PAYMENT_REQUIRED,
                 detail=(
                     f"Лимит тарифа исчерпан: {limit} {_kind_label(event_type, content_type)} "
-                    f"в месяц на тарифе {subscription.tier.value}"
+                    f"в месяц на тарифе {tier.value}"
                 ),
             )
 
