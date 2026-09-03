@@ -1,4 +1,5 @@
 import json
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import httpx
@@ -13,6 +14,17 @@ from app.content_pipeline.image_generator import (
 
 def _client(handler) -> httpx.Client:
     return httpx.Client(transport=httpx.MockTransport(handler))
+
+
+@pytest.fixture(autouse=True)
+def _r2_settings():
+    # CIN-161: attachment URLs below must resolve against Cindra's own
+    # R2 bucket now that fetch_attachment_bytes validates the host.
+    with patch(
+        "app.social_integrations.media_validation.get_settings",
+        return_value=SimpleNamespace(r2_public_url_base="https://media.cindra.test"),
+    ):
+        yield
 
 
 def test_sends_correct_request_shape_and_parses_response() -> None:
@@ -218,7 +230,7 @@ def test_image_attachment_becomes_reference_image_in_input_array() -> None:
     payload = {
         "topic": "утренний кофе",
         "platform": "instagram",
-        "attachments": [{"url": "https://r2.example/mood.jpg", "attachment_type": "image"}],
+        "attachments": [{"url": "https://media.cindra.test/mood.jpg", "attachment_type": "image"}],
     }
     with patch(
         "app.content_pipeline.image_generator.upload_bytes",
@@ -248,8 +260,8 @@ def test_two_image_attachments_both_become_reference_images() -> None:
         "topic": "утренний кофе",
         "platform": "instagram",
         "attachments": [
-            {"url": "https://r2.example/mood1.jpg", "attachment_type": "image"},
-            {"url": "https://r2.example/mood2.jpg", "attachment_type": "image"},
+            {"url": "https://media.cindra.test/mood1.jpg", "attachment_type": "image"},
+            {"url": "https://media.cindra.test/mood2.jpg", "attachment_type": "image"},
         ],
     }
     with patch(
@@ -277,7 +289,7 @@ def test_document_attachment_adds_context_without_changing_input_shape() -> None
     payload = {
         "topic": "утренний кофе",
         "platform": "instagram",
-        "attachments": [{"url": "https://r2.example/brief.txt", "attachment_type": "document"}],
+        "attachments": [{"url": "https://media.cindra.test/brief.txt", "attachment_type": "document"}],
     }
     with patch(
         "app.content_pipeline.image_generator.upload_bytes",

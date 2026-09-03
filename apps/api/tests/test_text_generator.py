@@ -1,5 +1,7 @@
 import base64
 import json
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import httpx
 import pytest
@@ -14,6 +16,17 @@ from app.content_pipeline.text_generator import (
 
 def _client(handler) -> httpx.Client:
     return httpx.Client(transport=httpx.MockTransport(handler))
+
+
+@pytest.fixture(autouse=True)
+def _r2_settings():
+    # CIN-161: attachment URLs below must resolve against Cindra's own
+    # R2 bucket now that fetch_attachment_bytes validates the host.
+    with patch(
+        "app.social_integrations.media_validation.get_settings",
+        return_value=SimpleNamespace(r2_public_url_base="https://media.cindra.test"),
+    ):
+        yield
 
 
 def test_sends_correct_request_shape_and_parses_response() -> None:
@@ -90,7 +103,7 @@ def test_document_attachment_adds_context_to_prompt() -> None:
     payload = {
         "topic": "осенняя коллекция",
         "platform": "telegram",
-        "attachments": [{"url": "https://r2.example/brief.txt", "attachment_type": "document"}],
+        "attachments": [{"url": "https://media.cindra.test/brief.txt", "attachment_type": "document"}],
     }
     result = gemini_text_generator(payload, client=_client(handler))
     assert result["text"] == "Готово"
@@ -114,8 +127,8 @@ def test_multiple_document_attachments_are_both_included() -> None:
         "topic": "осенняя коллекция",
         "platform": "telegram",
         "attachments": [
-            {"url": "https://r2.example/brief.txt", "attachment_type": "document"},
-            {"url": "https://r2.example/products.txt", "attachment_type": "document"},
+            {"url": "https://media.cindra.test/brief.txt", "attachment_type": "document"},
+            {"url": "https://media.cindra.test/products.txt", "attachment_type": "document"},
         ],
     }
     result = gemini_text_generator(payload, client=_client(handler))
@@ -140,7 +153,7 @@ def test_image_attachment_becomes_multimodal_part() -> None:
     payload = {
         "topic": "осенняя коллекция",
         "platform": "telegram",
-        "attachments": [{"url": "https://r2.example/reference.png", "attachment_type": "image"}],
+        "attachments": [{"url": "https://media.cindra.test/reference.png", "attachment_type": "image"}],
     }
     result = gemini_text_generator(payload, client=_client(handler))
     assert result["text"] == "Готово"

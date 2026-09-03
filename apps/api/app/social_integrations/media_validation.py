@@ -4,6 +4,26 @@ from app.config import get_settings
 from app.social_integrations.errors import PermanentPublishError
 
 
+def is_own_media_url(url: str) -> bool:
+    """True iff `url` is under Cindra's own configured public R2 bucket
+    (CIN-134, generalized in CIN-156, reused across packages in CIN-161).
+
+    Any code path that downloads a client-supplied URL itself (rather
+    than handing the URL to a third party and letting it fetch) MUST
+    check this first -- without it, a server-side download turns the
+    worker into an SSRF proxy that will fetch any http(s) URL,
+    including internal/private network addresses, on the caller's
+    behalf. Pure predicate (no raising) so each caller can pick the
+    exception type that fits its own domain -- see
+    validate_own_media_url below for the social_integrations callers,
+    and content_pipeline/attachments.py::fetch_attachment_bytes for a
+    caller that raises its own UnsupportedAttachmentError instead.
+    """
+    allowed_base = get_settings().r2_public_url_base.rstrip("/")
+    parsed = urlparse(url)
+    return bool(allowed_base) and parsed.scheme == "https" and url.startswith(f"{allowed_base}/")
+
+
 def validate_own_media_url(url: str, platform: str) -> None:
     """Only allow fetching media from Cindra's own configured public R2
     bucket (CIN-134, generalized in CIN-156).
@@ -23,9 +43,7 @@ def validate_own_media_url(url: str, platform: str) -> None:
     for Telegram's 20MB URL-fetch cap) but didn't get it until CIN-156
     caught the gap.
     """
-    allowed_base = get_settings().r2_public_url_base.rstrip("/")
-    parsed = urlparse(url)
-    if not allowed_base or parsed.scheme != "https" or not url.startswith(f"{allowed_base}/"):
+    if not is_own_media_url(url):
         raise PermanentPublishError(
             f"{platform} может загрузить медиа только из настроенного публичного "
             "Cindra media bucket"

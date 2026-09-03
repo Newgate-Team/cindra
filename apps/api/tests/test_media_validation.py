@@ -4,7 +4,10 @@ from unittest.mock import patch
 import pytest
 
 from app.social_integrations.errors import PermanentPublishError
-from app.social_integrations.media_validation import validate_own_media_url
+from app.social_integrations.media_validation import (
+    is_own_media_url,
+    validate_own_media_url,
+)
 
 _R2_BASE = "https://media.cindra.test"
 
@@ -14,6 +17,18 @@ def _with_settings(r2_public_url_base: str):
         "app.social_integrations.media_validation.get_settings",
         return_value=SimpleNamespace(r2_public_url_base=r2_public_url_base),
     )
+
+
+def test_is_own_media_url_accepts_own_bucket() -> None:
+    with _with_settings(_R2_BASE):
+        assert is_own_media_url(f"{_R2_BASE}/clip.mp4") is True
+
+
+def test_is_own_media_url_rejects_foreign_host() -> None:
+    # CIN-161: the pure predicate other packages (content_pipeline)
+    # build their own exception type around.
+    with _with_settings(_R2_BASE):
+        assert is_own_media_url("https://evil.example.com/clip.mp4") is False
 
 
 def test_accepts_own_bucket_url() -> None:

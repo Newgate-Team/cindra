@@ -1,4 +1,5 @@
 import json
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import httpx
@@ -15,6 +16,17 @@ _VIDEO_URI = "https://generativelanguage.googleapis.com/v1beta/files/xyz"
 
 def _client(handler) -> httpx.Client:
     return httpx.Client(transport=httpx.MockTransport(handler))
+
+
+@pytest.fixture(autouse=True)
+def _r2_settings():
+    # CIN-161: attachment URLs below must resolve against Cindra's own
+    # R2 bucket now that fetch_attachment_bytes validates the host.
+    with patch(
+        "app.social_integrations.media_validation.get_settings",
+        return_value=SimpleNamespace(r2_public_url_base="https://media.cindra.test"),
+    ):
+        yield
 
 
 def _no_sleep(_: float) -> None:
@@ -311,7 +323,7 @@ def test_never_finishing_operation_raises_after_poll_budget() -> None:
 def test_document_attachment_adds_context_to_prompt() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         url = str(request.url).split("?")[0]
-        if url == "https://r2.example/brief.txt":
+        if url == "https://media.cindra.test/brief.txt":
             return httpx.Response(200, content="сценарий из ТЗ клиента".encode())
         if request.method == "POST":
             body = json.loads(request.content)
@@ -331,7 +343,7 @@ def test_document_attachment_adds_context_to_prompt() -> None:
     payload = {
         "topic": "x",
         "platform": "instagram",
-        "attachments": [{"url": "https://r2.example/brief.txt", "attachment_type": "document"}],
+        "attachments": [{"url": "https://media.cindra.test/brief.txt", "attachment_type": "document"}],
     }
     with patch(
         "app.content_pipeline.video_generator.upload_bytes",
@@ -354,7 +366,7 @@ def test_image_attachment_is_not_used_in_the_video_prompt() -> None:
             return httpx.Response(
                 200, json={"candidates": [{"content": {"parts": [{"text": "caption"}]}}]}
             )
-        if url.startswith("https://r2.example"):
+        if url.startswith("https://media.cindra.test"):
             return httpx.Response(200, content=b"unused")
         if request.method == "POST":
             body = json.loads(request.content)
@@ -374,7 +386,7 @@ def test_image_attachment_is_not_used_in_the_video_prompt() -> None:
     payload = {
         "topic": "x",
         "platform": "instagram",
-        "attachments": [{"url": "https://r2.example/mood.jpg", "attachment_type": "image"}],
+        "attachments": [{"url": "https://media.cindra.test/mood.jpg", "attachment_type": "image"}],
     }
     with patch(
         "app.content_pipeline.video_generator.upload_bytes",
@@ -389,9 +401,9 @@ def test_image_attachment_is_not_used_in_the_video_prompt() -> None:
 def test_two_document_attachments_are_both_included() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         url = str(request.url).split("?")[0]
-        if url == "https://r2.example/brief.txt":
+        if url == "https://media.cindra.test/brief.txt":
             return httpx.Response(200, content="сценарий из ТЗ клиента".encode())
-        if url == "https://r2.example/notes.txt":
+        if url == "https://media.cindra.test/notes.txt":
             return httpx.Response(200, content="дополнительные заметки".encode())
         if request.method == "POST":
             body = json.loads(request.content)
@@ -414,8 +426,8 @@ def test_two_document_attachments_are_both_included() -> None:
         "topic": "x",
         "platform": "instagram",
         "attachments": [
-            {"url": "https://r2.example/brief.txt", "attachment_type": "document"},
-            {"url": "https://r2.example/notes.txt", "attachment_type": "document"},
+            {"url": "https://media.cindra.test/brief.txt", "attachment_type": "document"},
+            {"url": "https://media.cindra.test/notes.txt", "attachment_type": "document"},
         ],
     }
     with patch(
