@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import httpx
@@ -16,9 +17,21 @@ from app.social_integrations.telegram import (
     send_message,
 )
 
+# CIN-156: send_video downloads video_url itself, so it's restricted to
+# Cindra's own R2 bucket (see media_validation.py) -- tests that exercise
+# the download must point at this bucket, not an arbitrary example.com URL.
+_R2_VIDEO_URL = "https://media.cindra.test/x.mp4"
+
 
 def _client(handler) -> httpx.Client:
     return httpx.Client(transport=httpx.MockTransport(handler))
+
+
+def _r2_settings():
+    return patch(
+        "app.social_integrations.media_validation.get_settings",
+        return_value=SimpleNamespace(r2_public_url_base="https://media.cindra.test"),
+    )
 
 
 def test_get_chat_returns_result_on_success() -> None:
@@ -118,10 +131,28 @@ def test_send_video_returns_result_on_success() -> None:
             return httpx.Response(200, json={"ok": True, "result": {"message_id": 43}})
         return httpx.Response(200, content=b"fake-video-bytes")  # the video_url fetch
 
-    result = telegram.send_video(
-        "-100123", "https://example.com/x.mp4", "caption", "123:abc", client=_client(handler)
-    )
+    with _r2_settings():
+        result = telegram.send_video(
+            "-100123", _R2_VIDEO_URL, "caption", "123:abc", client=_client(handler)
+        )
     assert result == {"message_id": 43}
+
+
+def test_send_video_rejects_url_outside_r2_bucket() -> None:
+    # CIN-156: without this guard, send_video is an SSRF proxy -- it
+    # downloads whatever URL is given and hands the bytes back to the
+    # caller via their own Telegram channel.
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("must not fetch an off-bucket URL")
+
+    with _r2_settings(), pytest.raises(PermanentPublishError):
+        telegram.send_video(
+            "-100123",
+            "https://evil.example.com/x.mp4",
+            "caption",
+            "123:abc",
+            client=_client(handler),
+        )
 
 
 def test_send_video_uploads_bytes_as_multipart_not_url() -> None:
@@ -138,12 +169,13 @@ def test_send_video_uploads_bytes_as_multipart_not_url() -> None:
             return httpx.Response(200, json={"ok": True, "result": {"message_id": 43}})
         return httpx.Response(200, content=b"fake-video-bytes")
 
-    telegram.send_video(
-        "-100123", "https://example.com/x.mp4", "caption", "123:abc", client=_client(handler)
-    )
+    with _r2_settings():
+        telegram.send_video(
+            "-100123", _R2_VIDEO_URL, "caption", "123:abc", client=_client(handler)
+        )
     assert "multipart/form-data" in captured["content_type"]
     assert b"fake-video-bytes" in captured["body"]
-    assert b"https://example.com/x.mp4" not in captured["body"]
+    assert _R2_VIDEO_URL.encode() not in captured["body"]
 
 
 def test_send_photo_converts_markdown_and_sets_parse_mode() -> None:
@@ -171,9 +203,10 @@ def test_send_video_converts_markdown_and_sets_parse_mode() -> None:
             return httpx.Response(200, json={"ok": True, "result": {"message_id": 46}})
         return httpx.Response(200, content=b"fake-video-bytes")
 
-    telegram.send_video(
-        "-100123", "https://example.com/x.mp4", "**жирная** подпись", "123:abc", client=_client(handler)
-    )
+    with _r2_settings():
+        telegram.send_video(
+            "-100123", _R2_VIDEO_URL, "**жирная** подпись", "123:abc", client=_client(handler)
+        )
     # multipart/form-data fields are embedded as raw text (not JSON),
     # so this checks for the encoded field values directly.
     assert "MarkdownV2" in captured["body"]

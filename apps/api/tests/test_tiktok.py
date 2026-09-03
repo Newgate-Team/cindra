@@ -1,3 +1,4 @@
+import io
 import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -140,7 +141,11 @@ def test_direct_post_queries_creator_then_uploads_video() -> None:
         tiktok_client_key="client-key",
         tiktok_client_secret="client-secret",
     )
-    with _client(handler) as client, patch("app.social_integrations.tiktok.get_settings", return_value=settings):
+    with (
+        _client(handler) as client,
+        patch("app.social_integrations.tiktok.get_settings", return_value=settings),
+        patch("app.social_integrations.media_validation.get_settings", return_value=settings),
+    ):
         result = tiktok.publish(account, post, client)
 
     assert result == {"id": "publish-123", "mode": "direct_post"}
@@ -201,8 +206,10 @@ def test_draft_upload_skips_creator_settings_and_sends_video_to_inbox() -> None:
         raise AssertionError(f"unexpected request: {request.method} {request.url}")
 
     settings = SimpleNamespace(r2_public_url_base="https://media.cindra.test")
-    with _client(handler) as client, patch(
-        "app.social_integrations.tiktok.get_settings", return_value=settings
+    with (
+        _client(handler) as client,
+        patch("app.social_integrations.tiktok.get_settings", return_value=settings),
+        patch("app.social_integrations.media_validation.get_settings", return_value=settings),
     ):
         result = tiktok.publish(account, post, client)
 
@@ -250,6 +257,41 @@ def test_direct_post_requires_creator_selected_privacy() -> None:
     with (
         _client(handler) as client,
         patch("app.social_integrations.tiktok.get_settings", return_value=settings),
+        patch("app.social_integrations.media_validation.get_settings", return_value=settings),
         pytest.raises(PermanentPublishError, match="приватности"),
     ):
         tiktok.publish(account, post, client)
+
+
+def test_download_video_rejects_url_outside_r2_bucket() -> None:
+    # CIN-156: _download_video is our worker fetching a client-supplied
+    # URL server-side for FILE_UPLOAD -- without this guard it's an SSRF
+    # proxy, same class of bug closed here for Telegram's send_video.
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("must not fetch an off-bucket URL")
+
+    settings = SimpleNamespace(r2_public_url_base="https://media.cindra.test")
+    with (
+        _client(handler) as client,
+        patch("app.social_integrations.media_validation.get_settings", return_value=settings),
+        pytest.raises(PermanentPublishError, match="TikTok"),
+    ):
+        tiktok._download_video("https://evil.example.com/video.mp4", io.BytesIO(), client)
+
+
+def test_download_video_accepts_r2_bucket_url() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert str(request.url) == "https://media.cindra.test/video.mp4"
+        return httpx.Response(200, content=b"video-bytes", headers={"content-type": "video/mp4"})
+
+    settings = SimpleNamespace(r2_public_url_base="https://media.cindra.test")
+    with (
+        _client(handler) as client,
+        patch("app.social_integrations.media_validation.get_settings", return_value=settings),
+    ):
+        size, content_type = tiktok._download_video(
+            "https://media.cindra.test/video.mp4", io.BytesIO(), client
+        )
+
+    assert size == len(b"video-bytes")
+    assert content_type == "video/mp4"

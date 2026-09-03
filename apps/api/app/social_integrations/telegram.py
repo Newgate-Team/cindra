@@ -5,6 +5,7 @@ import httpx
 from app.models import Post, SocialAccount
 from app.social_accounts import get_access_token
 from app.social_integrations.errors import PermanentPublishError, TransientPublishError
+from app.social_integrations.media_validation import validate_own_media_url
 from app.social_integrations.text_formatting import to_telegram_markdown_v2
 
 _TELEGRAM_API_BASE = "https://api.telegram.org"
@@ -124,6 +125,12 @@ def send_video(
     upload has a much higher 50MB limit for bots, comfortably covering
     our videos.
     """
+    # CIN-156: this is a server-side fetch of a client-suppliable URL
+    # (Post.video_url has no format/host restriction on PostCreate) --
+    # without this, any authenticated user with a connected Telegram
+    # channel could point it at an internal address and have whatever
+    # comes back delivered to their own channel as "video.mp4".
+    validate_own_media_url(video_url, "Telegram")
     video_bytes = (
         client.get(video_url, timeout=30.0)
         if client is not None
