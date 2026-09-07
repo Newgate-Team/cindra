@@ -1,3 +1,4 @@
+import threading
 import uuid
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
@@ -9,7 +10,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.models import SocialPlatform, User
+from app.db import SessionLocal
+from app.models import SocialAccount, SocialPlatform, User
 from app.security import create_meta_oauth_state
 from app.social_accounts import get_access_token, upsert_social_account
 from app.social_integrations.errors import PermanentPublishError
@@ -44,6 +46,54 @@ def test_upsert_is_idempotent_per_platform_and_account(db: Session, user: User) 
     )
     assert first.id == second.id
     assert get_access_token(second) == "token-2"
+
+
+def test_concurrent_connect_of_the_same_account_does_not_500(
+    db: Session, user: User
+) -> None:
+    # Same class of race as CIN-158/162 and the auth.py register/google
+    # fixes: two genuinely concurrent OAuth callbacks for the same
+    # (user, platform, external_account_id) -- e.g. a double-clicked
+    # "Connect" button, or a duplicate callback tab. Real threads, real
+    # separate DB connections; a mock can't exercise the DB's own
+    # uq_social_account constraint.
+    user_id = user.id
+    results: list[SocialAccount | Exception] = []
+    barrier = threading.Barrier(2)
+
+    def attempt(token: str) -> None:
+        with SessionLocal() as session:
+            local_user = session.get(User, user_id)
+            barrier.wait(timeout=15)
+            try:
+                results.append(
+                    upsert_social_account(
+                        session, local_user, SocialPlatform.telegram, "99999", access_token=token
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001 -- asserted on below
+                results.append(exc)
+
+    threads = [
+        threading.Thread(target=attempt, args=(f"token-{i}",)) for i in range(2)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=20)
+
+    assert all(isinstance(r, SocialAccount) for r in results), results
+    account_ids = {r.id for r in results}
+    assert len(account_ids) == 1  # both calls resolved to the same row, no 500
+    with SessionLocal() as verify:
+        rows = verify.scalars(
+            select(SocialAccount).where(
+                SocialAccount.user_id == user_id,
+                SocialAccount.platform == SocialPlatform.telegram,
+                SocialAccount.external_account_id == "99999",
+            )
+        ).all()
+        assert len(rows) == 1
 
 
 def _auth_headers(client: TestClient) -> dict[str, str]:
