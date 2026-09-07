@@ -1,10 +1,12 @@
 import io
 import json
+import threading
 import uuid
 from unittest.mock import patch
 
 import httpx
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
@@ -17,6 +19,7 @@ from app.content_pipeline.video_studio import (
     extract_illustration_prompts,
     generate_brief_files,
 )
+from app.db import SessionLocal
 from app.models import (
     GenerationContentType,
     GenerationJob,
@@ -28,6 +31,7 @@ from app.models import (
     User,
     VideoProject,
 )
+from app.routers.video_projects import generate_illustrations, start_video_generation
 
 
 def _auth_headers(client: TestClient, email: str = "studio@cindra.dev") -> dict[str, str]:
@@ -772,3 +776,94 @@ def test_second_veo_run_while_in_flight_returns_409(client: TestClient, db: Sess
     )
     assert response.status_code == 409
     assert _usage_count(db, GenerationContentType.video) == 1
+
+
+def test_concurrent_illustration_requests_do_not_both_start(
+    client: TestClient, db: Session
+) -> None:
+    # CIN-162: the sequential 409 test above can't catch a TOCTOU race --
+    # it checks project.illustration_job_ids is empty and only sets it
+    # several statements later. Two real requests arriving together can
+    # both read "nothing running" before either writes, both charging
+    # the image quota and starting duplicate jobs (exactly what the
+    # CIN-139 guard's own comment says it exists to prevent). Real
+    # threads, real separate DB connections -- a mock can't exercise
+    # Postgres's own row locking.
+    headers = _auth_headers(client)
+    project = _brief_ready_project(client, headers)
+    user_id = db.scalar(select(User.id).where(User.email == "studio@cindra.dev"))
+
+    results: list[int] = []
+    barrier = threading.Barrier(2)
+
+    def attempt() -> None:
+        with SessionLocal() as session:
+            local_user = session.get(User, user_id)
+            barrier.wait(timeout=5)
+            try:
+                generate_illustrations(project["id"], local_user, session)
+                results.append(200)
+            except HTTPException as exc:
+                results.append(exc.status_code)
+
+    with (
+        patch("app.routers.video_projects.extract_illustration_prompts", return_value=["a"]),
+        patch("app.routers.video_projects.run_generation_job.delay"),
+    ):
+        threads = [threading.Thread(target=attempt) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=10)
+
+    assert sorted(results) == [200, 409]
+    with SessionLocal() as verify:
+        assert _usage_count(verify, GenerationContentType.image) == 1
+
+
+def test_concurrent_video_generation_requests_do_not_both_start(
+    client: TestClient, db: Session
+) -> None:
+    # CIN-162: same race as the illustrations one above, for the
+    # single most expensive call in the app (CIN-139's own words).
+    headers = _auth_headers(client)
+    db.execute(
+        update(Subscription)
+        .where(
+            Subscription.user_id
+            == select(User.id).where(User.email == "studio@cindra.dev").scalar_subquery()
+        )
+        .values(tier=SubscriptionTier.pro)
+    )
+    db.commit()
+    project = _create_project(client, headers)
+    client.patch(
+        f"/video-projects/{project['id']}",
+        json={"script": "сценарий", "style": "veo_auto"},
+        headers=headers,
+    )
+    user_id = db.scalar(select(User.id).where(User.email == "studio@cindra.dev"))
+
+    results: list[int] = []
+    barrier = threading.Barrier(2)
+
+    def attempt() -> None:
+        with SessionLocal() as session:
+            local_user = session.get(User, user_id)
+            barrier.wait(timeout=5)
+            try:
+                start_video_generation(project["id"], local_user, session)
+                results.append(200)
+            except HTTPException as exc:
+                results.append(exc.status_code)
+
+    with patch("app.routers.video_projects.run_generation_job.delay"):
+        threads = [threading.Thread(target=attempt) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=10)
+
+    assert sorted(results) == [200, 409]
+    with SessionLocal() as verify:
+        assert _usage_count(verify, GenerationContentType.video) == 1

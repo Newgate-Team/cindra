@@ -43,14 +43,24 @@ _MAX_UPLOAD_BYTES = 200 * 1024 * 1024
 _ALLOWED_VIDEO_MIME = {"video/mp4", "video/quicktime", "video/webm"}
 
 
-def _owned_project(db: Session, project_id: str, user: User) -> VideoProject:
+def _owned_project(
+    db: Session, project_id: str, user: User, for_update: bool = False
+) -> VideoProject:
+    # CIN-162: for_update=True for endpoints with an in-flight guard
+    # below (video-generation, illustrations) -- those read a field on
+    # this same row (video_generation_job_id / illustration_job_ids)
+    # then, several statements later, write it. Without locking the row
+    # for that whole span, two concurrent requests can both read the
+    # "nothing running" state and both start a paid generation for the
+    # same project -- exactly what those guards' own comments say they
+    # exist to prevent (CIN-139).
     try:
         key = uuid.UUID(project_id)
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Проект не найден"
         ) from None
-    project = db.get(VideoProject, key)
+    project = db.get(VideoProject, key, with_for_update=for_update)
     if project is None or project.user_id != user.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Проект не найден")
     return project
@@ -309,7 +319,7 @@ def generate_illustrations(
     first (no charge on failure), then the whole set is checked
     atomically against the image-generation limit: either every
     illustration fits, or nothing is charged/started."""
-    project = _owned_project(db, project_id, current_user)
+    project = _owned_project(db, project_id, current_user, for_update=True)
     style = VIDEO_STYLES.get(project.style or "")
     if style is None or not style["generates_illustrations"]:
         raise HTTPException(
@@ -395,7 +405,7 @@ def start_video_generation(
     through the existing Veo pipeline (celery GenerationJob). The
     wizard polls GET /video-projects/{id} -- the linked job's status
     and result are folded into the project response."""
-    project = _owned_project(db, project_id, current_user)
+    project = _owned_project(db, project_id, current_user, for_update=True)
     if project.style != "veo_auto":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
