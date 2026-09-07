@@ -3,15 +3,16 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.deps import get_current_user
-from app.models import Post, PostStatus, SocialAccount, UsageEventType, User
+from app.models import Post, PostStatus, SocialAccount, UsageEvent, UsageEventType, User
 from app.pagination import DEFAULT_LIMIT, MAX_LIMIT, Page, paginate
 from app.scheduler.tasks import publish_post
 from app.schemas import PostCreate, PostOut, PostUpdate
-from app.usage import enforce_and_record_usage_bulk
+from app.usage import check_usage_limit
 
 router = APIRouter(prefix="/posts", tags=["posts"])
 
@@ -43,6 +44,72 @@ def _reject_if_in_the_past(scheduled_for: datetime | None) -> None:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Дата публикации не может быть в прошлом",
         )
+
+
+def _existing_posts_by_account(
+    db: Session, generation_job_id: uuid.UUID | None, social_account_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, Post]:
+    """CIN-122: (generation_job_id, social_account_id) uniquely
+    identifies "this generated content, published to this account" --
+    only meaningful when generation_job_id is set (manually-composed
+    posts have nothing to dedupe against)."""
+    if generation_job_id is None:
+        return {}
+    existing = db.scalars(
+        select(Post).where(
+            Post.generation_job_id == generation_job_id,
+            Post.social_account_id.in_(social_account_ids),
+        )
+    ).all()
+    return {p.social_account_id: p for p in existing}
+
+
+def _create_new_posts(
+    db: Session,
+    current_user: User,
+    payload: PostCreate,
+    new_account_ids: list[uuid.UUID],
+    scheduled_for: datetime,
+) -> list[Post]:
+    # Deliberately not enforce_and_record_usage_bulk -- it commits the
+    # usage charge itself, as its own transaction. That would split the
+    # charge from the Post insert below into two separately-committed
+    # steps, and create_post's IntegrityError retry (which rolls back
+    # to undo BOTH together) can only undo whichever of them hasn't
+    # committed yet. check_usage_limit(for_update=True) here holds the
+    # same CIN-158 lock without committing, so the charge and the Post
+    # rows land in the one db.commit() below -- either both happen or
+    # neither does.
+    check_usage_limit(
+        db,
+        current_user,
+        UsageEventType.publication,
+        count=len(new_account_ids),
+        for_update=True,
+    )
+    db.add_all(
+        [
+            UsageEvent(user_id=current_user.id, event_type=UsageEventType.publication)
+            for _ in new_account_ids
+        ]
+    )
+    new_posts = [
+        Post(
+            user_id=current_user.id,
+            social_account_id=account_id,
+            generation_job_id=payload.generation_job_id,
+            text=payload.text,
+            image_url=payload.image_url,
+            video_url=payload.video_url,
+            content_kind=payload.content_kind,
+            platform_options=payload.platform_options,
+            scheduled_for=scheduled_for,
+        )
+        for account_id in new_account_ids
+    ]
+    db.add_all(new_posts)
+    db.commit()
+    return new_posts
 
 
 @router.get("", response_model=Page[PostOut])
@@ -97,47 +164,51 @@ def create_post(
     # exact generated content, published to this exact account" --
     # reuse whatever's already there for that pair instead of creating
     # (and re-charging, re-dispatching) a duplicate.
-    existing_by_account: dict[uuid.UUID, Post] = {}
-    if payload.generation_job_id is not None:
-        existing = db.scalars(
-            select(Post).where(
-                Post.generation_job_id == payload.generation_job_id,
-                Post.social_account_id.in_(payload.social_account_ids),
-            )
-        ).all()
-        existing_by_account = {p.social_account_id: p for p in existing}
-
+    scheduled_for = payload.scheduled_for or datetime.now(UTC)
+    existing_by_account = _existing_posts_by_account(
+        db, payload.generation_job_id, payload.social_account_ids
+    )
     new_account_ids = [
         account_id for account_id in payload.social_account_ids if account_id not in existing_by_account
     ]
 
     new_posts: list[Post] = []
     if new_account_ids:
-        enforce_and_record_usage_bulk(
-            db, current_user, UsageEventType.publication, count=len(new_account_ids)
-        )
-
-        scheduled_for = payload.scheduled_for or datetime.now(UTC)
-        new_posts = [
-            Post(
-                user_id=current_user.id,
-                social_account_id=account_id,
-                generation_job_id=payload.generation_job_id,
-                text=payload.text,
-                image_url=payload.image_url,
-                video_url=payload.video_url,
-                content_kind=payload.content_kind,
-                platform_options=payload.platform_options,
-                scheduled_for=scheduled_for,
+        try:
+            new_posts = _create_new_posts(
+                db, current_user, payload, new_account_ids, scheduled_for
             )
-            for account_id in new_account_ids
-        ]
-        db.add_all(new_posts)
-        db.commit()
+        except IntegrityError:
+            # The above check-then-insert is itself a race: a
+            # concurrent retry of this exact request (same
+            # generation_job_id, CIN-120's dropped-response scenario --
+            # not sequential, genuinely overlapping) can win between our
+            # check and this commit. Roll back (undoes the usage charge
+            # too, same transaction) and recompute against what's
+            # actually committed now, rather than 500ing or -- worse --
+            # leaving the usage charge applied with no Post to show for
+            # it. One retry: by construction, existing_by_account is
+            # fully current immediately after the rollback, so a second
+            # collision here would need a third truly-simultaneous
+            # request.
+            db.rollback()
+            existing_by_account = _existing_posts_by_account(
+                db, payload.generation_job_id, payload.social_account_ids
+            )
+            new_account_ids = [
+                account_id
+                for account_id in payload.social_account_ids
+                if account_id not in existing_by_account
+            ]
+            if new_account_ids:
+                new_posts = _create_new_posts(
+                    db, current_user, payload, new_account_ids, scheduled_for
+                )
+
         for post in new_posts:
             db.refresh(post)
 
-        if scheduled_for <= datetime.now(UTC):
+        if new_posts and scheduled_for <= datetime.now(UTC):
             # Due now rather than in the future -- dispatch immediately
             # instead of waiting for the next beat tick (up to 60s away,
             # see celery_app.conf.beat_schedule). Each dispatch is fully

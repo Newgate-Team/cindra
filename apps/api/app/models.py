@@ -239,6 +239,23 @@ class GenerationJob(Base):
 
 class Post(Base):
     __tablename__ = "posts"
+    __table_args__ = (
+        # CIN-122's idempotency check in routers/posts.py relies on
+        # (generation_job_id, social_account_id) uniquely identifying
+        # "this generated content, published to this account" -- but
+        # only ever enforced it by reading first, racily, with no lock
+        # or constraint backing it. Concurrent retries of the same
+        # create_post request (the exact CIN-120 scenario CIN-122 was
+        # written for) could both pass the check and both insert,
+        # double-charging usage and double-publishing to the real
+        # platform. Postgres treats NULL as distinct from NULL in a
+        # UNIQUE constraint, so this only ever constrains generated
+        # posts (generation_job_id IS NOT NULL) -- manually-composed
+        # posts (NULL) are unaffected and can repeat freely.
+        UniqueConstraint(
+            "generation_job_id", "social_account_id", name="uq_post_generation_job_account"
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
