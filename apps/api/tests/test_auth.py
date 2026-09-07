@@ -1,3 +1,4 @@
+import threading
 from unittest.mock import patch
 
 import pytest
@@ -50,6 +51,32 @@ def test_register_duplicate_email_conflicts(client: TestClient) -> None:
     assert client.post("/auth/register", json=payload).status_code == 201
     response = client.post("/auth/register", json=payload)
     assert response.status_code == 409
+
+
+def test_concurrent_registration_for_the_same_email_does_not_500(
+    client: TestClient, db: Session
+) -> None:
+    # Found alongside CIN-158/162: a race, not a security bug -- e.g. a
+    # double-clicked submit. The UNIQUE constraint on email is the real
+    # guard; without catching the resulting IntegrityError, the loser
+    # of the race got an unhandled 500 instead of the same clean 409
+    # the sequential case (above) already returns.
+    payload = {"email": "race@cindra.dev", "password": "supersecret1"}
+    results: list[int] = []
+    barrier = threading.Barrier(2)
+
+    def attempt() -> None:
+        barrier.wait(timeout=5)
+        results.append(client.post("/auth/register", json=payload).status_code)
+
+    threads = [threading.Thread(target=attempt) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert sorted(results) == [201, 409]
+    assert len(list(db.scalars(select(User).where(User.email == payload["email"])))) == 1
 
 
 def test_login_returns_token_and_me_resolves_it(client: TestClient) -> None:
@@ -169,6 +196,38 @@ def test_google_login_creates_subscription_like_register(
     assert user.hashed_password is None
     subscription = db.scalar(select(Subscription).where(Subscription.user_id == user.id))
     assert subscription is not None
+
+
+def test_concurrent_google_login_for_a_new_email_does_not_500(
+    client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Same class of race as registration, above -- two tabs completing
+    # "Sign in with Google" for the same brand-new email at once. Both
+    # are legitimate logins by the same person, so the loser of the
+    # create-race should just log into the account the winner created,
+    # not error.
+    monkeypatch.setattr(
+        get_settings(), "google_client_id", "test-client-id.apps.googleusercontent.com"
+    )
+    results: list[int] = []
+    barrier = threading.Barrier(2)
+
+    def attempt() -> None:
+        barrier.wait(timeout=5)
+        response = client.post("/auth/google", json={"id_token": "valid-google-token"})
+        results.append(response.status_code)
+
+    with patch("app.routers.auth.verify_google_id_token", return_value=_google_claims()):
+        threads = [threading.Thread(target=attempt) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=10)
+
+    assert results == [200, 200]
+    users = list(db.scalars(select(User).where(User.email == "google-user@gmail.com")))
+    assert len(users) == 1
+    assert len(list(db.scalars(select(Subscription).where(Subscription.user_id == users[0].id)))) == 1
 
 
 def test_google_login_reuses_existing_email_account(
