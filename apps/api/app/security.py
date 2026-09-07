@@ -5,6 +5,7 @@ import jwt
 from passlib.context import CryptContext
 
 from app.config import get_settings
+from app.models import User
 
 _pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
 
@@ -17,6 +18,37 @@ def hash_password(password: str) -> str:
 
 def verify_password(password: str, hashed_password: str) -> bool:
     return _pwd_context.verify(password, hashed_password)
+
+
+# CIN-159: /auth/login had no brute-force protection at all -- unlimited
+# password attempts against any known email. Per-account lockout (not
+# per-IP/Redis-backed rate limiting) because it needs zero new infra
+# and works the same on however many API instances Railway runs.
+# Numbers are the common OWASP ASVS 2.2.1-style defaults, not tuned for
+# this app specifically.
+MAX_FAILED_LOGIN_ATTEMPTS = 5
+LOGIN_LOCKOUT_MINUTES = 15
+
+
+def is_locked_out(user: User) -> bool:
+    return user.locked_until is not None and user.locked_until > datetime.now(UTC)
+
+
+def record_failed_login(user: User) -> None:
+    """Call on a wrong password for a known account. Does not touch
+    locked_until once it's already set -- an attacker who keeps
+    guessing during the lockout window must not be able to extend it
+    and lock the real owner out indefinitely."""
+    if is_locked_out(user):
+        return
+    user.failed_login_attempts += 1
+    if user.failed_login_attempts >= MAX_FAILED_LOGIN_ATTEMPTS:
+        user.locked_until = datetime.now(UTC) + timedelta(minutes=LOGIN_LOCKOUT_MINUTES)
+
+
+def record_successful_login(user: User) -> None:
+    user.failed_login_attempts = 0
+    user.locked_until = None
 
 
 def create_access_token(user_id: uuid.UUID) -> str:

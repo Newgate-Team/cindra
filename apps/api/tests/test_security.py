@@ -1,22 +1,85 @@
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import jwt
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from app.models import User
 from app.security import (
+    LOGIN_LOCKOUT_MINUTES,
+    MAX_FAILED_LOGIN_ATTEMPTS,
     create_access_token,
     create_meta_oauth_state,
     create_telegram_verification_token,
     create_tiktok_oauth_state,
     decode_access_token,
+    is_locked_out,
+    record_failed_login,
+    record_successful_login,
 )
 
 
 def test_decode_access_token_accepts_a_real_access_token() -> None:
     user_id = uuid.uuid4()
     assert decode_access_token(create_access_token(user_id)) == user_id
+
+
+def _user(failed_login_attempts: int = 0, locked_until: datetime | None = None) -> User:
+    return User(
+        email="lockout-test@cindra.dev",
+        failed_login_attempts=failed_login_attempts,
+        locked_until=locked_until,
+    )
+
+
+def test_is_locked_out_false_by_default() -> None:
+    assert is_locked_out(_user()) is False
+
+
+def test_is_locked_out_true_while_locked_until_is_in_the_future() -> None:
+    assert is_locked_out(_user(locked_until=datetime.now(UTC) + timedelta(minutes=5))) is True
+
+
+def test_is_locked_out_false_once_locked_until_is_in_the_past() -> None:
+    assert is_locked_out(_user(locked_until=datetime.now(UTC) - timedelta(seconds=1))) is False
+
+
+def test_record_failed_login_increments_counter() -> None:
+    user = _user(failed_login_attempts=2)
+    record_failed_login(user)
+    assert user.failed_login_attempts == 3
+    assert user.locked_until is None
+
+
+def test_record_failed_login_locks_out_at_threshold() -> None:
+    user = _user(failed_login_attempts=MAX_FAILED_LOGIN_ATTEMPTS - 1)
+    record_failed_login(user)
+    assert user.failed_login_attempts == MAX_FAILED_LOGIN_ATTEMPTS
+    assert user.locked_until is not None
+    assert user.locked_until <= datetime.now(UTC) + timedelta(minutes=LOGIN_LOCKOUT_MINUTES)
+
+
+def test_record_failed_login_does_not_extend_an_active_lockout() -> None:
+    # CIN-159: continuing to guess during lockout must not push
+    # locked_until further out -- that would let an attacker keep the
+    # real owner locked out indefinitely just by not stopping.
+    original_lock = datetime.now(UTC) + timedelta(minutes=1)
+    user = _user(failed_login_attempts=MAX_FAILED_LOGIN_ATTEMPTS, locked_until=original_lock)
+    record_failed_login(user)
+    assert user.locked_until == original_lock
+    assert user.failed_login_attempts == MAX_FAILED_LOGIN_ATTEMPTS
+
+
+def test_record_successful_login_clears_lockout_state() -> None:
+    user = _user(
+        failed_login_attempts=MAX_FAILED_LOGIN_ATTEMPTS,
+        locked_until=datetime.now(UTC) + timedelta(minutes=5),
+    )
+    record_successful_login(user)
+    assert user.failed_login_attempts == 0
+    assert user.locked_until is None
 
 
 def test_decode_access_token_rejects_tiktok_oauth_state() -> None:

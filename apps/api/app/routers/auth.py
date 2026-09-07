@@ -15,7 +15,15 @@ from app.schemas import (
     UserOut,
     UserUpdate,
 )
-from app.security import create_access_token, hash_password, verify_password
+from app.security import (
+    LOGIN_LOCKOUT_MINUTES,
+    create_access_token,
+    hash_password,
+    is_locked_out,
+    record_failed_login,
+    record_successful_login,
+    verify_password,
+)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -44,6 +52,18 @@ def register(payload: UserCreate, db: Session = Depends(get_db)) -> User:
 @router.post("/login", response_model=Token)
 def login(payload: UserLogin, db: Session = Depends(get_db)) -> Token:
     user = db.scalar(select(User).where(User.email == payload.email))
+    # CIN-159: checked before anything password-related so a locked
+    # account gets the same 429 regardless of whether the submitted
+    # password happens to be right -- otherwise a correct guess mid-
+    # lockout would still leak "that was the password" via the 200.
+    if user is not None and is_locked_out(user):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=(
+                "Слишком много неудачных попыток входа — "
+                f"попробуйте снова через {LOGIN_LOCKOUT_MINUTES} минут"
+            ),
+        )
     if user is not None and user.hashed_password is None:
         # Google-created account: no password exists to check. The
         # message intentionally names the real fix -- /auth/register
@@ -54,9 +74,14 @@ def login(payload: UserLogin, db: Session = Depends(get_db)) -> Token:
             detail="Этот аккаунт создан через Google — используйте кнопку «Войти через Google»",
         )
     if user is None or not verify_password(payload.password, user.hashed_password):
+        if user is not None:
+            record_failed_login(user)
+            db.commit()
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Неверный email или пароль"
         )
+    record_successful_login(user)
+    db.commit()
     return Token(access_token=create_access_token(user.id))
 
 

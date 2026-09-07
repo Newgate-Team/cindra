@@ -116,6 +116,14 @@ class User(Base):
     # their profile, so an "admin" role would be self-assignable. This
     # column appears in no request schema -- it's set by hand in the DB.
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # CIN-159: brute-force lockout on /auth/login. failed_login_attempts
+    # resets to 0 on any successful login; locked_until is set once the
+    # threshold is hit and is NOT extended by further attempts during
+    # the lockout window (see app/security.py) -- otherwise an attacker
+    # could keep a victim locked out indefinitely just by continuing to
+    # guess.
+    failed_login_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
