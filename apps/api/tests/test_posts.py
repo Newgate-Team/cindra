@@ -322,6 +322,57 @@ def _generation_job_id(db: Session, user: User) -> str:
     return str(job.id)
 
 
+def test_create_post_rejects_nonexistent_generation_job_id(
+    client: TestClient, db: Session
+) -> None:
+    # Found in the same audit that flagged CIN-158/162: a made-up
+    # generation_job_id used to trip the Post.generation_job_id FK
+    # constraint as an unhandled IntegrityError (a confusing 500)
+    # rather than a clean 404.
+    headers = _auth_headers(client)
+    account_id = _connected_account_id(client, headers, db)
+    response = client.post(
+        "/posts",
+        json={
+            "social_account_ids": [account_id],
+            "text": "текст",
+            "generation_job_id": str(uuid.uuid4()),
+        },
+        headers=headers,
+    )
+    assert response.status_code == 404
+
+
+def test_create_post_rejects_another_users_generation_job_id(
+    client: TestClient, db: Session
+) -> None:
+    # Same audit: generation_job_id was never ownership-checked, unlike
+    # social_account_ids just above it -- a user could tag their own
+    # post with someone else's job id, polluting the CIN-122 dedup
+    # namespace across tenants.
+    headers = _auth_headers(client)
+    account_id = _connected_account_id(client, headers, db)
+    other = db.query(User).filter(User.email == "someone-else@cindra.dev").first()
+    if other is None:
+        other = User(email="someone-else@cindra.dev", hashed_password="not-a-real-hash")
+        db.add(other)
+        db.commit()
+        db.refresh(other)
+    foreign_job_id = _generation_job_id(db, other)
+
+    response = client.post(
+        "/posts",
+        json={
+            "social_account_ids": [account_id],
+            "text": "текст",
+            "generation_job_id": foreign_job_id,
+        },
+        headers=headers,
+    )
+    assert response.status_code == 404
+    assert db.query(Post).filter(Post.generation_job_id == foreign_job_id).count() == 0
+
+
 def test_create_post_retry_with_same_generation_job_and_account_is_not_duplicated(
     client: TestClient, db: Session
 ) -> None:
