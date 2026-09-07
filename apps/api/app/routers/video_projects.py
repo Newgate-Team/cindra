@@ -345,12 +345,16 @@ def generate_illustrations(
     except VideoStudioFailedError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
+    # CIN-158: for_update=True is safe here -- record_usage() below runs
+    # before the Celery .delay() calls, with nothing but local DB work
+    # (building GenerationJob rows) in between.
     check_usage_limit(
         db,
         current_user,
         UsageEventType.generation,
         GenerationContentType.image,
         count=len(prompts),
+        for_update=True,
     )
     jobs = []
     for prompt in prompts:
@@ -426,7 +430,9 @@ def start_video_generation(
         else UsageEventType.generation
     )
     usage_content_type = None if provider == "seedance" else GenerationContentType.video
-    check_usage_limit(db, current_user, usage_event, usage_content_type)
+    # CIN-158: for_update=True is safe here -- same reasoning as the
+    # illustrations endpoint above (record_usage() runs before .delay()).
+    check_usage_limit(db, current_user, usage_event, usage_content_type, for_update=True)
     job = GenerationJob(
         user_id=current_user.id,
         content_type=GenerationContentType.video,

@@ -34,9 +34,31 @@ def _current_period_start() -> datetime:
 
 
 def _check_limit(
-    db: Session, user: User, event_type: UsageEventType, content_type: GenerationContentType | None, count: int
+    db: Session,
+    user: User,
+    event_type: UsageEventType,
+    content_type: GenerationContentType | None,
+    count: int,
+    for_update: bool = False,
 ) -> None:
-    subscription = db.scalar(select(Subscription).where(Subscription.user_id == user.id))
+    # CIN-158: `for_update` closes a TOCTOU race -- two concurrent
+    # requests can both read the same (pre-insert) usage count and both
+    # pass the check, over-provisioning past the limit. Locking the
+    # user's Subscription row (one per user, so it's a natural mutex)
+    # serializes the read-count-then-insert sequence for that user.
+    #
+    # Only safe for callers that check and record in the SAME short
+    # transaction (enforce_and_record_usage/_bulk below) -- holding this
+    # lock across a slow external call (Gemini/Veo/Seedance) would
+    # serialize a user's unrelated concurrent requests for the whole
+    # duration of that call, and risks tying up the connection pool.
+    # check_usage_limit (CIN-139's check-now/record-after-the-model-call
+    # split) deliberately passes for_update=False and keeps the
+    # narrower race it already had -- see that function's docstring.
+    query = select(Subscription).where(Subscription.user_id == user.id)
+    if for_update:
+        query = query.with_for_update()
+    subscription = db.scalar(query)
     # CIN-153: never subscription.tier directly -- a cancelled or
     # payment-failed subscription must not keep premium quota.
     tier = effective_tier(subscription)
@@ -72,19 +94,32 @@ def check_usage_limit(
     event_type: UsageEventType,
     content_type: GenerationContentType | None = None,
     count: int = 1,
+    for_update: bool = False,
 ) -> None:
     """Raise 402 if `count` more events wouldn't fit the tier limit,
     without recording anything (CIN-139).
 
-    Split out of enforce_and_record_usage for the synchronous studio
-    endpoints: those know within the same request whether the
-    generation actually succeeded, so they check first, call the model,
-    and only then record -- a Gemini outage must not burn the user's
-    monthly quota. The async job endpoints keep charging up front,
-    since there the result only arrives in a worker long after the
-    response.
+    Split out of enforce_and_record_usage so a caller can check first
+    and record only once it knows the record is warranted -- e.g. after
+    a synchronous model call actually succeeds (a Gemini outage must
+    not burn the user's monthly quota), or right before enqueueing the
+    Celery job that does the real, expensive work later.
+
+    CIN-158: `for_update=True` closes the check-then-insert race the
+    same way enforce_and_record_usage does (see _check_limit) -- pass it
+    ONLY when record_usage() for this same call is guaranteed to follow
+    within the same request, with nothing slower than local DB/CPU work
+    (no external API call, no `.delay()` that could itself block) in
+    between. That's true for video_projects.py's illustrations/
+    video-generation endpoints (record happens before the Celery
+    `.delay()`, generation itself runs later in the worker) and for
+    layout rendering (local Pillow, no network call at all) -- false for
+    video_projects.py's script/brief endpoints, which call Gemini
+    in-request between the check and the record; those keep the
+    default and keep the pre-CIN-158 race, same tradeoff CIN-139
+    originally chose.
     """
-    _check_limit(db, user, event_type, content_type, count=count)
+    _check_limit(db, user, event_type, content_type, count=count, for_update=for_update)
 
 
 def record_usage(
@@ -121,8 +156,13 @@ def enforce_and_record_usage(
     gate ticket CIN-18/CIN-20), so there's nothing more precise to
     anchor it to. Tier limit numbers are fixed in CIN-59; this only
     owns the enforcement mechanism.
+
+    CIN-158: for_update=True -- check and record happen in this one
+    short transaction with no external call in between, so it's safe to
+    serialize concurrent callers on the user's subscription row (see
+    _check_limit for why that closes the race).
     """
-    _check_limit(db, user, event_type, content_type, count=1)
+    _check_limit(db, user, event_type, content_type, count=1, for_update=True)
     db.add(UsageEvent(user_id=user.id, event_type=event_type, content_type=content_type))
     db.commit()
 
@@ -140,8 +180,10 @@ def enforce_and_record_usage_bulk(
     against the remaining limit -- either all `count` events fit, or
     none of them are recorded, rather than silently publishing some
     prefix of the requested targets and dropping the rest.
+
+    CIN-158: for_update=True, same reasoning as enforce_and_record_usage.
     """
-    _check_limit(db, user, event_type, content_type, count=count)
+    _check_limit(db, user, event_type, content_type, count=count, for_update=True)
     db.add_all(
         [UsageEvent(user_id=user.id, event_type=event_type, content_type=content_type) for _ in range(count)]
     )

@@ -270,7 +270,9 @@ def render_layout_template(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Медиа-хранилище не настроено на сервере",
         )
-    check_usage_limit(db, current_user, UsageEventType.layout_render)
+    # CIN-158: for_update=True is safe here -- render_layout() below is
+    # local Pillow rendering, no external call between check and record.
+    check_usage_limit(db, current_user, UsageEventType.layout_render, for_update=True)
     try:
         png = render_layout(
             payload.template_id,

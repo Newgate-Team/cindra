@@ -1,3 +1,4 @@
+import threading
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -5,6 +6,7 @@ from fastapi import HTTPException
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
+from app.db import SessionLocal
 from app.models import (
     GenerationContentType,
     Subscription,
@@ -251,3 +253,40 @@ def test_bulk_raises_402_when_the_whole_batch_would_exceed_the_limit(
 def test_bulk_exactly_at_the_limit_succeeds(db: Session, user: User) -> None:
     enforce_and_record_usage_bulk(db, user, UsageEventType.publication, count=10)
     assert _usage_count(db, user) == 10
+
+
+def test_concurrent_requests_for_the_last_slot_do_not_both_succeed(
+    db: Session, user: User
+) -> None:
+    # CIN-158: TOCTOU race in the check-then-insert sequence -- without
+    # the row lock, two concurrent requests can both read the same
+    # (pre-insert) count, both see room, and both record, going over
+    # the tier limit. Real concurrency, real separate DB connections --
+    # a mock can't exercise Postgres's own row locking.
+    for _ in range(2):  # free tier image limit is 3 -- exactly 1 slot left
+        enforce_and_record_usage(db, user, UsageEventType.generation, GenerationContentType.image)
+
+    results: list[str] = []
+    barrier = threading.Barrier(2)
+
+    def attempt() -> None:
+        with SessionLocal() as session:
+            local_user = session.get(User, user.id)
+            barrier.wait(timeout=5)  # maximize overlap between the two threads
+            try:
+                enforce_and_record_usage(
+                    session, local_user, UsageEventType.generation, GenerationContentType.image
+                )
+                results.append("ok")
+            except HTTPException:
+                results.append("blocked")
+
+    threads = [threading.Thread(target=attempt) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert sorted(results) == ["blocked", "ok"]
+    with SessionLocal() as verify:
+        assert _usage_count(verify, user) == 3  # never 4 -- the limit held exactly
