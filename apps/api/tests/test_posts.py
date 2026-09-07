@@ -1,3 +1,4 @@
+import threading
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -385,6 +386,51 @@ def test_create_post_retry_only_dispatches_publish_once(client: TestClient, db: 
     client.post("/posts", json=payload, headers=headers)
 
     assert len(calls) == 1
+
+
+def test_concurrent_retries_of_the_same_generation_job_do_not_double_publish(
+    client: TestClient, db: Session
+) -> None:
+    # The tests above cover CIN-122's SEQUENTIAL retry case (first call
+    # fully lands, then a second arrives). The real CIN-120 incident
+    # ("one Story published 4x") was retries genuinely overlapping the
+    # original, still in-flight request -- a race the sequential tests
+    # can't exercise. Real threads hitting the real endpoint, so both
+    # requests' existing_by_account check can genuinely race.
+    calls: list[uuid.UUID] = []
+    register_publisher(
+        SocialPlatform.telegram, lambda account, post: calls.append(post.id) or {"message_id": 7}
+    )
+
+    headers = _auth_headers(client)
+    account_id = _connected_account_id(client, headers, db)
+    owner = db.query(User).filter(User.email == "ada@cindra.dev").one()
+    job_id = _generation_job_id(db, owner)
+    payload = {
+        "social_account_ids": [account_id],
+        "text": "сторис",
+        "generation_job_id": job_id,
+    }
+
+    results: list[int] = []
+    barrier = threading.Barrier(2)
+
+    def attempt() -> None:
+        barrier.wait(timeout=5)
+        results.append(client.post("/posts", json=payload, headers=headers).status_code)
+
+    threads = [threading.Thread(target=attempt) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert results == [201, 201]  # both requests succeed -- the loser just reuses the winner's post
+    assert db.query(Post).filter(Post.generation_job_id == job_id).count() == 1
+    assert len(calls) == 1  # published to the real platform exactly once, not twice
+    from app.models import UsageEvent
+
+    assert db.query(UsageEvent).filter(UsageEvent.user_id == owner.id).count() == 1
 
 
 def test_create_post_fan_out_retry_only_creates_missing_accounts(
