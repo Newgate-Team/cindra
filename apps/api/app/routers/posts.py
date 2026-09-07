@@ -8,7 +8,15 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.deps import get_current_user
-from app.models import Post, PostStatus, SocialAccount, UsageEvent, UsageEventType, User
+from app.models import (
+    GenerationJob,
+    Post,
+    PostStatus,
+    SocialAccount,
+    UsageEvent,
+    UsageEventType,
+    User,
+)
 from app.pagination import DEFAULT_LIMIT, MAX_LIMIT, Page, paginate
 from app.scheduler.tasks import publish_post
 from app.schemas import PostCreate, PostOut, PostUpdate
@@ -151,6 +159,25 @@ def create_post(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Соцаккаунт не найден"
         )
+
+    # generation_job_id is a plain client-supplied uuid (schemas.py) --
+    # unlike social_account_ids above, nothing checked it belongs to
+    # this user, or even exists. Two problems: (1) tagging a post with
+    # someone else's job id pollutes the CIN-122 dedup namespace across
+    # tenants -- never a content-disclosure IDOR (a Post's own text/
+    # image/video always come from this request's own body, never the
+    # job), but it breaks the ownership invariant the field is meant to
+    # carry; (2) a genuinely nonexistent job id trips the FK constraint
+    # on Post.generation_job_id as an IntegrityError -- which the
+    # retry below (meant for the uq_post_generation_job_account race)
+    # would retry once and then let through unhandled, a confusing 500
+    # instead of a clean 404.
+    if payload.generation_job_id is not None:
+        job = db.get(GenerationJob, payload.generation_job_id)
+        if job is None or job.user_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Задача генерации не найдена"
+            )
 
     _reject_if_in_the_past(payload.scheduled_for)
 
