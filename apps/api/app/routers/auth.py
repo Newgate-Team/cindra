@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -42,9 +43,19 @@ def register(payload: UserCreate, db: Session = Depends(get_db)) -> User:
         role=payload.role,
     )
     db.add(user)
-    db.flush()
-    db.add(Subscription(user_id=user.id))
-    db.commit()
+    try:
+        db.flush()
+        db.add(Subscription(user_id=user.id))
+        db.commit()
+    except IntegrityError:
+        # A second registration for the same email raced past the check
+        # above (e.g. a double-clicked submit) -- the email's UNIQUE
+        # constraint is the real guard; without this, that race would
+        # surface as an unhandled 500 instead of the same clean 409.
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Email уже зарегистрирован"
+        ) from None
     db.refresh(user)
     return user
 
@@ -104,10 +115,19 @@ def login_with_google(payload: GoogleLoginRequest, db: Session = Depends(get_db)
     if user is None:
         user = User(email=email, hashed_password=None)
         db.add(user)
-        db.flush()
-        db.add(Subscription(user_id=user.id))
-        db.commit()
-        db.refresh(user)
+        try:
+            db.flush()
+            db.add(Subscription(user_id=user.id))
+            db.commit()
+        except IntegrityError:
+            # Two concurrent Google sign-ins for the same brand-new
+            # email raced past the check above -- the other request
+            # already created the account, so use it rather than
+            # erroring what's still a legitimate concurrent login.
+            db.rollback()
+            user = db.scalar(select(User).where(User.email == email))
+        else:
+            db.refresh(user)
     elif user.hashed_password is not None:
         # CIN-140 -- account pre-hijacking defence. /auth/register does
         # not verify the address (there is no mail infrastructure), so
