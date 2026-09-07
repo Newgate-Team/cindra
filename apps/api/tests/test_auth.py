@@ -75,6 +75,50 @@ def test_login_wrong_password_rejected(client: TestClient) -> None:
     assert response.status_code == 401
 
 
+def test_login_locks_out_after_five_failed_attempts(client: TestClient) -> None:
+    # CIN-159: /auth/login previously had no brute-force protection at
+    # all -- unlimited password guesses against a known email.
+    payload = {"email": "ada@cindra.dev", "password": "supersecret1"}
+    client.post("/auth/register", json=payload)
+    wrong = {"email": payload["email"], "password": "wrong-password"}
+
+    for _ in range(5):
+        response = client.post("/auth/login", json=wrong)
+        assert response.status_code == 401
+
+    locked = client.post("/auth/login", json=wrong)
+    assert locked.status_code == 429
+
+
+def test_login_lockout_rejects_the_correct_password_too(client: TestClient) -> None:
+    # The lockout check must happen before password verification --
+    # otherwise a correct guess mid-lockout would still return 200 and
+    # leak "that was the password" to an attacker who is guessing.
+    payload = {"email": "ada@cindra.dev", "password": "supersecret1"}
+    client.post("/auth/register", json=payload)
+    wrong = {"email": payload["email"], "password": "wrong-password"}
+    for _ in range(5):
+        client.post("/auth/login", json=wrong)
+
+    response = client.post("/auth/login", json=payload)
+    assert response.status_code == 429
+
+
+def test_login_success_resets_failed_attempt_counter(client: TestClient, db: Session) -> None:
+    payload = {"email": "ada@cindra.dev", "password": "supersecret1"}
+    client.post("/auth/register", json=payload)
+    wrong = {"email": payload["email"], "password": "wrong-password"}
+    for _ in range(3):
+        client.post("/auth/login", json=wrong)
+
+    response = client.post("/auth/login", json=payload)
+    assert response.status_code == 200
+
+    user = db.scalar(select(User).where(User.email == payload["email"]))
+    assert user.failed_login_attempts == 0
+    assert user.locked_until is None
+
+
 def test_me_without_token_rejected(client: TestClient) -> None:
     response = client.get("/auth/me")
     assert response.status_code == 401
