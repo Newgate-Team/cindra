@@ -204,8 +204,12 @@ def test_generate_rejects_instagram_text_before_generating(client: TestClient, d
 
 def test_generate_rejects_target_account_not_owned(client: TestClient, db: Session) -> None:
     headers = _auth_headers(client)
+    # CIN-155: upsert_social_account now needs a Subscription to check
+    # the connected-account limit against.
     other = User(email="mallory@cindra.dev", hashed_password="x")
     db.add(other)
+    db.flush()
+    db.add(Subscription(user_id=other.id))
     db.commit()
     other_account = upsert_social_account(db, other, SocialPlatform.telegram, "-999", access_token="t")
 
@@ -222,6 +226,13 @@ def test_generate_with_multiple_targets_uses_intersection_of_content_types(
 ) -> None:
     headers = _auth_headers(client)
     telegram_id = _account_id(db, SocialPlatform.telegram, "-100")
+    # CIN-155: free tier caps connected accounts at 1 -- this test is
+    # about content-type intersection across platforms, not that limit.
+    user = db.scalar(select(User).where(User.email == "ada@cindra.dev"))
+    db.execute(
+        update(Subscription).where(Subscription.user_id == user.id).values(tier=SubscriptionTier.pro)
+    )
+    db.commit()
     instagram_id = _account_id(db, SocialPlatform.instagram, "insta-1")
 
     # text is valid for telegram alone but not for the pair (instagram excludes it)

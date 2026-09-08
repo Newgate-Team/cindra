@@ -1,11 +1,61 @@
 from datetime import datetime
 
-from sqlalchemy import select
+from fastapi import HTTPException, status
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.models import SocialAccount, SocialPlatform, User
+from app.models import SocialAccount, SocialPlatform, Subscription, User
+from app.plans import PLAN_LIMITS, effective_tier
 from app.token_crypto import decrypt_token, encrypt_token
+
+
+def _enforce_connected_account_limit(db: Session, user: User) -> None:
+    """CIN-155: only free tier actually limits this (1 account; Pro/
+    Business are unlimited) -- see plans.py.
+
+    Facebook rows are excluded from both the count and the check
+    itself: connect_instagram() always creates one alongside the
+    Instagram row in the same OAuth grant (CIN-65, no separate consent
+    screen), so from the user's own perspective "Connect Instagram" is
+    one action, not two platforms they chose to add. There's no
+    standalone "connect Facebook" flow -- a Facebook row never exists
+    without a paired Instagram row -- so this never lets a real extra
+    connection through uncounted.
+
+    Only checked for genuinely NEW rows (see upsert_social_account) --
+    refreshing an already-connected account's token never counts
+    against the limit, and existing over-limit accounts from before
+    this check existed are never revoked, only blocked from adding
+    more.
+
+    Plain check-then-insert, not locked like the CIN-158 usage-limit
+    checks: this guards a standing count, not a per-period spend, and
+    the worst case of losing the race (one extra free-tier connection
+    slot) isn't worth the added complexity for what's already a rare,
+    low-value thing to even try to race.
+    """
+    subscription = db.scalar(select(Subscription).where(Subscription.user_id == user.id))
+    tier = effective_tier(subscription)
+    limit = PLAN_LIMITS[tier].max_connected_accounts
+    if limit is None:
+        return
+    current = db.scalar(
+        select(func.count())
+        .select_from(SocialAccount)
+        .where(
+            SocialAccount.user_id == user.id,
+            SocialAccount.platform != SocialPlatform.facebook,
+        )
+    )
+    if current >= limit:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail=(
+                f"Лимит тарифа исчерпан: {limit} подключённых аккаунтов "
+                f"на тарифе {tier.value}"
+            ),
+        )
 
 
 def _apply_account_fields(
@@ -47,6 +97,8 @@ def upsert_social_account(
     )
     is_new = account is None
     if is_new:
+        if platform != SocialPlatform.facebook:
+            _enforce_connected_account_limit(db, user)
         account = SocialAccount(
             user_id=user.id,
             platform=platform,

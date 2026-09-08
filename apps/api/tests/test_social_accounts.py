@@ -5,13 +5,21 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 import jwt
+import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db import SessionLocal
-from app.models import SocialAccount, SocialPlatform, User
+from app.models import (
+    SocialAccount,
+    SocialPlatform,
+    Subscription,
+    SubscriptionTier,
+    User,
+)
 from app.security import create_meta_oauth_state
 from app.social_accounts import get_access_token, upsert_social_account
 from app.social_integrations.errors import PermanentPublishError
@@ -46,6 +54,73 @@ def test_upsert_is_idempotent_per_platform_and_account(db: Session, user: User) 
     )
     assert first.id == second.id
     assert get_access_token(second) == "token-2"
+
+
+def test_free_tier_blocks_a_second_connected_account(db: Session, user: User) -> None:
+    # CIN-155: free tier's max_connected_accounts=1 (see app/plans.py).
+    upsert_social_account(db, user, SocialPlatform.telegram, "12345", access_token="t1")
+
+    with pytest.raises(HTTPException) as exc_info:
+        upsert_social_account(db, user, SocialPlatform.tiktok, "67890", access_token="t2")
+    assert exc_info.value.status_code == 402
+    assert db.query(SocialAccount).filter(SocialAccount.user_id == user.id).count() == 1
+
+
+def test_free_tier_allows_refreshing_an_account_already_at_the_limit(
+    db: Session, user: User
+) -> None:
+    # Reconnecting/refreshing the SAME account is an update, not a new
+    # connection -- must never count against the cap, even once it's
+    # already been reached.
+    upsert_social_account(db, user, SocialPlatform.telegram, "12345", access_token="t1")
+    refreshed = upsert_social_account(
+        db, user, SocialPlatform.telegram, "12345", access_token="t2"
+    )
+    assert get_access_token(refreshed) == "t2"
+    assert db.query(SocialAccount).filter(SocialAccount.user_id == user.id).count() == 1
+
+
+def test_facebook_pair_does_not_count_twice_against_the_limit(db: Session, user: User) -> None:
+    # CIN-155: Instagram's OAuth grant always creates a paired Facebook
+    # row in the same request (CIN-65) -- from the user's own
+    # perspective that's one "Connect Instagram" action, not two
+    # platforms consuming two slots. Facebook itself is never checked
+    # or counted (see _enforce_connected_account_limit).
+    upsert_social_account(db, user, SocialPlatform.instagram, "ig-1", access_token="t1")
+    upsert_social_account(db, user, SocialPlatform.facebook, "fb-1", access_token="t2")
+    assert db.query(SocialAccount).filter(SocialAccount.user_id == user.id).count() == 2
+
+    # The Instagram connection already used the free tier's one slot --
+    # a third, genuinely independent platform must still be blocked.
+    with pytest.raises(HTTPException) as exc_info:
+        upsert_social_account(db, user, SocialPlatform.telegram, "12345", access_token="t3")
+    assert exc_info.value.status_code == 402
+
+
+def test_connected_account_limit_is_unlimited_on_pro_tier(db: Session, user: User) -> None:
+    subscription = db.scalar(select(Subscription).where(Subscription.user_id == user.id))
+    subscription.tier = SubscriptionTier.pro
+    db.commit()
+
+    for i in range(5):
+        upsert_social_account(db, user, SocialPlatform.telegram, str(i), access_token="t")
+    assert db.query(SocialAccount).filter(SocialAccount.user_id == user.id).count() == 5
+
+
+def test_connected_account_limit_frees_up_after_disconnect(db: Session, user: User) -> None:
+    upsert_social_account(db, user, SocialPlatform.telegram, "12345", access_token="t1")
+    with pytest.raises(HTTPException):
+        upsert_social_account(db, user, SocialPlatform.tiktok, "67890", access_token="t2")
+
+    account = db.scalar(select(SocialAccount).where(SocialAccount.user_id == user.id))
+    db.delete(account)
+    db.commit()
+
+    # The slot freed by the disconnect is available again.
+    reconnected = upsert_social_account(
+        db, user, SocialPlatform.tiktok, "67890", access_token="t2"
+    )
+    assert reconnected.platform == SocialPlatform.tiktok
 
 
 def test_concurrent_connect_of_the_same_account_does_not_500(
@@ -146,8 +221,12 @@ def test_disconnect_social_account(client: TestClient, db: Session) -> None:
 def test_disconnect_social_account_not_owned_returns_404(
     client: TestClient, db: Session
 ) -> None:
+    # CIN-155: upsert_social_account now needs a Subscription to check
+    # the connected-account limit against.
     other = User(email="eve@cindra.dev", hashed_password="x")
     db.add(other)
+    db.flush()
+    db.add(Subscription(user_id=other.id))
     db.commit()
     other_account = upsert_social_account(
         db, other, SocialPlatform.telegram, "999", access_token="t"

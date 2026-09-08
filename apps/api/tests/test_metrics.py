@@ -10,13 +10,17 @@ from app.metrics import (
     retention,
     time_to_first_post_seconds,
 )
-from app.models import Post, PostStatus, SocialPlatform, User
+from app.models import Post, PostStatus, SocialPlatform, Subscription, User
 from app.social_accounts import upsert_social_account
 
 
 def _make_user(db: Session, email: str, created_at: datetime) -> User:
     user = User(email=email, hashed_password="x", created_at=created_at)
     db.add(user)
+    db.flush()
+    # CIN-155: upsert_social_account (via _make_post below) now needs a
+    # Subscription to check the connected-account limit against.
+    db.add(Subscription(user_id=user.id))
     db.flush()
     return user
 

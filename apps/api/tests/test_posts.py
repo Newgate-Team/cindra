@@ -6,7 +6,15 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app.models import Post, PostStatus, SocialPlatform, User
+from app.models import (
+    Post,
+    PostStatus,
+    SocialAccount,
+    SocialPlatform,
+    Subscription,
+    SubscriptionTier,
+    User,
+)
 from app.scheduler import registry
 from app.scheduler.registry import register_publisher
 from app.social_accounts import upsert_social_account
@@ -26,6 +34,57 @@ def _auth_headers(client: TestClient) -> dict[str, str]:
     client.post("/auth/register", json=payload)
     token = client.post("/auth/login", json=payload).json()["access_token"]
     return {"Authorization": f"Bearer {token}"}
+
+
+def _upgrade_to_pro(db: Session, email: str = "ada@cindra.dev") -> None:
+    # CIN-155: free tier now caps connected accounts at 1 -- fan-out
+    # tests that legitimately connect several accounts to the same
+    # user need Pro (unlimited) to do that, same tier-upgrade pattern
+    # already used for the video-studio double-start tests.
+    owner = db.query(User).filter(User.email == email).one()
+    subscription = db.query(Subscription).filter(Subscription.user_id == owner.id).one()
+    subscription.tier = SubscriptionTier.pro
+    db.commit()
+
+
+def _second_account_bypassing_connect_limit(
+    db: Session, owner: User, external_account_id: str
+) -> SocialAccount:
+    # CIN-155's connected-account limit lives in upsert_social_account,
+    # the shared path every real connect flow uses -- but some tests
+    # here need a second account on a user that's deliberately still on
+    # free tier (e.g. to test the free-tier *publication* limit's
+    # atomicity, a different limit entirely), which the connect limit
+    # would now legitimately refuse. Construct the row directly, same
+    # as upsert_social_account would, without going through its check
+    # -- these tests aren't testing the connect flow itself.
+    from app.token_crypto import encrypt_token
+
+    account = SocialAccount(
+        user_id=owner.id,
+        platform=SocialPlatform.telegram,
+        external_account_id=external_account_id,
+        encrypted_access_token=encrypt_token("t2"),
+    )
+    db.add(account)
+    db.commit()
+    db.refresh(account)
+    return account
+
+
+def _other_user(db: Session, email: str) -> User:
+    # CIN-155: upsert_social_account now needs a Subscription to check
+    # the connected-account limit against -- mirrors what POST
+    # /auth/register does for the main test user (via _auth_headers,
+    # above), which conftest.py's own `user` fixture already documents
+    # as a real invariant, not a test-only convenience.
+    user = User(email=email, hashed_password="x")
+    db.add(user)
+    db.flush()
+    db.add(Subscription(user_id=user.id))
+    db.commit()
+    db.refresh(user)
+    return user
 
 
 def _connected_account_id(client: TestClient, headers: dict[str, str], db: Session) -> str:
@@ -123,9 +182,7 @@ def test_create_post_scheduled_in_future_stays_scheduled(
 def test_create_post_for_someone_elses_account_returns_404(
     client: TestClient, db: Session
 ) -> None:
-    other = User(email="eve@cindra.dev", hashed_password="x")
-    db.add(other)
-    db.commit()
+    other = _other_user(db, "eve@cindra.dev")
     other_account = upsert_social_account(
         db, other, SocialPlatform.telegram, "-999", access_token="t"
     )
@@ -158,9 +215,7 @@ def test_list_posts_scoped_to_owner(client: TestClient, db: Session) -> None:
         "/posts", json={"social_account_ids": [account_id], "text": "мой пост"}, headers=headers
     )
 
-    other = User(email="eve2@cindra.dev", hashed_password="x")
-    db.add(other)
-    db.commit()
+    other = _other_user(db, "eve2@cindra.dev")
     other_account = upsert_social_account(
         db, other, SocialPlatform.telegram, "-777", access_token="t"
     )
@@ -250,6 +305,7 @@ def test_create_post_returns_402_once_publication_limit_reached(
 def test_create_post_fans_out_to_multiple_accounts(client: TestClient, db: Session) -> None:
     headers = _auth_headers(client)
     account_id = _connected_account_id(client, headers, db)
+    _upgrade_to_pro(db)  # CIN-155: free tier now caps connected accounts at 1
     second_account = upsert_social_account(
         db,
         db.query(User).filter(User.email == "ada@cindra.dev").one(),
@@ -282,15 +338,16 @@ def test_create_post_fan_out_limit_check_is_atomic_for_whole_batch(
     # Free tier's publication limit is 10/month (see app/plans.py).
     # Use up 9, then try to fan out to 2 accounts at once -- neither
     # should be created, since the batch can't fully fit.
+    #
+    # Must stay on free tier to exercise its finite limit -- Pro/
+    # Business are both unlimited -- so the second account is
+    # constructed directly rather than through upsert_social_account,
+    # bypassing CIN-155's *connected-account* limit (a different check
+    # than the one this test is actually about).
     headers = _auth_headers(client)
     account_id = _connected_account_id(client, headers, db)
-    second_account = upsert_social_account(
-        db,
-        db.query(User).filter(User.email == "ada@cindra.dev").one(),
-        SocialPlatform.telegram,
-        "-200",
-        access_token="t2",
-    )
+    owner = db.query(User).filter(User.email == "ada@cindra.dev").one()
+    second_account = _second_account_bypassing_connect_limit(db, owner, "-200")
 
     for _ in range(9):
         response = client.post(
@@ -491,6 +548,7 @@ def test_create_post_fan_out_retry_only_creates_missing_accounts(
     # published for this job should only create/dispatch the new one.
     headers = _auth_headers(client)
     account_id = _connected_account_id(client, headers, db)
+    _upgrade_to_pro(db)  # CIN-155: free tier now caps connected accounts at 1
     owner = db.query(User).filter(User.email == "ada@cindra.dev").one()
     second_account = upsert_social_account(db, owner, SocialPlatform.telegram, "-201", access_token="t2")
     job_id = _generation_job_id(db, owner)
@@ -586,9 +644,7 @@ def test_update_already_published_post_returns_400(client: TestClient, db: Sessi
 
 
 def test_update_someone_elses_post_returns_404(client: TestClient, db: Session) -> None:
-    other = User(email="eve3@cindra.dev", hashed_password="x")
-    db.add(other)
-    db.commit()
+    other = _other_user(db, "eve3@cindra.dev")
     other_account = upsert_social_account(
         db, other, SocialPlatform.telegram, "-555", access_token="t"
     )
