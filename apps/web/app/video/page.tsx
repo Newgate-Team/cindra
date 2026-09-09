@@ -7,7 +7,14 @@ import { useEffect, useState, type FormEvent } from "react";
 import { RequireAuth } from "../components/RequireAuth";
 import { ApiError, api } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
-import type { VideoProject } from "@/lib/types";
+import type { Page, VideoProject } from "@/lib/types";
+
+// /video-projects is paginated (backend caps the response, same as
+// /posts and /feed) -- this page has no pagination UI yet, so it just
+// asks for the largest page the API allows. Anyone with more draft
+// projects than that only sees the newest MAX_PAGE_SIZE until this
+// page grows real pagination controls.
+const MAX_PAGE_SIZE = 100;
 
 const STATUS_LABELS: Record<VideoProject["status"], string> = {
   draft: "Черновик",
@@ -27,8 +34,8 @@ function VideoProjectsPage() {
   useEffect(() => {
     if (!token) return;
     api
-      .get<VideoProject[]>("/video-projects", token)
-      .then(setProjects)
+      .get<Page<VideoProject>>(`/video-projects?limit=${MAX_PAGE_SIZE}`, token)
+      .then((page) => setProjects(page.items))
       .catch((err) =>
         setError(err instanceof ApiError ? err.message : "Не удалось загрузить проекты")
       );

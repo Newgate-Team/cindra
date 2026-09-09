@@ -62,7 +62,30 @@ def test_list_projects_scoped_to_owner(client: TestClient) -> None:
     _create_project(client, mine, topic="мой проект")
     _create_project(client, other, topic="чужой проект")
     listed = client.get("/video-projects", headers=mine).json()
-    assert [p["topic"] for p in listed] == ["мой проект"]
+    assert [p["topic"] for p in listed["items"]] == ["мой проект"]
+
+
+def test_list_projects_is_paginated(client: TestClient) -> None:
+    # CWE-400 backstop: creating a draft project is a free, uncapped
+    # INSERT (unlike SocialAccount/GenerationJob), so this endpoint's
+    # response has to stay bounded no matter how many a user creates.
+    headers = _auth_headers(client)
+    for i in range(3):
+        _create_project(client, headers, topic=f"проект {i}")
+
+    response = client.get("/video-projects?limit=2&offset=0", headers=headers)
+    body = response.json()
+    assert body["total"] == 3
+    assert body["limit"] == 2
+    assert len(body["items"]) == 2
+
+    response = client.get("/video-projects?limit=2&offset=2", headers=headers)
+    assert len(response.json()["items"]) == 1
+
+
+def test_list_projects_rejects_limit_over_max(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    assert client.get("/video-projects?limit=101", headers=headers).status_code == 422
 
 
 def test_get_someone_elses_project_returns_404(client: TestClient) -> None:
