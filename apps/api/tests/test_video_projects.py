@@ -359,6 +359,56 @@ def test_business_long_video_quota_runs_out_after_three(
     assert "3 длинных AI-роликов" in response.json()["detail"]
 
 
+def test_get_project_batches_illustration_job_lookups(client: TestClient, db: Session) -> None:
+    # N+1 regression: get_project used to do one db.get(GenerationJob)
+    # per illustration id instead of a single batched IN query -- and
+    # this endpoint is the one the studio wizard polls repeatedly while
+    # a generation is in flight, so the per-call saving compounds over
+    # a run. Assert the actual statement count, not just that the
+    # response is still correct (that part was never broken).
+    from sqlalchemy import event
+
+    from app.db import engine
+
+    headers = _auth_headers(client)
+    project = _create_project(client, headers)
+    user = db.query(User).filter(User.email == "studio@cindra.dev").one()
+
+    job_ids = []
+    for i in range(5):
+        job = GenerationJob(
+            user_id=user.id,
+            content_type="image",
+            status=GenerationStatus.completed,
+            input_payload={"topic": f"кадр {i}"},
+            output_payload={"image_url": f"https://media.cindra.example/{i}.jpg"},
+        )
+        db.add(job)
+        db.flush()
+        job_ids.append(str(job.id))
+    db_project = db.get(VideoProject, uuid.UUID(project["id"]))
+    db_project.illustration_job_ids = job_ids
+    db.commit()
+
+    generation_job_selects = []
+
+    def _count_generation_job_selects(conn, cursor, statement, *args):
+        if "generation_jobs" in statement and statement.strip().upper().startswith("SELECT"):
+            generation_job_selects.append(statement)
+
+    event.listen(engine, "before_cursor_execute", _count_generation_job_selects)
+    try:
+        response = client.get(f"/video-projects/{project['id']}", headers=headers)
+    finally:
+        event.remove(engine, "before_cursor_execute", _count_generation_job_selects)
+
+    assert response.status_code == 200
+    assert len(response.json()["illustrations"]) == 5
+    # One batched `IN (...)` query for all 5 illustration jobs, not 5
+    # separate ones.
+    assert len(generation_job_selects) == 1
+
+
 def test_completed_veo_job_marks_project_video_ready(
     client: TestClient, db: Session
 ) -> None:
