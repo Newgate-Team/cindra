@@ -38,8 +38,17 @@ jobs:
       # CIN-148: the template renderer needs a Cyrillic font, the same
       # one the Dockerfile installs. Pinned here rather than trusting
       # whatever fonts the runner image happens to ship.
+      #
+      # The runner image preconfigures a Google Chrome apt source we
+      # never use (we only need fonts-dejavu-core, from the standard
+      # Ubuntu archive) -- dropped before `update` because that repo's
+      # index has repeatedly failed with "Hash Sum mismatch" on the
+      # runner's mirror, which fails the whole `apt-get update` and
+      # blocks an install that has nothing to do with Chrome.
       - name: Install fonts
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends fonts-dejavu-core
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends fonts-dejavu-core
       - name: Lint
         run: ruff check .
       - name: Run migrations
