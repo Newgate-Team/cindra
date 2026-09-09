@@ -44,10 +44,13 @@ jobs:
       # Ubuntu archive) -- dropped before `update` because that repo's
       # index has repeatedly failed with "Hash Sum mismatch" on the
       # runner's mirror, which fails the whole `apt-get update` and
-      # blocks an install that has nothing to do with Chrome.
+      # blocks an install that has nothing to do with Chrome. Glob (not
+      # a fixed filename) because noble-era runners register it as
+      # deb822 `.sources`, not the legacy `.list` -- a plain
+      # google-chrome.list silently matched nothing here.
       - name: Install fonts
         run: |
-          sudo rm -f /etc/apt/sources.list.d/google-chrome.list
+          sudo rm -f /etc/apt/sources.list.d/google-chrome*
           sudo apt-get update && sudo apt-get install -y --no-install-recommends fonts-dejavu-core
       - name: Lint
         run: ruff check .
