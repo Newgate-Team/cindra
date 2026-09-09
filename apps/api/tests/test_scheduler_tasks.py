@@ -82,6 +82,29 @@ def test_transient_error_triggers_a_retry(db: Session, user: User) -> None:
     assert post.attempts == 1
 
 
+def test_transient_error_beyond_max_retries_gives_up(db: Session, user: User) -> None:
+    # Same fix, same reason, as
+    # test_content_pipeline_tasks.py::test_transient_error_beyond_max_retries_gives_up
+    # (CIN-94) -- simulates the worker's state on what would be the 4th
+    # delivery (initial attempt + 3 retries already made) via the
+    # matching `retries` request option `apply()` accepts. Without the
+    # exhausted-retries check, this post would stay "publishing"
+    # forever with no error_message once Celery gives up.
+    def _always_flood_limited(account, post):
+        raise TransientPublishError("flood control")
+
+    register_publisher(SocialPlatform.telegram, _always_flood_limited)
+    post = _make_post(db, user)
+
+    with pytest.raises(TransientPublishError):
+        publish_post.apply(args=[str(post.id)], retries=3)
+
+    db.refresh(post)
+    assert post.status == PostStatus.failed
+    assert post.error_message == "flood control"
+    assert post.attempts == 1  # this call's own single execution
+
+
 def test_unregistered_platform_fails_cleanly(db: Session, user: User) -> None:
     registry._REGISTRY.pop(SocialPlatform.telegram, None)
     post = _make_post(db, user)

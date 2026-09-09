@@ -8,13 +8,15 @@ from app.scheduler import backup
 from app.scheduler.registry import get_publisher
 from app.social_integrations.errors import PermanentPublishError, TransientPublishError
 
+_MAX_RETRIES = 3
+
 
 @celery_app.task(
     bind=True,
     autoretry_for=(TransientPublishError,),
     retry_backoff=True,
     retry_backoff_max=60,
-    retry_kwargs={"max_retries": 3},
+    retry_kwargs={"max_retries": _MAX_RETRIES},
 )
 def publish_post(self, post_id: str) -> None:
     with SessionLocal() as db:
@@ -36,10 +38,20 @@ def publish_post(self, post_id: str) -> None:
             post.error_message = str(exc)
             db.commit()
             return
-        except TransientPublishError:
+        except TransientPublishError as exc:
             # Persist the attempt count now -- Celery re-raises this
-            # to trigger autoretry (same pattern as
-            # content_pipeline.tasks.run_generation_job).
+            # to trigger autoretry, so nothing past this point runs on
+            # a retryable attempt. But on the last allowed attempt,
+            # autoretry_for's wrapper won't schedule another run -- it
+            # just re-raises the same exception past us, and without
+            # this check the post would stay "publishing" forever with
+            # no error_message, exactly the CIN-94 bug already fixed in
+            # content_pipeline.tasks.run_generation_job (this comment
+            # used to claim the same pattern without actually carrying
+            # the fix over).
+            if self.request.retries >= _MAX_RETRIES:
+                post.status = PostStatus.failed
+                post.error_message = str(exc)
             db.commit()
             raise
         except Exception as exc:  # noqa: BLE001 -- adapter failures fail the post, not the worker
