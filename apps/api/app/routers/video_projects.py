@@ -80,9 +80,30 @@ def _project_status(project: VideoProject, job: GenerationJob | None) -> str:
     return "draft"
 
 
+def _jobs_for_project(project: VideoProject, db: Session) -> dict[uuid.UUID, GenerationJob]:
+    """Batched {id: job} lookup for everything one project links to (its
+    video job plus every illustration job) -- avoids fetching each
+    GenerationJob individually. list_projects already batches this
+    across a whole page (CIN-139); this is the same fix applied to the
+    single-project paths, one of which (get_project) is polled
+    repeatedly while a generation is in flight (see the wizard comment
+    below), so the per-call saving compounds over a run."""
+    job_ids: set[uuid.UUID] = set()
+    if project.video_generation_job_id is not None:
+        job_ids.add(project.video_generation_job_id)
+    job_ids.update(uuid.UUID(i) for i in project.illustration_job_ids or [])
+    if not job_ids:
+        return {}
+    return {
+        job.id: job
+        for job in db.scalars(select(GenerationJob).where(GenerationJob.id.in_(job_ids))).all()
+    }
+
+
 def _has_illustrations_in_flight(project: VideoProject, db: Session) -> bool:
+    jobs = _jobs_for_project(project, db)
     for job_id in project.illustration_job_ids or []:
-        job = db.get(GenerationJob, uuid.UUID(job_id))
+        job = jobs.get(uuid.UUID(job_id))
         if job is not None and job.status in (
             GenerationStatus.queued,
             GenerationStatus.processing,
@@ -92,14 +113,13 @@ def _has_illustrations_in_flight(project: VideoProject, db: Session) -> bool:
 
 
 def _illustrations_out(
-    project: VideoProject, db: Session, jobs: dict[uuid.UUID, GenerationJob] | None = None
+    project: VideoProject, jobs: dict[uuid.UUID, GenerationJob]
 ) -> list[IllustrationOut] | None:
     if not project.illustration_job_ids:
         return None
     illustrations = []
     for job_id in project.illustration_job_ids:
-        key = uuid.UUID(job_id)
-        job = jobs.get(key) if jobs is not None else db.get(GenerationJob, key)
+        job = jobs.get(uuid.UUID(job_id))
         if job is None:
             continue
         output = job.output_payload or {}
@@ -118,15 +138,12 @@ def _to_out(
     project: VideoProject, db: Session, jobs: dict[uuid.UUID, GenerationJob] | None = None
 ) -> VideoProjectOut:
     """`jobs` is an optional prefetched {id: job} map -- the list
-    endpoint loads every linked job in one query instead of one per
-    illustration per project (CIN-139)."""
-    job: GenerationJob | None = None
-    if project.video_generation_job_id is not None:
-        job = (
-            jobs.get(project.video_generation_job_id)
-            if jobs is not None
-            else db.get(GenerationJob, project.video_generation_job_id)
-        )
+    endpoint passes one batched across the whole page (CIN-139); every
+    other caller leaves it None and gets one batched just for this
+    project instead of a db.get() per illustration."""
+    if jobs is None:
+        jobs = _jobs_for_project(project, db)
+    job = jobs.get(project.video_generation_job_id) if project.video_generation_job_id else None
     video_url = project.video_url
     if video_url is None and job is not None and job.output_payload:
         video_url = job.output_payload.get("video_url")
@@ -140,7 +157,7 @@ def _to_out(
         video_url=video_url,
         video_status=job.status if job is not None else None,
         video_error=job.error_message if job is not None else None,
-        illustrations=_illustrations_out(project, db, jobs),
+        illustrations=_illustrations_out(project, jobs),
         status=_project_status(project, job),
         created_at=project.created_at,
         updated_at=project.updated_at,
