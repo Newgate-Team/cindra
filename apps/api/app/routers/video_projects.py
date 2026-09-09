@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -25,6 +25,7 @@ from app.models import (
     User,
     VideoProject,
 )
+from app.pagination import DEFAULT_LIMIT, MAX_LIMIT, Page, paginate
 from app.schemas import (
     IllustrationOut,
     VideoProjectCreate,
@@ -160,15 +161,26 @@ def list_styles(current_user: User = Depends(get_current_user)) -> list[VideoSty
     ]
 
 
-@router.get("", response_model=list[VideoProjectOut])
+@router.get("", response_model=Page[VideoProjectOut])
 def list_projects(
-    current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
-) -> list[VideoProjectOut]:
-    projects = db.scalars(
+    limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
+    offset: int = Query(0, ge=0),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Page[VideoProjectOut]:
+    # Paginated (like posts.py/feed.py) rather than a bare list --
+    # creating a draft VideoProject is a free INSERT with no per-tier
+    # cap (unlike SocialAccount, capped by CIN-155, or GenerationJob,
+    # metered by usage limits), so nothing stopped one account from
+    # scripting enough of them to make this endpoint's response
+    # unbounded.
+    query = (
         select(VideoProject)
         .where(VideoProject.user_id == current_user.id)
         .order_by(VideoProject.created_at.desc())
-    ).all()
+    )
+    rows, total = paginate(db, query, limit, offset)
+    projects = [project for (project,) in rows]
     job_ids: set[uuid.UUID] = set()
     for project in projects:
         if project.video_generation_job_id is not None:
@@ -184,7 +196,8 @@ def list_projects(
         if job_ids
         else {}
     )
-    return [_to_out(project, db, jobs) for project in projects]
+    items = [_to_out(project, db, jobs) for project in projects]
+    return Page(items=items, total=total, limit=limit, offset=offset)
 
 
 @router.post("", response_model=VideoProjectOut, status_code=status.HTTP_201_CREATED)
