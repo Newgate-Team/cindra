@@ -1,3 +1,4 @@
+import asyncio
 import io
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -16,6 +17,8 @@ from app.content_pipeline.attachments import (
     downscale_image_for_context,
     extract_document_text,
     fetch_attachment_bytes,
+    max_size_bytes_for_mime,
+    read_upload_capped,
     validate_attachment_set,
 )
 
@@ -64,6 +67,55 @@ def test_classify_attachment_too_large_raises() -> None:
 def test_classify_attachment_video_size_cap_is_independent_of_image() -> None:
     # 15MB is over the image cap (10MB) but under the video cap (20MB)
     assert classify_attachment("video/mp4", 15 * 1024 * 1024) == "video"
+
+
+def test_max_size_bytes_for_mime_matches_classify_attachment_cap() -> None:
+    assert max_size_bytes_for_mime("image/jpeg") == 10 * 1024 * 1024
+
+
+def test_max_size_bytes_for_mime_rejects_unsupported_type() -> None:
+    with pytest.raises(UnsupportedAttachmentError):
+        max_size_bytes_for_mime("application/x-msdownload")
+
+
+class _FakeUploadFile:
+    """Yields `chunk` forever (or until `total_chunks` is exhausted) --
+    stands in for a client that keeps streaming past any sane upload
+    size, so a test can assert read_upload_capped stops pulling more
+    data instead of buffering everything before checking the size."""
+
+    def __init__(self, chunk: bytes, total_chunks: int | None = None) -> None:
+        self._chunk = chunk
+        self._remaining = total_chunks
+        self.read_calls = 0
+
+    async def read(self, size: int) -> bytes:
+        self.read_calls += 1
+        if self._remaining is not None:
+            if self._remaining <= 0:
+                return b""
+            self._remaining -= 1
+        return self._chunk[:size]
+
+
+def test_read_upload_capped_returns_full_body_under_the_cap() -> None:
+    file = _FakeUploadFile(b"x" * 100, total_chunks=3)
+    data = asyncio.run(read_upload_capped(file, max_bytes=1000))
+    assert data == b"x" * 300
+
+
+def test_read_upload_capped_aborts_as_soon_as_the_cap_is_exceeded() -> None:
+    # An UploadFile that would happily keep streaming forever (e.g. a
+    # multi-GB or unbounded body) -- if read_upload_capped buffered the
+    # whole thing before checking size (the bug this guards against),
+    # this test would never finish. total_chunks=None means the fake
+    # never runs out on its own; only the cap can stop it.
+    file = _FakeUploadFile(b"x" * (1024 * 1024), total_chunks=None)
+    with pytest.raises(AttachmentTooLargeError):
+        asyncio.run(read_upload_capped(file, max_bytes=5 * 1024 * 1024))
+    # Cap is 5MB, chunk is 1MB -- must abort on the 6th chunk, not read
+    # indefinitely.
+    assert file.read_calls == 6
 
 
 def test_extract_document_text_plain() -> None:
