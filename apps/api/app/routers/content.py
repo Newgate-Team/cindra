@@ -12,6 +12,8 @@ from app.content_pipeline.attachments import (
     classify_attachment,
     downscale_image_for_background,
     downscale_image_for_context,
+    max_size_bytes_for_mime,
+    read_upload_capped,
 )
 from app.content_pipeline.image_generator import nano_banana_image_generator
 from app.content_pipeline.layout_renderer import (
@@ -62,19 +64,24 @@ async def upload_attachment(
     upload validation and the R2 PUT are both fast, synchronous operations.
     Free on every tier: this isn't a metered UsageEvent, just storage.
     """
-    data = await file.read()
     mime_type = file.content_type or "application/octet-stream"
+    try:
+        # Resolved from the declared Content-Type alone, before reading
+        # any of the body, so the read below can be capped instead of
+        # buffering an oversized upload fully before rejecting it.
+        max_bytes = max_size_bytes_for_mime(mime_type)
+    except UnsupportedAttachmentError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
     try:
         # Size cap is enforced on the original upload, before any
         # downscaling below -- otherwise it'd be trivial to dodge the
         # cap with an image that only becomes small after resizing.
-        attachment_type = classify_attachment(mime_type, len(data))
-    except UnsupportedAttachmentError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
+        data = await read_upload_capped(file, max_bytes)
     except AttachmentTooLargeError as exc:
         raise HTTPException(
             status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail=str(exc)
         ) from None
+    attachment_type = classify_attachment(mime_type, len(data))
 
     extension = (file.filename or "").rsplit(".", 1)[-1].lower() if "." in (file.filename or "") else "bin"
     if attachment_type == "image":
@@ -227,16 +234,18 @@ async def upload_layout_background(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Медиа-хранилище не настроено на сервере",
         )
-    data = await file.read()
     mime_type = file.content_type or "application/octet-stream"
     try:
-        attachment_type = classify_attachment(mime_type, len(data))
+        max_bytes = max_size_bytes_for_mime(mime_type)
     except UnsupportedAttachmentError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
+    try:
+        data = await read_upload_capped(file, max_bytes)
     except AttachmentTooLargeError as exc:
         raise HTTPException(
             status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail=str(exc)
         ) from None
+    attachment_type = classify_attachment(mime_type, len(data))
     if attachment_type != "image":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

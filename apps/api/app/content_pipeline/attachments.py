@@ -4,6 +4,7 @@ from typing import Any
 
 import httpx
 from docx import Document
+from fastapi import UploadFile
 from PIL import Image
 from pypdf import PdfReader
 
@@ -157,19 +158,58 @@ def downscale_image_for_background(data: bytes) -> tuple[bytes, str]:
     return buffer.getvalue(), "image/jpeg"
 
 
+def _attachment_type_for_mime(mime_type: str) -> str:
+    attachment_type = _MIME_TO_ATTACHMENT_TYPE.get(mime_type)
+    if attachment_type is None:
+        raise UnsupportedAttachmentError(f"Неподдерживаемый формат файла: {mime_type}")
+    return attachment_type
+
+
+def max_size_bytes_for_mime(mime_type: str) -> int:
+    """Size cap for this mime type's attachment category -- resolvable
+    from the (client-declared) Content-Type alone, before any of the
+    request body has been read. Lets a caller bound the read itself
+    (see read_upload_capped) instead of buffering the whole upload
+    first and only checking its size afterwards."""
+    return _MAX_SIZE_BYTES[_attachment_type_for_mime(mime_type)]
+
+
 def classify_attachment(mime_type: str, size_bytes: int) -> str:
     """Validate an uploaded file and return its attachment_type
     (image/video/audio/document), or raise if the type is unsupported
     or the file exceeds its type's size cap."""
-    attachment_type = _MIME_TO_ATTACHMENT_TYPE.get(mime_type)
-    if attachment_type is None:
-        raise UnsupportedAttachmentError(f"Неподдерживаемый формат файла: {mime_type}")
+    attachment_type = _attachment_type_for_mime(mime_type)
     if size_bytes > _MAX_SIZE_BYTES[attachment_type]:
         limit_mb = _MAX_SIZE_BYTES[attachment_type] / (1024 * 1024)
         raise AttachmentTooLargeError(
             f"Файл больше {limit_mb:.0f}MB -- максимум для типа {attachment_type}"
         )
     return attachment_type
+
+
+_UPLOAD_CHUNK_BYTES = 1024 * 1024
+
+
+async def read_upload_capped(file: UploadFile, max_bytes: int) -> bytes:
+    """Read an UploadFile's body in chunks, aborting as soon as
+    max_bytes is exceeded -- a bare `await file.read()` reads the
+    entire body into memory unconditionally, so an oversized upload
+    gets fully materialized before any size check gets a chance to
+    reject it. Every /content and /video-projects upload endpoint is
+    authenticated but registration is open (CIN-147), so this bounds
+    how much memory one free-tier request can force the API process to
+    hold, regardless of what the client actually sends."""
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await file.read(_UPLOAD_CHUNK_BYTES)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise AttachmentTooLargeError(f"Файл больше {max_bytes / (1024 * 1024):.0f}MB")
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 def extract_document_text(data: bytes, mime_type: str) -> str:

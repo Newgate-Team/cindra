@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
+from app.content_pipeline.attachments import AttachmentTooLargeError, read_upload_capped
 from app.content_pipeline.errors import TransientGenerationError
 from app.content_pipeline.media_storage import upload_bytes
 from app.content_pipeline.tasks import run_generation_job
@@ -36,9 +37,9 @@ from app.video_styles import VIDEO_STYLES
 
 router = APIRouter(prefix="/video-projects", tags=["video-projects"])
 
-# Uploads are read into memory before the R2 put -- cap them well below
-# anything that could hurt the worker. A finished vertical short at
-# 1080p lands way under this.
+# Uploads are read into memory (capped, see read_upload_capped below)
+# before the R2 put -- cap them well below anything that could hurt the
+# worker. A finished vertical short at 1080p lands way under this.
 _MAX_UPLOAD_BYTES = 200 * 1024 * 1024
 _ALLOWED_VIDEO_MIME = {"video/mp4", "video/quicktime", "video/webm"}
 
@@ -488,12 +489,12 @@ async def upload_video(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Ожидается видеофайл (mp4, mov или webm)",
         )
-    data = await file.read()
-    if len(data) > _MAX_UPLOAD_BYTES:
+    try:
+        data = await read_upload_capped(file, _MAX_UPLOAD_BYTES)
+    except AttachmentTooLargeError as exc:
         raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail="Файл больше 200 МБ",
-        )
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail=str(exc)
+        ) from None
     if not data:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Пустой файл")
     extension = {"video/mp4": "mp4", "video/quicktime": "mov", "video/webm": "webm"}[
