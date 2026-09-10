@@ -124,6 +124,18 @@ class User(Base):
     # guess.
     failed_login_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # CIN-109's Лента is a shared feed across ALL users by design (confirmed
+    # with the user at the time) -- but for an agency, that means an
+    # unreleased client campaign's generated image/video is visible to every
+    # other user (competitors included) before the client ever sees it
+    # published. register() sets this False for role=agency, True for
+    # role=solo -- preserving the original shared-feed experience for the
+    # audience it was designed for, closing the gap for the one it wasn't.
+    # Editable via PATCH /auth/me regardless of role, so either audience can
+    # override the default in either direction.
+    share_generations_to_feed: Mapped[bool] = mapped_column(
+        Boolean, default=True, nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )

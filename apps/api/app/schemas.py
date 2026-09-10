@@ -41,6 +41,7 @@ class UserOut(BaseModel):
     id: uuid.UUID
     email: EmailStr
     role: UserRole
+    share_generations_to_feed: bool
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -48,6 +49,10 @@ class UserOut(BaseModel):
 
 class UserUpdate(BaseModel):
     role: UserRole
+    # Optional/partial -- share_generations_to_feed has its own default
+    # (by role, see User model) that a plain role-only PATCH shouldn't
+    # silently overwrite back to.
+    share_generations_to_feed: bool | None = None
 
 
 class SubscriptionOut(BaseModel):

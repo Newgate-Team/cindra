@@ -19,14 +19,21 @@ def list_feed(
     # deliberately does NOT filter by user_id below -- this is a shared
     # feed across every user's generations, by design (CIN-109), not a
     # scoping bug like every other list endpoint in this file's siblings.
+    # It DOES filter by each generating user's own
+    # share_generations_to_feed opt-out (agency accounts default to
+    # opted out -- an unreleased client campaign shouldn't be visible to
+    # every other user before the client sees it published; see the
+    # User model).
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> Page[FeedItemOut]:
     query = (
         select(GenerationJob)
+        .join(User, GenerationJob.user_id == User.id)
         .where(
             GenerationJob.status == GenerationStatus.completed,
             GenerationJob.content_type.in_([GenerationContentType.image, GenerationContentType.video]),
+            User.share_generations_to_feed.is_(True),
         )
         .order_by(GenerationJob.created_at.desc())
     )
