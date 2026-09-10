@@ -32,6 +32,23 @@ def test_register_accepts_agency_role(client: TestClient) -> None:
     assert response.json()["role"] == "agency"
 
 
+def test_register_defaults_share_generations_to_feed_by_role(client: TestClient) -> None:
+    # Лента (CIN-109) is a shared feed by design -- but for an agency
+    # that means an unreleased client campaign is visible to every other
+    # user before the client sees it published. solo keeps the shared
+    # default; agency starts opted out.
+    solo = client.post(
+        "/auth/register", json={"email": "solo@cindra.dev", "password": "supersecret1"}
+    )
+    assert solo.json()["share_generations_to_feed"] is True
+
+    agency = client.post(
+        "/auth/register",
+        json={"email": "agency@cindra.dev", "password": "supersecret1", "role": "agency"},
+    )
+    assert agency.json()["share_generations_to_feed"] is False
+
+
 def test_update_me_changes_role(client: TestClient) -> None:
     payload = {"email": "ada@cindra.dev", "password": "supersecret1"}
     client.post("/auth/register", json=payload)
@@ -44,6 +61,43 @@ def test_update_me_changes_role(client: TestClient) -> None:
 
     me_response = client.get("/auth/me", headers=headers)
     assert me_response.json()["role"] == "agency"
+
+
+def test_update_me_role_only_does_not_reset_feed_sharing_choice(client: TestClient) -> None:
+    # share_generations_to_feed has its own default, independent of
+    # role -- a role-only PATCH (the only kind the frontend currently
+    # sends, see UserUpdate) must not silently reset a choice the user
+    # already made.
+    payload = {"email": "agency@cindra.dev", "password": "supersecret1", "role": "agency"}
+    client.post("/auth/register", json=payload)
+    token = client.post(
+        "/auth/login", json={"email": payload["email"], "password": payload["password"]}
+    ).json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    opt_in = client.patch(
+        "/auth/me", json={"role": "agency", "share_generations_to_feed": True}, headers=headers
+    )
+    assert opt_in.json()["share_generations_to_feed"] is True
+
+    role_only = client.patch("/auth/me", json={"role": "agency"}, headers=headers)
+    assert role_only.json()["share_generations_to_feed"] is True
+
+
+def test_update_me_can_toggle_feed_sharing(client: TestClient) -> None:
+    payload = {"email": "ada@cindra.dev", "password": "supersecret1"}
+    client.post("/auth/register", json=payload)
+    token = client.post("/auth/login", json=payload).json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    response = client.patch(
+        "/auth/me", json={"role": "solo", "share_generations_to_feed": False}, headers=headers
+    )
+    assert response.status_code == 200
+    assert response.json()["share_generations_to_feed"] is False
+
+    me_response = client.get("/auth/me", headers=headers)
+    assert me_response.json()["share_generations_to_feed"] is False
 
 
 def test_register_duplicate_email_conflicts(client: TestClient) -> None:

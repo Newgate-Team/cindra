@@ -7,10 +7,12 @@ from sqlalchemy.orm import Session
 from app.models import GenerationContentType, GenerationJob, GenerationStatus, User
 
 
-def _auth_headers(client: TestClient) -> dict[str, str]:
-    payload = {"email": "ada@cindra.dev", "password": "supersecret1"}
+def _auth_headers(client: TestClient, email: str = "ada@cindra.dev", role: str = "solo") -> dict[str, str]:
+    payload = {"email": email, "password": "supersecret1", "role": role}
     client.post("/auth/register", json=payload)
-    token = client.post("/auth/login", json=payload).json()["access_token"]
+    token = client.post("/auth/login", json={"email": email, "password": "supersecret1"}).json()[
+        "access_token"
+    ]
     return {"Authorization": f"Bearer {token}"}
 
 
@@ -181,3 +183,84 @@ def test_feed_falls_back_to_topic_when_caption_is_missing(client: TestClient, db
 
 def test_feed_requires_auth(client: TestClient) -> None:
     assert client.get("/feed").status_code == 401
+
+
+def test_feed_excludes_agency_users_generations_by_default(client: TestClient, db: Session) -> None:
+    # An agency's unreleased client campaign shouldn't be visible to
+    # every other user before the client sees it published -- agency
+    # accounts default to opted out of the shared feed.
+    viewer = _auth_headers(client, "viewer@cindra.dev", role="solo")
+    _auth_headers(client, "agency@cindra.dev", role="agency")
+    agency_user = db.scalar(select(User).where(User.email == "agency@cindra.dev"))
+    db.add(
+        _job(
+            agency_user,
+            GenerationContentType.image,
+            output_payload={"image_url": "https://x/campaign.png"},
+        )
+    )
+    db.commit()
+
+    response = client.get("/feed", headers=viewer)
+    assert response.json()["total"] == 0
+
+
+def test_feed_includes_solo_users_generations_by_default(client: TestClient, db: Session) -> None:
+    viewer = _auth_headers(client, "viewer@cindra.dev", role="solo")
+    _auth_headers(client, "creator@cindra.dev", role="solo")
+    solo_user = db.scalar(select(User).where(User.email == "creator@cindra.dev"))
+    db.add(
+        _job(
+            solo_user,
+            GenerationContentType.image,
+            output_payload={"image_url": "https://x/post.png"},
+        )
+    )
+    db.commit()
+
+    response = client.get("/feed", headers=viewer)
+    assert response.json()["total"] == 1
+
+
+def test_feed_includes_agency_user_who_opted_in(client: TestClient, db: Session) -> None:
+    viewer = _auth_headers(client, "viewer@cindra.dev", role="solo")
+    agency_headers = _auth_headers(client, "agency@cindra.dev", role="agency")
+    client.patch(
+        "/auth/me",
+        json={"role": "agency", "share_generations_to_feed": True},
+        headers=agency_headers,
+    )
+    agency_user = db.scalar(select(User).where(User.email == "agency@cindra.dev"))
+    db.add(
+        _job(
+            agency_user,
+            GenerationContentType.image,
+            output_payload={"image_url": "https://x/campaign.png"},
+        )
+    )
+    db.commit()
+
+    response = client.get("/feed", headers=viewer)
+    assert response.json()["total"] == 1
+
+
+def test_feed_excludes_solo_user_who_opted_out(client: TestClient, db: Session) -> None:
+    viewer = _auth_headers(client, "viewer@cindra.dev", role="solo")
+    solo_headers = _auth_headers(client, "creator@cindra.dev", role="solo")
+    client.patch(
+        "/auth/me",
+        json={"role": "solo", "share_generations_to_feed": False},
+        headers=solo_headers,
+    )
+    solo_user = db.scalar(select(User).where(User.email == "creator@cindra.dev"))
+    db.add(
+        _job(
+            solo_user,
+            GenerationContentType.image,
+            output_payload={"image_url": "https://x/post.png"},
+        )
+    )
+    db.commit()
+
+    response = client.get("/feed", headers=viewer)
+    assert response.json()["total"] == 0

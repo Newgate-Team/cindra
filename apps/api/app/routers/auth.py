@@ -7,7 +7,7 @@ from app.config import get_settings
 from app.db import get_db
 from app.deps import get_current_user
 from app.google_auth import GoogleAuthError, verify_google_id_token
-from app.models import Subscription, User
+from app.models import Subscription, User, UserRole
 from app.schemas import (
     GoogleLoginRequest,
     Token,
@@ -41,6 +41,12 @@ def register(payload: UserCreate, db: Session = Depends(get_db)) -> User:
         email=payload.email,
         hashed_password=hash_password(payload.password),
         role=payload.role,
+        # Лента (CIN-109) is a shared feed by design -- but for an
+        # agency, that's an unreleased client campaign visible to every
+        # other user before the client sees it published. Default
+        # private for agency, shared for solo (the audience CIN-109
+        # was actually built for); either can override via PATCH.
+        share_generations_to_feed=payload.role != UserRole.agency,
     )
     db.add(user)
     try:
@@ -161,6 +167,8 @@ def update_me(
     db: Session = Depends(get_db),
 ) -> User:
     current_user.role = payload.role
+    if payload.share_generations_to_feed is not None:
+        current_user.share_generations_to_feed = payload.share_generations_to_feed
     db.commit()
     db.refresh(current_user)
     return current_user
