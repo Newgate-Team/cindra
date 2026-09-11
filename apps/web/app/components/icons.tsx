@@ -79,6 +79,15 @@ export function ClapperboardIcon({ size = 20 }: IconProps) {
   );
 }
 
+export function GearIcon({ size = 20 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" {...common}>
+      <circle cx="12" cy="12" r="3" />
+      <path d="M12 3v2.5M12 18.5V21M21 12h-2.5M5.5 12H3M18.4 5.6l-1.8 1.8M7.4 16.6l-1.8 1.8M18.4 18.4l-1.8-1.8M7.4 7.4 5.6 5.6" />
+    </svg>
+  );
+}
+
 // Expand/collapse a truncated post's full text (CIN-83's PostText,
 // Calendar) -- replaces the 🔍/🔼 emoji it used to render.
 export function ChevronDownIcon({ size = 16 }: IconProps) {

@@ -10,6 +10,7 @@ import {
   CardIcon,
   ClapperboardIcon,
   FeedIcon,
+  GearIcon,
   LayoutIcon,
   ShareIcon,
   WandIcon,
@@ -23,6 +24,7 @@ const NAV_LINKS = [
   { href: "/feed", label: "Лента", icon: FeedIcon },
   { href: "/social-accounts", label: "Соцсети", icon: ShareIcon },
   { href: "/billing", label: "Тариф", icon: CardIcon },
+  { href: "/settings", label: "Настройки", icon: GearIcon },
 ];
 
 function Logo() {
