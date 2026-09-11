@@ -69,6 +69,38 @@ def test_generate_runs_synchronously_in_eager_mode_and_completes(client: TestCli
     assert body["output_payload"] == {"text": "пост про утренний кофе"}
 
 
+def test_generate_without_any_target_account(client: TestClient, db: Session) -> None:
+    # A user can generate content before connecting any social account
+    # at all -- a connected account is only required at publish time
+    # (POST /posts).
+    headers = _auth_headers(client)
+    response = client.post(
+        "/content/generate",
+        json={"topic": "утренний кофе"},
+        headers=headers,
+    )
+    assert response.status_code == 202
+    body = response.json()
+    assert body["status"] == "completed"
+    assert body["output_payload"] == {"text": "пост про утренний кофе"}
+
+    from app.models import GenerationJob
+
+    job = db.get(GenerationJob, body["id"])
+    assert "platform" not in job.input_payload
+
+
+def test_generate_with_empty_target_account_ids_list(client: TestClient) -> None:
+    # Explicit [] must behave the same as omitting the field entirely.
+    headers = _auth_headers(client)
+    response = client.post(
+        "/content/generate",
+        json={"topic": "тема", "target_account_ids": []},
+        headers=headers,
+    )
+    assert response.status_code == 202
+
+
 def test_get_generation_job(client: TestClient, db: Session) -> None:
     headers = _auth_headers(client)
     account_id = _account_id(db, SocialPlatform.instagram, "insta-1")

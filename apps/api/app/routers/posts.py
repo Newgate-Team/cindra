@@ -6,9 +6,14 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.content_pipeline.publish_matrix import (
+    InvalidGenerationTargetError,
+    validate_generation_target,
+)
 from app.db import get_db
 from app.deps import get_current_user
 from app.models import (
+    GenerationContentType,
     GenerationJob,
     Post,
     PostStatus,
@@ -159,6 +164,28 @@ def create_post(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Соцаккаунт не найден"
         )
+
+    # Generation no longer requires a target account up front (a user
+    # can generate before connecting anything), so content_type/
+    # content_kind vs. platform compatibility (publish_matrix.py) is no
+    # longer guaranteed to have been checked before this content ever
+    # existed -- check it here instead, against whatever accounts were
+    # actually picked for this publish. content_type has no column on
+    # Post; derived the same way the frontend already decides which
+    # media field to send.
+    content_type = (
+        GenerationContentType.video
+        if payload.video_url
+        else GenerationContentType.image
+        if payload.image_url
+        else GenerationContentType.text
+    )
+    try:
+        validate_generation_target(
+            {a.platform for a in accounts}, content_type, payload.content_kind
+        )
+    except InvalidGenerationTargetError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
 
     # generation_job_id is a plain client-supplied uuid (schemas.py) --
     # unlike social_account_ids above, nothing checked it belongs to

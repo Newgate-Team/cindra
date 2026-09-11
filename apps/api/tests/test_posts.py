@@ -179,6 +179,48 @@ def test_create_post_scheduled_in_future_stays_scheduled(
     assert response.json()[0]["status"] == "scheduled"
 
 
+def test_create_post_rejects_text_only_post_to_instagram(
+    client: TestClient, db: Session
+) -> None:
+    # Generation no longer requires a target account up front, so this
+    # platform/content_type compatibility check (publish_matrix.py) is
+    # no longer guaranteed to have run before the content existed --
+    # POST /posts is the backstop now. Instagram's Content Publishing
+    # API has no text-only post (CIN-106).
+    headers = _auth_headers(client)
+    owner = db.query(User).filter(User.email == "ada@cindra.dev").one()
+    account = upsert_social_account(
+        db, owner, SocialPlatform.instagram, "insta-1", access_token="t"
+    )
+
+    response = client.post(
+        "/posts",
+        json={"social_account_ids": [str(account.id)], "text": "Просто текст, без картинки"},
+        headers=headers,
+    )
+    assert response.status_code == 400
+
+
+def test_create_post_rejects_story_on_a_platform_without_stories(
+    client: TestClient, db: Session
+) -> None:
+    # "story" only exists as a concept for Instagram (publish_matrix.py).
+    headers = _auth_headers(client)
+    account_id = _connected_account_id(client, headers, db)  # Telegram
+
+    response = client.post(
+        "/posts",
+        json={
+            "social_account_ids": [account_id],
+            "text": "Сторис",
+            "image_url": "https://media.cindra.example/x.jpg",
+            "content_kind": "story",
+        },
+        headers=headers,
+    )
+    assert response.status_code == 400
+
+
 def test_create_post_for_someone_elses_account_returns_404(
     client: TestClient, db: Session
 ) -> None:

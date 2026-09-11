@@ -59,6 +59,28 @@ def test_sends_correct_request_shape_and_parses_response() -> None:
     assert "утренний кофе" in body["contents"][0]["parts"][0]["text"]
 
 
+def test_generates_without_a_target_account_chosen() -> None:
+    # A user can generate before connecting any social account -- no
+    # "platform" key in the payload at all (not even null), matching
+    # what content.py now sends when target_account_ids is empty.
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = request.content
+        return httpx.Response(
+            200,
+            json={"candidates": [{"content": {"parts": [{"text": "Готовый пост"}]}}]},
+        )
+
+    payload = {"topic": "утренний кофе"}
+    result = gemini_text_generator(payload, client=_client(handler))
+
+    assert result["text"] == "Готовый пост"
+    # Platform-neutral fallback guidance, not a crash on the missing key.
+    body = json.loads(captured["body"])
+    assert "Формат: обычный пост в соцсети." in body["contents"][0]["parts"][0]["text"]
+
+
 def test_429_is_transient() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(429, json={"error": {"status": "RESOURCE_EXHAUSTED"}})

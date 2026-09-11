@@ -75,9 +75,13 @@ def gemini_text_generator(
                 }
             )
 
+    # No target account chosen yet (generation no longer requires one
+    # up front) means no platform to key tone/format guidance off of --
+    # build_text_prompt falls back to platform-neutral guidance.
+    raw_platform = payload.get("platform")
     prompt = build_text_prompt(
         topic=payload["topic"],
-        platform=SocialPlatform(payload["platform"]),
+        platform=SocialPlatform(raw_platform) if raw_platform else None,
         content_kind=payload.get("content_kind", "post"),
         brand_guide=payload.get("brand_guide"),
         attachment_texts=attachment_texts,

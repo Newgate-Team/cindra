@@ -84,7 +84,7 @@ _QUALITY_GUIDANCE = (
 
 def build_text_prompt(
     topic: str,
-    platform: SocialPlatform,
+    platform: SocialPlatform | None,
     content_kind: str = "post",
     brand_guide: str | None = None,
     attachment_texts: list[str] | None = None,
@@ -92,6 +92,10 @@ def build_text_prompt(
 ) -> str:
     """Build the user-message prompt for text generation.
 
+    `platform` is None when the request has no target account chosen
+    yet (generation no longer requires one up front) -- falls back to
+    _DEFAULT_PLATFORM_GUIDANCE, same as an unrecognized platform value
+    would.
     `content_kind` is one of "post" / "story" / "video_script" (falls
     back to plain "Обычный пост." guidance for anything else, rather
     than raising -- an unrecognized kind shouldn't crash the request).
