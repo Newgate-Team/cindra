@@ -15,6 +15,12 @@ interface AuthContextValue {
   loginWithGoogle: (idToken: string) => Promise<void>;
   register: (email: string, password: string, role: UserRole) => Promise<void>;
   logout: () => void;
+  // Re-fetches /auth/me and updates the shared user object -- for
+  // callers (Settings) that changed something about the account
+  // server-side (PATCH /auth/me) and need the rest of the app (this
+  // context is shared everywhere) to see the new value immediately,
+  // not just their own local state.
+  refreshUser: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -71,9 +77,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
   }
 
+  async function refreshUser() {
+    if (!token) return;
+    setUser(await api.get<User>("/auth/me", token));
+  }
+
   return (
     <AuthContext.Provider
-      value={{ token, user, loading, login, loginWithGoogle, register, logout }}
+      value={{ token, user, loading, login, loginWithGoogle, register, logout, refreshUser }}
     >
       {children}
     </AuthContext.Provider>
