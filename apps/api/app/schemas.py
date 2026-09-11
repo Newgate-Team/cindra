@@ -33,6 +33,11 @@ class UserLogin(BaseModel):
     password: str
 
 
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str = Field(min_length=8)
+
+
 class GoogleLoginRequest(BaseModel):
     id_token: str = Field(min_length=1)
 
@@ -42,6 +47,7 @@ class UserOut(BaseModel):
     email: EmailStr
     role: UserRole
     share_generations_to_feed: bool
+    has_password: bool
     created_at: datetime
 
     model_config = {"from_attributes": True}

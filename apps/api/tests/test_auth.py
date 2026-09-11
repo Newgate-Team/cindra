@@ -19,6 +19,7 @@ def test_register_creates_user(client: TestClient) -> None:
     body = response.json()
     assert body["email"] == "ada@cindra.dev"
     assert body["role"] == "solo"
+    assert body["has_password"] is True
     assert "id" in body
     assert "hashed_password" not in body
 
@@ -205,6 +206,108 @@ def test_me_without_token_rejected(client: TestClient) -> None:
     assert response.status_code == 401
 
 
+def _register_and_login(client: TestClient, email: str = "ada@cindra.dev") -> str:
+    payload = {"email": email, "password": "supersecret1"}
+    client.post("/auth/register", json=payload)
+    return client.post("/auth/login", json=payload).json()["access_token"]
+
+
+def test_change_password_succeeds_and_new_password_logs_in(client: TestClient) -> None:
+    token = _register_and_login(client)
+    response = client.post(
+        "/auth/change-password",
+        json={"current_password": "supersecret1", "new_password": "newsecret2"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 204
+
+    old_login = client.post(
+        "/auth/login", json={"email": "ada@cindra.dev", "password": "supersecret1"}
+    )
+    assert old_login.status_code == 401
+
+    new_login = client.post(
+        "/auth/login", json={"email": "ada@cindra.dev", "password": "newsecret2"}
+    )
+    assert new_login.status_code == 200
+
+
+def test_change_password_rejects_wrong_current_password(client: TestClient) -> None:
+    token = _register_and_login(client)
+    response = client.post(
+        "/auth/change-password",
+        json={"current_password": "not-the-password", "new_password": "newsecret2"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 400
+
+    # The old password must still work -- a rejected attempt doesn't
+    # change anything.
+    still_works = client.post(
+        "/auth/login", json={"email": "ada@cindra.dev", "password": "supersecret1"}
+    )
+    assert still_works.status_code == 200
+
+
+def test_change_password_requires_auth(client: TestClient) -> None:
+    response = client.post(
+        "/auth/change-password",
+        json={"current_password": "x", "new_password": "newsecret2"},
+    )
+    assert response.status_code == 401
+
+
+def test_change_password_rejects_too_short_new_password(client: TestClient) -> None:
+    token = _register_and_login(client)
+    response = client.post(
+        "/auth/change-password",
+        json={"current_password": "supersecret1", "new_password": "short"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 422
+
+
+def test_change_password_on_google_only_account_is_rejected(client: TestClient, db: Session) -> None:
+    user = User(email="google-only@cindra.dev", hashed_password=None)
+    db.add(user)
+    db.flush()
+    db.add(Subscription(user_id=user.id))
+    db.commit()
+
+    from app.security import create_access_token
+
+    token = create_access_token(user.id)
+    response = client.post(
+        "/auth/change-password",
+        json={"current_password": "anything", "new_password": "newsecret2"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 400
+
+
+def test_change_password_shares_the_login_lockout_counter(client: TestClient) -> None:
+    # A leaked/stolen access token shouldn't get a free unlimited-guess
+    # channel at the current password just because it skips /auth/login
+    # -- failing here enough times must lock out real logins too.
+    token = _register_and_login(client)
+    wrong = {"current_password": "not-the-password", "new_password": "newsecret2"}
+    for _ in range(5):
+        response = client.post(
+            "/auth/change-password", json=wrong, headers={"Authorization": f"Bearer {token}"}
+        )
+        assert response.status_code == 400
+
+    locked = client.post(
+        "/auth/change-password", json=wrong, headers={"Authorization": f"Bearer {token}"}
+    )
+    assert locked.status_code == 429
+
+    login_locked = client.post(
+        "/auth/login", json={"email": "ada@cindra.dev", "password": "supersecret1"}
+    )
+    assert login_locked.status_code == 429
+
+
 def _google_claims(**overrides: str) -> dict[str, str]:
     claims = {
         "iss": "https://accounts.google.com",
@@ -235,6 +338,9 @@ def test_google_login_creates_user_and_returns_usable_token(
     me = client.get("/auth/me", headers={"Authorization": f"Bearer {token}"})
     assert me.status_code == 200
     assert me.json()["email"] == "google-user@gmail.com"
+    # No password to change for a Google-only account -- the frontend
+    # uses this to decide whether to even show that form.
+    assert me.json()["has_password"] is False
 
 
 def test_google_login_creates_subscription_like_register(

@@ -13,9 +13,12 @@ export interface User {
   role: UserRole;
   // Лента (CIN-109) is a shared feed by design -- this controls whether
   // this user's own completed image/video generations appear in it.
-  // Defaults by role at registration (agency: false, solo: true); no
-  // settings UI edits it yet, PATCH /auth/me accepts it directly.
+  // Defaults by role at registration (agency: false, solo: true);
+  // editable on /settings, PATCH /auth/me accepts it directly.
   share_generations_to_feed: boolean;
+  // False for a Google-only account (no password exists to change) --
+  // /settings uses this to decide whether to show that form at all.
+  has_password: boolean;
   created_at: string;
 }
 
