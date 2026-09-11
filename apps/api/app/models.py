@@ -140,6 +140,14 @@ class User(Base):
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
 
+    @property
+    def has_password(self) -> bool:
+        """UserOut exposes this, never hashed_password itself -- a
+        Google-only account (see hashed_password's own comment) has
+        nothing for POST /auth/change-password to check against, so the
+        frontend needs to know whether to offer that form at all."""
+        return self.hashed_password is not None
+
 
 class ImageTemplatePreview(Base):
     """One generated example per AI image template (CIN-150).

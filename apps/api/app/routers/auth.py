@@ -9,6 +9,7 @@ from app.deps import get_current_user
 from app.google_auth import GoogleAuthError, verify_google_id_token
 from app.models import Subscription, User, UserRole
 from app.schemas import (
+    ChangePasswordRequest,
     GoogleLoginRequest,
     Token,
     UserCreate,
@@ -172,3 +173,40 @@ def update_me(
     db.commit()
     db.refresh(current_user)
     return current_user
+
+
+@router.post("/change-password", status_code=status.HTTP_204_NO_CONTENT)
+def change_password(
+    payload: ChangePasswordRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> None:
+    # Reuses CIN-159's login-lockout counters -- a leaked/stolen access
+    # token shouldn't hand over the account for free just because the
+    # attacker skips straight to this endpoint instead of /auth/login;
+    # guessing the current password here costs the same as guessing it
+    # there. Sharing the counter also means enough failed attempts here
+    # locks out real logins too -- a deliberate, conservative tradeoff:
+    # protecting the account matters more than the inconvenience.
+    if is_locked_out(current_user):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=(
+                "Слишком много неудачных попыток — "
+                f"попробуйте снова через {LOGIN_LOCKOUT_MINUTES} минут"
+            ),
+        )
+    if current_user.hashed_password is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Этот аккаунт создан через Google — пароля для смены нет",
+        )
+    if not verify_password(payload.current_password, current_user.hashed_password):
+        record_failed_login(current_user)
+        db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Неверный текущий пароль"
+        )
+    record_successful_login(current_user)
+    current_user.hashed_password = hash_password(payload.new_password)
+    db.commit()

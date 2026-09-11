@@ -79,7 +79,87 @@ function SettingsForm() {
           {saving ? "Сохраняем…" : "Сохранить"}
         </button>
       </form>
+      {/* A Google-only account (has_password: false) has no password
+          to change -- /auth/login already points it at "Войти через
+          Google" instead, this form would just 400 every time. */}
+      {user.has_password && <ChangePasswordForm />}
     </>
+  );
+}
+
+function ChangePasswordForm() {
+  const { token } = useAuth();
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSubmit(event: FormEvent) {
+    event.preventDefault();
+    setError(null);
+    setSaved(false);
+    if (newPassword !== confirmPassword) {
+      setError("Новые пароли не совпадают");
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.post(
+        "/auth/change-password",
+        { current_password: currentPassword, new_password: newPassword },
+        token
+      );
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+      setSaved(true);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Не удалось сменить пароль");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="card" style={{ marginTop: 24 }}>
+      <h2>Сменить пароль</h2>
+      <label>
+        Текущий пароль
+        <input
+          type="password"
+          required
+          value={currentPassword}
+          onChange={(e) => setCurrentPassword(e.target.value)}
+        />
+      </label>
+      <label>
+        Новый пароль (минимум 8 символов)
+        <input
+          type="password"
+          required
+          minLength={8}
+          value={newPassword}
+          onChange={(e) => setNewPassword(e.target.value)}
+        />
+      </label>
+      <label>
+        Повторите новый пароль
+        <input
+          type="password"
+          required
+          minLength={8}
+          value={confirmPassword}
+          onChange={(e) => setConfirmPassword(e.target.value)}
+        />
+      </label>
+      {error && <p className="error">{error}</p>}
+      {saved && <p className="muted">Пароль изменён.</p>}
+      <button type="submit" disabled={saving}>
+        {saving ? "Сохраняем…" : "Сменить пароль"}
+      </button>
+    </form>
   );
 }
 
