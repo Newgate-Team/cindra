@@ -28,6 +28,17 @@ const TONE_OPTIONS = [
 ];
 const POLL_INTERVAL_MS = 2000;
 
+// No target account chosen yet means no platform to constrain the
+// choice by -- these are the unconstrained fallbacks, mirroring the
+// union of what lib/publish-matrix.ts's ALLOWED_CONTENT_TYPES/
+// ALLOWED_CONTENT_KINDS allow across every platform.
+const ALL_CONTENT_TYPES: GenerationContentType[] = ["text", "image", "video"];
+const ALL_CONTENT_KINDS_BY_TYPE: Record<GenerationContentType, string[]> = {
+  text: ["post", "video_script"],
+  image: ["post", "story"],
+  video: ["post", "story"],
+};
+
 function platformsFor(ids: string[], accounts: SocialAccount[]): SocialPlatform[] {
   const set = new Set<SocialPlatform>();
   for (const id of ids) {
@@ -127,13 +138,12 @@ export interface GenerationFormProps {
   excludeContentTypes?: GenerationContentType[];
   topicLabel?: string;
   topicPlaceholder?: string;
-  emptyAccountsMessage?: string;
   // CIN-130: hides "Куда опубликовать" entirely -- for content that
   // isn't meant to be posted anywhere (a video script). Target
-  // accounts are still sent to /content/generate under the hood
-  // (every eligible one, silently) since the backend still requires
-  // >=1 for its content_type/content_kind validation and tone
-  // guidance, but the user never has to think about "publishing".
+  // accounts are optional at generation time regardless (a connected
+  // account is only required at actual publish time, ReviewAndPublish),
+  // so hiding the picker here just means the user never has to think
+  // about "publishing" for this kind of content at all.
   hideTargetPicker?: boolean;
   // "download" skips the publish step after generation entirely and
   // shows an edit-then-download-as-.txt step instead (ReviewAndDownload).
@@ -149,13 +159,11 @@ export function GenerationForm({
   excludeContentTypes,
   topicLabel = "Запрос",
   topicPlaceholder = "например, осенняя коллекция кофе",
-  emptyAccountsMessage = "Чтобы начать генерацию, сначала подключите соцсеть на странице «Соцсети».",
   hideTargetPicker = false,
   postGenerationAction = "publish",
 }: GenerationFormProps) {
   const { token } = useAuth();
   const [accounts, setAccounts] = useState<SocialAccount[]>([]);
-  const [accountsLoaded, setAccountsLoaded] = useState(false);
   const [targetAccountIds, setTargetAccountIds] = useState<string[]>([]);
   const [topic, setTopic] = useState("");
   const [contentType, setContentType] = useState<GenerationContentType>(lockedContentType ?? "text");
@@ -175,10 +183,7 @@ export function GenerationForm({
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
-    api.get<SocialAccount[]>("/social-accounts", token).then((list) => {
-      setAccounts(list);
-      setAccountsLoaded(true);
-    });
+    api.get<SocialAccount[]>("/social-accounts", token).then(setAccounts);
   }, [token]);
 
   useEffect(() => {
@@ -202,16 +207,6 @@ export function GenerationForm({
     return accounts;
   }, [accounts, lockedContentType, excludeContentTypes]);
 
-  // CIN-130: when the picker itself is hidden, every eligible account
-  // is sent along silently -- /content/generate still requires >=1
-  // for its own validation/tone guidance, even though nothing here
-  // ever gets published to any of them.
-  useEffect(() => {
-    if (hideTargetPicker) {
-      setTargetAccountIds(selectableAccounts.map((a) => a.id));
-    }
-  }, [hideTargetPicker, selectableAccounts]);
-
   function toggleTargetAccount(accountId: string, checked: boolean) {
     const next = checked ? [...targetAccountIds, accountId] : targetAccountIds.filter((id) => id !== accountId);
     setTargetAccountIds(next);
@@ -219,6 +214,8 @@ export function GenerationForm({
     if (lockedContentType && lockedContentKind) return;
 
     const nextPlatforms = platformsFor(next, accounts);
+    if (nextPlatforms.length === 0) return; // back to unconstrained -- nothing to reconcile
+
     const allowedTypes = allowedContentTypesFor(nextPlatforms).filter(
       (ct) => !excludeContentTypes?.includes(ct)
     );
@@ -229,13 +226,20 @@ export function GenerationForm({
     if (!allowedKinds.includes(contentKind)) setContentKind(allowedKinds[0] ?? "post");
   }
 
+  // Nothing constrains the choice yet when no target account is picked
+  // (now optional -- a connected account is only required at actual
+  // publish time, ReviewAndPublish) -- fall back to every kind that
+  // exists for this content_type on ANY platform, same union
+  // publish_matrix.py itself draws from.
   const selectedPlatforms = platformsFor(targetAccountIds, accounts);
-  const allowedContentTypes = allowedContentTypesFor(selectedPlatforms).filter(
-    (ct) => !excludeContentTypes?.includes(ct)
-  );
-  const allowedContentKinds = allowedContentKindsFor(selectedPlatforms, contentType).filter(
-    (kind) => !excludeContentKinds?.includes(kind)
-  );
+  const allowedContentTypes = (
+    selectedPlatforms.length > 0 ? allowedContentTypesFor(selectedPlatforms) : ALL_CONTENT_TYPES
+  ).filter((ct) => !excludeContentTypes?.includes(ct));
+  const allowedContentKinds = (
+    selectedPlatforms.length > 0
+      ? allowedContentKindsFor(selectedPlatforms, contentType)
+      : ALL_CONTENT_KINDS_BY_TYPE[contentType]
+  ).filter((kind) => !excludeContentKinds?.includes(kind));
 
   async function handleAttachmentChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -322,20 +326,6 @@ export function GenerationForm({
     }
   }
 
-  if (accountsLoaded && selectableAccounts.length === 0) {
-    return (
-      <>
-        <div className="page-header">
-          <div>
-            <h1>{heading}</h1>
-            <p className="muted">{subtitle}</p>
-          </div>
-        </div>
-        <p className="muted">{emptyAccountsMessage}</p>
-      </>
-    );
-  }
-
   return (
     <>
       <div className="page-header">
@@ -345,9 +335,14 @@ export function GenerationForm({
         </div>
       </div>
       <form onSubmit={handleSubmit} className="card">
-        {!hideTargetPicker && (
+        {/* Optional -- a connected account is only required at actual
+            publish time (ReviewAndPublish), not to generate. Narrows
+            Формат/Тип контента to what the picked account(s) can
+            actually publish when used, same as before; skipped
+            entirely when there's nothing to pick from yet. */}
+        {!hideTargetPicker && selectableAccounts.length > 0 && (
           <fieldset className="chip-group">
-            <legend>Куда опубликовать</legend>
+            <legend>Куда опубликовать (необязательно)</legend>
             {selectableAccounts.map((a) => (
               <label key={a.id}>
                 <input
@@ -376,13 +371,14 @@ export function GenerationForm({
             Формат
             <select
               value={contentType}
-              disabled={targetAccountIds.length === 0}
               onChange={(e) => {
                 const nextContentType = e.target.value as GenerationContentType;
                 setContentType(nextContentType);
-                const available = allowedContentKindsFor(selectedPlatforms, nextContentType).filter(
-                  (kind) => !excludeContentKinds?.includes(kind)
-                );
+                const available = (
+                  selectedPlatforms.length > 0
+                    ? allowedContentKindsFor(selectedPlatforms, nextContentType)
+                    : ALL_CONTENT_KINDS_BY_TYPE[nextContentType]
+                ).filter((kind) => !excludeContentKinds?.includes(kind));
                 if (!available.includes(contentKind)) setContentKind(available[0] ?? "post");
               }}
             >
@@ -397,11 +393,7 @@ export function GenerationForm({
         {!lockedContentKind && (
           <label>
             Тип контента
-            <select
-              value={contentKind}
-              disabled={targetAccountIds.length === 0}
-              onChange={(e) => setContentKind(e.target.value)}
-            >
+            <select value={contentKind} onChange={(e) => setContentKind(e.target.value)}>
               {allowedContentKinds.map((value) => (
                 <option key={value} value={value}>
                   {CONTENT_KIND_LABELS[value] ?? value}
@@ -483,7 +475,7 @@ export function GenerationForm({
           </ul>
         )}
         {error && <p className="error">{error}</p>}
-        <button type="submit" disabled={submitting || uploadingAttachment || targetAccountIds.length === 0}>
+        <button type="submit" disabled={submitting || uploadingAttachment}>
           {submitting ? "Запускаем…" : "Сгенерировать"}
         </button>
       </form>

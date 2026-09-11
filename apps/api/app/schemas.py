@@ -70,12 +70,16 @@ class AttachmentRef(BaseModel):
 
 class GenerationRequest(BaseModel):
     topic: str = Field(min_length=1, max_length=5000)
-    # Target accounts are chosen up front (CIN-106), before generation --
-    # content_type/content_kind are validated against the intersection of
-    # what all of them can actually publish (see publish_matrix.py), so
-    # e.g. an Instagram target rules out content_type=text before
-    # anything gets generated, not after, at publish time.
-    target_account_ids: list[uuid.UUID] = Field(min_length=1, max_length=10)
+    # Optional -- a user can generate content before connecting any
+    # social account at all (a connected account is only required at
+    # actual publish time, POST /posts). When target accounts ARE
+    # chosen up front, content_type/content_kind are validated against
+    # the intersection of what all of them can actually publish (see
+    # publish_matrix.py) before spending any generation budget, rather
+    # than only failing later; with none chosen, that same check runs
+    # at publish time instead (posts.py::create_post), against
+    # whichever accounts are picked then.
+    target_account_ids: list[uuid.UUID] = Field(default_factory=list, max_length=10)
     content_type: GenerationContentType = GenerationContentType.text
     content_kind: str = "post"
     brand_guide: str | None = None

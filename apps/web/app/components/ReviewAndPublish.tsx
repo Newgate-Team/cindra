@@ -4,7 +4,8 @@ import { useMemo, useState, type FormEvent } from "react";
 
 import { ApiError, api } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
-import type { Post, SocialAccount } from "@/lib/types";
+import { allowedContentKindsFor, allowedContentTypesFor } from "@/lib/publish-matrix";
+import type { GenerationContentType, Post, SocialAccount } from "@/lib/types";
 
 import { TikTokPublishFields, useTikTokPublishOptions } from "./TikTokPublishFields";
 
@@ -29,9 +30,14 @@ function minDatetimeLocal(): string {
 // through exactly the same component rather than a copy of it. Same
 // reasoning as pulling TikTokPublishFields out in CIN-136.
 //
-// Target accounts are not chosen here (CIN-106) -- they were locked in
-// before generation, since content_type/content_kind were already
-// validated against what those specific accounts can publish.
+// A connected social account is only required here, at actual publish
+// time -- not to generate. `targetAccountIds` is what the caller
+// already had picked (locked in before generation, CIN-106, when it
+// chose to offer that step); when it's empty -- no account picked yet,
+// or none existed when generation ran -- this component asks for one
+// itself, filtered to whatever can actually publish this specific
+// content_type/content_kind, instead of silently letting the account
+// choice vanish.
 export function ReviewAndPublish({
   imageUrl,
   videoUrl,
@@ -61,9 +67,26 @@ export function ReviewAndPublish({
   const [posts, setPosts] = useState<Post[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [publishing, setPublishing] = useState(false);
+  // Own picker only kicks in when the caller didn't already lock in a
+  // target -- otherwise this mirrors exactly what it always did.
+  const [pickedAccountIds, setPickedAccountIds] = useState<string[]>([]);
+  const needsOwnPicker = targetAccountIds.length === 0;
+  const contentType: GenerationContentType = videoUrl ? "video" : imageUrl ? "image" : "text";
+  const eligibleAccounts = useMemo(
+    () =>
+      needsOwnPicker
+        ? accounts.filter(
+            (a) =>
+              allowedContentTypesFor([a.platform]).includes(contentType) &&
+              allowedContentKindsFor([a.platform], contentType).includes(contentKind)
+          )
+        : [],
+    [needsOwnPicker, accounts, contentType, contentKind]
+  );
+  const effectiveAccountIds = needsOwnPicker ? pickedAccountIds : targetAccountIds;
   const targetAccounts = useMemo(
-    () => accounts.filter((account) => targetAccountIds.includes(account.id)),
-    [accounts, targetAccountIds]
+    () => accounts.filter((account) => effectiveAccountIds.includes(account.id)),
+    [accounts, effectiveAccountIds]
   );
   const targetTikTokAccounts = useMemo(
     () => targetAccounts.filter((account) => account.platform === "tiktok"),
@@ -79,7 +102,7 @@ export function ReviewAndPublish({
       const created = await api.post<Post[]>(
         "/posts",
         {
-          social_account_ids: targetAccountIds,
+          social_account_ids: effectiveAccountIds,
           text,
           image_url: imageUrl ?? null,
           video_url: videoUrl ?? null,
@@ -121,10 +144,39 @@ export function ReviewAndPublish({
         {imageUrl || videoUrl ? "Подпись (можно отредактировать перед публикацией)" : "Текст (можно отредактировать перед публикацией)"}
         <textarea rows={6} value={text} onChange={(e) => setText(e.target.value)} />
       </label>
-      <p>
-        Куда опубликовать:{" "}
-        {targetAccounts.map((a) => `${a.platform} — ${a.display_name ?? a.external_account_id}`).join(", ")}
-      </p>
+      {needsOwnPicker ? (
+        eligibleAccounts.length === 0 ? (
+          <p className="muted">
+            Чтобы опубликовать, подключите соцсеть на странице «Соцсети» — там нужен минимум один
+            подходящий аккаунт.
+          </p>
+        ) : (
+          <fieldset className="chip-group">
+            <legend>Куда опубликовать</legend>
+            {eligibleAccounts.map((a) => (
+              <label key={a.id}>
+                <input
+                  type="checkbox"
+                  checked={pickedAccountIds.includes(a.id)}
+                  onChange={(e) =>
+                    setPickedAccountIds(
+                      e.target.checked
+                        ? [...pickedAccountIds, a.id]
+                        : pickedAccountIds.filter((id) => id !== a.id)
+                    )
+                  }
+                />
+                {a.platform} — {a.display_name ?? a.external_account_id}
+              </label>
+            ))}
+          </fieldset>
+        )
+      ) : (
+        <p>
+          Куда опубликовать:{" "}
+          {targetAccounts.map((a) => `${a.platform} — ${a.display_name ?? a.external_account_id}`).join(", ")}
+        </p>
+      )}
       <TikTokPublishFields
         accounts={targetTikTokAccounts}
         creators={tiktok.creators}
@@ -144,7 +196,10 @@ export function ReviewAndPublish({
         />
       </label>
       {error && <p className="error">{error}</p>}
-      <button type="submit" disabled={publishing || tiktok.loading || !tiktok.ready}>
+      <button
+        type="submit"
+        disabled={publishing || tiktok.loading || !tiktok.ready || effectiveAccountIds.length === 0}
+      >
         {publishing ? "Публикуем…" : scheduledFor ? "Запланировать" : "Опубликовать сейчас"}
       </button>
       {posts && (

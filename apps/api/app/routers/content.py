@@ -105,25 +105,31 @@ def generate_content(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> GenerationJob:
-    # Target accounts are chosen up front (CIN-106) -- content_type/
-    # content_kind must be publishable to all of them at once, checked
-    # here (before spending any generation budget) rather than only
-    # failing later at actual publish time.
-    accounts = db.scalars(
-        select(SocialAccount).where(SocialAccount.id.in_(payload.target_account_ids))
-    ).all()
-    found_ids = {a.id for a in accounts}
-    missing = set(payload.target_account_ids) - found_ids
-    if missing or any(a.user_id != current_user.id for a in accounts):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Соцаккаунт не найден"
-        )
+    # Target accounts are optional -- a user can generate before
+    # connecting anything (POST /posts is where a connected account is
+    # actually required, see PostCreate.social_account_ids). When
+    # accounts ARE chosen up front (CIN-106), content_type/content_kind
+    # must be publishable to all of them at once, checked here (before
+    # spending any generation budget) rather than only failing later;
+    # with none chosen, that same check runs at publish time instead
+    # (posts.py::create_post).
+    accounts: list[SocialAccount] = []
+    if payload.target_account_ids:
+        accounts = db.scalars(
+            select(SocialAccount).where(SocialAccount.id.in_(payload.target_account_ids))
+        ).all()
+        found_ids = {a.id for a in accounts}
+        missing = set(payload.target_account_ids) - found_ids
+        if missing or any(a.user_id != current_user.id for a in accounts):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Соцаккаунт не найден"
+            )
 
-    platforms = {a.platform for a in accounts}
-    try:
-        validate_generation_target(platforms, payload.content_type, payload.content_kind)
-    except InvalidGenerationTargetError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
+        platforms = {a.platform for a in accounts}
+        try:
+            validate_generation_target(platforms, payload.content_type, payload.content_kind)
+        except InvalidGenerationTargetError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
 
     # content_type defaults to text. All three content types now have
     # real generators registered (text: CIN-53, image: CIN-54, video:
@@ -140,9 +146,11 @@ def generate_content(
     # platform (see prompts.py); image/video generation don't read
     # platform at all. Rather than the bigger scope of generating a
     # distinct text variant per target platform, tone is derived from
-    # the first-selected target account.
-    first_account = min(accounts, key=lambda a: payload.target_account_ids.index(a.id))
-    input_payload["platform"] = first_account.platform.value
+    # the first-selected target account -- omitted entirely (falls back
+    # to platform-neutral guidance) when nothing was selected.
+    if accounts:
+        first_account = min(accounts, key=lambda a: payload.target_account_ids.index(a.id))
+        input_payload["platform"] = first_account.platform.value
 
     job = GenerationJob(
         user_id=current_user.id,
