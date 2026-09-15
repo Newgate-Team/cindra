@@ -53,6 +53,12 @@ LOGIN_LOCKOUT_MINUTES = 15
 # bounds how long an intercepted link stays exploitable.
 PASSWORD_RESET_TOKEN_EXPIRE_MINUTES = 30
 
+# Longer than the reset window on purpose: verification isn't
+# security-sensitive the way a password-reset link is (worst case of
+# a stale link is "still unverified"), and people routinely leave a
+# "confirm your email" message unread for a day or more.
+EMAIL_VERIFICATION_TOKEN_EXPIRE_MINUTES = 60 * 24
+
 
 def is_locked_out(user: User) -> bool:
     return user.locked_until is not None and user.locked_until > datetime.now(UTC)

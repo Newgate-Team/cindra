@@ -136,6 +136,11 @@ class User(Base):
     share_generations_to_feed: Mapped[bool] = mapped_column(
         Boolean, default=True, nullable=False
     )
+    # False until the address is confirmed via a mailed link, or the
+    # account came from Google (which already proved ownership, same
+    # reasoning as CIN-140's password-drop on Google sign-in). Informational
+    # only for now -- nothing in the product is gated on this yet.
+    email_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
@@ -160,6 +165,31 @@ class PasswordResetToken(Base):
     """
 
     __tablename__ = "password_reset_tokens"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+
+
+class EmailVerificationToken(Base):
+    """Same shape and reasoning as PasswordResetToken (hash-only
+    storage, single-use, expiring) -- a separate table rather than a
+    shared one because the two token kinds have different lifetimes
+    (see EMAIL_VERIFICATION_TOKEN_EXPIRE_MINUTES) and mixing them would
+    make expiry logic depend on a "kind" column instead of the table
+    itself.
+    """
+
+    __tablename__ = "email_verification_tokens"
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4

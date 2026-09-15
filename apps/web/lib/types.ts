@@ -19,6 +19,10 @@ export interface User {
   // False for a Google-only account (no password exists to change) --
   // /settings uses this to decide whether to show that form at all.
   has_password: boolean;
+  // False until confirmed via a mailed link, or true immediately for a
+  // Google-created/-linked account. Informational only -- nothing in
+  // the product is gated on this.
+  email_verified: boolean;
   created_at: string;
 }
 
