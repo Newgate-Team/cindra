@@ -305,11 +305,53 @@ class GenerationJob(Base):
     output_payload: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     error_message: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    # Set when this job is one variant of an A/B test (see ABTest) --
+    # NULL for every plain, standalone generation, which is most of
+    # them. ondelete SET NULL (not CASCADE): deleting a test shouldn't
+    # take a real, already-paid-for generation result down with it.
+    ab_test_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("ab_tests.id", ondelete="SET NULL"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
     completed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+
+
+class ABTest(Base):
+    """A set of independently generated text variants for the same
+    brief (CIN roadmap item 4) -- each variant is a completely ordinary
+    GenerationJob (content_type=text), just tagged with this test's id
+    (GenerationJob.ab_test_id). Reuses the exact same generation
+    pipeline/Celery task as a standalone text generation; this table
+    only owns the grouping and the (manually chosen) winner.
+
+    There's no automated winner-picking: no platform integration in
+    this codebase reads back engagement data (likes/views/comments) to
+    compare variants against -- see app/analytics.py's own docstring
+    reasoning. So the user reviews the generated variants themselves
+    and marks one via POST /ab-tests/{id}/winner once they've decided
+    (typically after publishing and checking the platform's own
+    insights) -- winner_generation_job_id is purely a record of that
+    choice, not a computed result.
+    """
+
+    __tablename__ = "ab_tests"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    topic: Mapped[str] = mapped_column(String(5000), nullable=False)
+    winner_generation_job_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("generation_jobs.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
 
 

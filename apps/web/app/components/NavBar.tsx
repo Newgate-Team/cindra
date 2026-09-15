@@ -14,6 +14,7 @@ import {
   GearIcon,
   LayoutIcon,
   ShareIcon,
+  SplitTestIcon,
   WandIcon,
 } from "./icons";
 
@@ -21,6 +22,7 @@ const NAV_LINKS = [
   { href: "/generate", label: "Посты", icon: WandIcon },
   { href: "/video", label: "Видео", icon: ClapperboardIcon },
   { href: "/templates", label: "Шаблоны", icon: LayoutIcon },
+  { href: "/ab-tests", label: "A/B тесты", icon: SplitTestIcon },
   { href: "/calendar", label: "Календарь", icon: CalendarIcon },
   { href: "/feed", label: "Лента", icon: FeedIcon },
   { href: "/analytics", label: "Аналитика", icon: AnalyticsIcon },
