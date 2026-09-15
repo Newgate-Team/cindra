@@ -38,6 +38,15 @@ class ChangePasswordRequest(BaseModel):
     new_password: str = Field(min_length=8)
 
 
+class PasswordResetRequest(BaseModel):
+    email: EmailStr
+
+
+class PasswordResetConfirm(BaseModel):
+    token: str = Field(min_length=1)
+    new_password: str = Field(min_length=8)
+
+
 class GoogleLoginRequest(BaseModel):
     id_token: str = Field(min_length=1)
 

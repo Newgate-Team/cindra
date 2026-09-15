@@ -1,3 +1,5 @@
+from datetime import UTC, datetime, timedelta
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -7,10 +9,13 @@ from app.config import get_settings
 from app.db import get_db
 from app.deps import get_current_user
 from app.google_auth import GoogleAuthError, verify_google_id_token
-from app.models import Subscription, User, UserRole
+from app.models import PasswordResetToken, Subscription, User, UserRole
+from app.scheduler.tasks import send_email_task
 from app.schemas import (
     ChangePasswordRequest,
     GoogleLoginRequest,
+    PasswordResetConfirm,
+    PasswordResetRequest,
     Token,
     UserCreate,
     UserLogin,
@@ -19,8 +24,11 @@ from app.schemas import (
 )
 from app.security import (
     LOGIN_LOCKOUT_MINUTES,
+    PASSWORD_RESET_TOKEN_EXPIRE_MINUTES,
     create_access_token,
+    generate_url_token,
     hash_password,
+    hash_url_token,
     is_locked_out,
     record_failed_login,
     record_successful_login,
@@ -209,4 +217,94 @@ def change_password(
         )
     record_successful_login(current_user)
     current_user.hashed_password = hash_password(payload.new_password)
+    db.commit()
+
+
+_PASSWORD_RESET_REQUESTED_RESPONSE = {
+    "detail": "Если такой email зарегистрирован, мы отправили на него ссылку для сброса пароля"
+}
+
+
+@router.post("/password-reset/request", status_code=status.HTTP_200_OK)
+def request_password_reset(payload: PasswordResetRequest, db: Session = Depends(get_db)) -> dict:
+    if not get_settings().smtp_host:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Отправка email не настроена на сервере",
+        )
+
+    # Always the same response whether or not the email is registered --
+    # a distinguishable response here is exactly the user-enumeration
+    # vector this endpoint would otherwise hand an attacker for free.
+    user = db.scalar(select(User).where(User.email == payload.email))
+    if user is None:
+        return _PASSWORD_RESET_REQUESTED_RESPONSE
+
+    if user.hashed_password is None:
+        # Google-only account -- nothing to reset, but still send
+        # *something* so the API response stays identical either way;
+        # this is also a genuine help to a legitimate user who forgot
+        # they signed up through Google.
+        send_email_task.delay(
+            user.email,
+            "Cindra — вход через Google",
+            "Этот аккаунт создан через Google — используйте кнопку «Войти через Google» "
+            "на странице входа. Сброс пароля для него не нужен и не поддерживается.",
+        )
+        return _PASSWORD_RESET_REQUESTED_RESPONSE
+
+    now = datetime.now(UTC)
+    # At most one valid link per user at a time -- an older still-valid
+    # token from an earlier request shouldn't remain a second, forgotten
+    # way to reset the password after a newer one is issued.
+    for stale_token in db.scalars(
+        select(PasswordResetToken).where(
+            PasswordResetToken.user_id == user.id,
+            PasswordResetToken.used_at.is_(None),
+            PasswordResetToken.expires_at > now,
+        )
+    ):
+        stale_token.used_at = now
+
+    raw_token = generate_url_token()
+    db.add(
+        PasswordResetToken(
+            user_id=user.id,
+            token_hash=hash_url_token(raw_token),
+            expires_at=now + timedelta(minutes=PASSWORD_RESET_TOKEN_EXPIRE_MINUTES),
+        )
+    )
+    db.commit()
+
+    reset_link = f"{get_settings().frontend_base_url}/reset-password?token={raw_token}"
+    send_email_task.delay(
+        user.email,
+        "Cindra — сброс пароля",
+        f"Чтобы задать новый пароль, перейдите по ссылке (действует "
+        f"{PASSWORD_RESET_TOKEN_EXPIRE_MINUTES} минут):\n\n{reset_link}\n\n"
+        "Если вы не запрашивали сброс пароля, просто проигнорируйте это письмо — "
+        "пароль останется прежним.",
+    )
+    return _PASSWORD_RESET_REQUESTED_RESPONSE
+
+
+@router.post("/password-reset/confirm", status_code=status.HTTP_204_NO_CONTENT)
+def confirm_password_reset(payload: PasswordResetConfirm, db: Session = Depends(get_db)) -> None:
+    token_hash = hash_url_token(payload.token)
+    reset_token = db.scalar(
+        select(PasswordResetToken).where(PasswordResetToken.token_hash == token_hash)
+    )
+    now = datetime.now(UTC)
+    if reset_token is None or reset_token.used_at is not None or reset_token.expires_at <= now:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Ссылка недействительна или устарела — запросите новую",
+        )
+
+    user = db.get(User, reset_token.user_id)
+    user.hashed_password = hash_password(payload.new_password)
+    # A successful reset is real proof of ownership -- clears any
+    # CIN-159 lockout too, same as a normal successful login would.
+    record_successful_login(user)
+    reset_token.used_at = now
     db.commit()

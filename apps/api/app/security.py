@@ -1,3 +1,5 @@
+import hashlib
+import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -20,6 +22,23 @@ def verify_password(password: str, hashed_password: str) -> bool:
     return _pwd_context.verify(password, hashed_password)
 
 
+def generate_url_token() -> str:
+    """A high-entropy, single-use token for links emailed to users
+    (password reset, email verification) -- 256 bits, not a JWT: these
+    need a DB row to be revocable/single-use, which a stateless JWT
+    can't do without a separate blocklist anyway."""
+    return secrets.token_urlsafe(32)
+
+
+def hash_url_token(token: str) -> str:
+    """Only this hash is ever stored -- the raw token exists solely in
+    the emailed link, same reasoning as never storing a plaintext
+    password. Plain SHA-256, not argon2: the token already has 256 bits
+    of entropy (unlike a human-chosen password), so a slow KDF buys
+    nothing here and would only slow down legitimate lookups."""
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
 # CIN-159: /auth/login had no brute-force protection at all -- unlimited
 # password attempts against any known email. Per-account lockout (not
 # per-IP/Redis-backed rate limiting) because it needs zero new infra
@@ -28,6 +47,11 @@ def verify_password(password: str, hashed_password: str) -> bool:
 # this app specifically.
 MAX_FAILED_LOGIN_ATTEMPTS = 5
 LOGIN_LOCKOUT_MINUTES = 15
+
+# A short window: the token is emailed in the clear (any plaintext
+# store/proxy/inbox along the way sees it), so a shorter link lifetime
+# bounds how long an intercepted link stays exploitable.
+PASSWORD_RESET_TOKEN_EXPIRE_MINUTES = 30
 
 
 def is_locked_out(user: User) -> bool:

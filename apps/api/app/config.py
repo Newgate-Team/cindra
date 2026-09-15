@@ -133,6 +133,21 @@ class Settings(BaseSettings):
     # Empty until CIN-87 creates the real Products/Plans.
     paypal_pro_plan_id: str = ""
     paypal_business_plan_id: str = ""
+    # SMTP for transactional email (password reset, email verification).
+    # Deliberately provider-agnostic (plain SMTP, no vendor SDK) -- any
+    # relay that speaks SMTP+STARTTLS (SES, Postmark, SendGrid, Mailgun,
+    # a Gmail app password for local testing, ...) works without app code
+    # changes. Empty until the owner picks a provider -- endpoints that
+    # need to send email fail closed (503), same pattern as R2/PayPal
+    # above, not a silent no-op.
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from_address: str = "Cindra <noreply@cindra.example>"
+    # Base URL of the deployed frontend -- embedded in password-reset/
+    # email-verification links sent by email.
+    frontend_base_url: str = "http://localhost:3000"
 
     model_config = {"env_file": ".env"}
 
