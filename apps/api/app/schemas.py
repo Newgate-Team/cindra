@@ -18,6 +18,7 @@ from app.models import (
     SocialPlatform,
     SubscriptionStatus,
     SubscriptionTier,
+    UsageEventType,
     UserRole,
 )
 
@@ -344,6 +345,59 @@ class MetricsSummary(BaseModel):
     retention_d7: float
     retention_d30: float
     publish_success_rate: float | None
+
+
+class PlatformPostStats(BaseModel):
+    platform: SocialPlatform
+    published: int
+    failed: int
+
+
+class ContentKindCount(BaseModel):
+    content_kind: str
+    count: int
+
+
+class DailyPostCount(BaseModel):
+    day: str
+    published: int
+
+
+class ContentTypeGenerationStats(BaseModel):
+    content_type: GenerationContentType
+    completed: int
+    failed: int
+
+
+class UsageLimitStat(BaseModel):
+    event_type: UsageEventType
+    content_type: GenerationContentType | None
+    label: str
+    used: int
+    # None means the tier has no cap for this kind.
+    limit: int | None
+
+
+class AnalyticsSummary(BaseModel):
+    period_days: int
+    posts_total: int
+    posts_scheduled: int
+    posts_publishing: int
+    posts_published: int
+    posts_failed: int
+    publish_success_rate: float | None
+    posts_by_platform: list[PlatformPostStats]
+    posts_by_content_kind: list[ContentKindCount]
+    daily_published_posts: list[DailyPostCount]
+    generations_total: int
+    generations_queued: int
+    generations_processing: int
+    generations_completed: int
+    generations_failed: int
+    generations_flagged: int
+    generation_success_rate: float | None
+    generations_by_content_type: list[ContentTypeGenerationStats]
+    usage_this_period: list[UsageLimitStat]
 
 
 class Token(BaseModel):

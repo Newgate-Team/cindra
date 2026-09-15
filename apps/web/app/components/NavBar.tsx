@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 
 import {
+  AnalyticsIcon,
   CalendarIcon,
   CardIcon,
   ClapperboardIcon,
@@ -22,6 +23,7 @@ const NAV_LINKS = [
   { href: "/templates", label: "Шаблоны", icon: LayoutIcon },
   { href: "/calendar", label: "Календарь", icon: CalendarIcon },
   { href: "/feed", label: "Лента", icon: FeedIcon },
+  { href: "/analytics", label: "Аналитика", icon: AnalyticsIcon },
   { href: "/social-accounts", label: "Соцсети", icon: ShareIcon },
   { href: "/billing", label: "Тариф", icon: CardIcon },
   { href: "/settings", label: "Настройки", icon: GearIcon },
