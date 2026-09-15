@@ -163,6 +163,40 @@ class GenerationJobOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class ABTestCreate(BaseModel):
+    topic: str = Field(min_length=1, max_length=5000)
+    content_kind: str = "post"
+    brand_guide: str | None = None
+    tone: str | None = None
+    # 2-5: below 2 there's nothing to compare; above 5 is more
+    # generation spend than a "quick compare" flow should invite in
+    # one request (the user can just run it again for more options).
+    variant_count: int = Field(default=2, ge=2, le=5)
+
+    @field_validator("tone")
+    @classmethod
+    def _validate_tone(cls, value: str | None) -> str | None:
+        if value is not None and value not in TONE_GUIDANCE:
+            raise ValueError(
+                f"Неизвестный тон: {value}. Доступные: {', '.join(sorted(TONE_GUIDANCE))}"
+            )
+        return value
+
+
+class ABTestWinner(BaseModel):
+    generation_job_id: uuid.UUID
+
+
+class ABTestOut(BaseModel):
+    id: uuid.UUID
+    topic: str
+    winner_generation_job_id: uuid.UUID | None
+    variants: list[GenerationJobOut]
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class FeedItemOut(BaseModel):
     """A shared, cross-user feed item (CIN-109) -- deliberately excludes
     the generating user's identity, error_message, and brand_guide.

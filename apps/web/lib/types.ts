@@ -147,6 +147,14 @@ export interface ImageTemplate {
   preview_url: string | null;
 }
 
+export interface ABTest {
+  id: string;
+  topic: string;
+  winner_generation_job_id: string | null;
+  variants: GenerationJob[];
+  created_at: string;
+}
+
 export interface PlatformPostStats {
   platform: SocialPlatform;
   published: number;

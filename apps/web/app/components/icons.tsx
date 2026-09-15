@@ -88,6 +88,15 @@ export function AnalyticsIcon({ size = 20 }: IconProps) {
   );
 }
 
+export function SplitTestIcon({ size = 20 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" {...common}>
+      <path d="M4 12h4l4-6h8M4 12h4l4 6h8" />
+      <path d="M17 3l3 3-3 3M17 15l3 3-3 3" />
+    </svg>
+  );
+}
+
 export function GearIcon({ size = 20 }: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" {...common}>
