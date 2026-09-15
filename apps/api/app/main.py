@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.bootstrap import bootstrap
 from app.config import get_settings
 from app.routers import (
+    analytics,
     auth,
     billing,
     content,
@@ -32,6 +33,7 @@ app.include_router(posts.router)
 app.include_router(feed.router)
 app.include_router(metrics.router)
 app.include_router(video_projects.router)
+app.include_router(analytics.router)
 
 
 @app.get("/health")

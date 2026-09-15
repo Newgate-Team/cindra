@@ -147,6 +147,58 @@ export interface ImageTemplate {
   preview_url: string | null;
 }
 
+export interface PlatformPostStats {
+  platform: SocialPlatform;
+  published: number;
+  failed: number;
+}
+
+export interface ContentKindCount {
+  content_kind: string;
+  count: number;
+}
+
+export interface DailyPostCount {
+  day: string;
+  published: number;
+}
+
+export interface ContentTypeGenerationStats {
+  content_type: GenerationContentType;
+  completed: number;
+  failed: number;
+}
+
+export interface UsageLimitStat {
+  event_type: string;
+  content_type: GenerationContentType | null;
+  label: string;
+  used: number;
+  limit: number | null;
+}
+
+export interface AnalyticsSummary {
+  period_days: number;
+  posts_total: number;
+  posts_scheduled: number;
+  posts_publishing: number;
+  posts_published: number;
+  posts_failed: number;
+  publish_success_rate: number | null;
+  posts_by_platform: PlatformPostStats[];
+  posts_by_content_kind: ContentKindCount[];
+  daily_published_posts: DailyPostCount[];
+  generations_total: number;
+  generations_queued: number;
+  generations_processing: number;
+  generations_completed: number;
+  generations_failed: number;
+  generations_flagged: number;
+  generation_success_rate: number | null;
+  generations_by_content_type: ContentTypeGenerationStats[];
+  usage_this_period: UsageLimitStat[];
+}
+
 // CIN-148: code-rendered layout templates, GET /content/layout-templates.
 export interface LayoutSlot {
   name: string;

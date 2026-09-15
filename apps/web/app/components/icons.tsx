@@ -79,6 +79,15 @@ export function ClapperboardIcon({ size = 20 }: IconProps) {
   );
 }
 
+export function AnalyticsIcon({ size = 20 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" {...common}>
+      <path d="M4 20V10M11 20V4M18 20v-6" />
+      <path d="M3 20h18" />
+    </svg>
+  );
+}
+
 export function GearIcon({ size = 20 }: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" {...common}>

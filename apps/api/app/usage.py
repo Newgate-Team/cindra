@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from fastapi import HTTPException, status
@@ -28,7 +29,7 @@ def _kind_label(
     return f"{content_type.value} {event_type.value}"
 
 
-def _current_period_start() -> datetime:
+def current_period_start() -> datetime:
     now = datetime.now(UTC)
     return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
@@ -65,7 +66,7 @@ def _check_limit(
     limit = limit_for(tier, event_type, content_type)
 
     if limit is not None:
-        period_start = _current_period_start()
+        period_start = current_period_start()
         query = (
             select(func.count())
             .select_from(UsageEvent)
@@ -165,6 +166,62 @@ def enforce_and_record_usage(
     _check_limit(db, user, event_type, content_type, count=1, for_update=True)
     db.add(UsageEvent(user_id=user.id, event_type=event_type, content_type=content_type))
     db.commit()
+
+
+@dataclass(frozen=True)
+class UsageSummaryRow:
+    event_type: UsageEventType
+    content_type: GenerationContentType | None
+    used: int
+    limit: int | None
+
+
+# One row per billable kind this tier tracks -- kept in one place so
+# the analytics summary can't drift from what _check_limit actually
+# enforces (each entry is exactly an (event_type, content_type) pair
+# _check_limit/limit_for already know how to handle).
+_USAGE_KINDS: list[tuple[UsageEventType, GenerationContentType | None]] = [
+    (UsageEventType.generation, GenerationContentType.text),
+    (UsageEventType.generation, GenerationContentType.image),
+    (UsageEventType.generation, GenerationContentType.video),
+    (UsageEventType.publication, None),
+    (UsageEventType.long_video_generation, None),
+    (UsageEventType.layout_render, None),
+]
+
+
+def usage_summary(db: Session, user: User) -> list[UsageSummaryRow]:
+    """This billing period's usage against the user's tier limit, one
+    row per billable kind -- powers the analytics "usage vs. limits"
+    section. Read-only; mirrors _check_limit's query exactly so the
+    numbers shown always match what actually gates the user."""
+    subscription = db.scalar(select(Subscription).where(Subscription.user_id == user.id))
+    tier = effective_tier(subscription)
+    period_start = current_period_start()
+
+    rows = []
+    for event_type, content_type in _USAGE_KINDS:
+        query = (
+            select(func.count())
+            .select_from(UsageEvent)
+            .where(
+                UsageEvent.user_id == user.id,
+                UsageEvent.event_type == event_type,
+                UsageEvent.created_at >= period_start,
+            )
+        )
+        if content_type is not None:
+            query = query.where(UsageEvent.content_type == content_type)
+        used = db.scalar(query)
+        rows.append(
+            UsageSummaryRow(
+                event_type=event_type,
+                content_type=content_type,
+                used=used,
+                limit=limit_for(tier, event_type, content_type),
+            )
+        )
+    return rows
 
 
 def enforce_and_record_usage_bulk(

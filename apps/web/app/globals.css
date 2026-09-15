@@ -807,3 +807,87 @@ a.list-row {
 .template-example figcaption {
   font-size: 13px;
 }
+
+/* ---- Analytics: hand-rolled bar chart + usage-vs-limit bars (no
+   charting library in this app -- see app/components/icons.tsx for
+   the same "small enough to hand-draw" reasoning) ---- */
+.analytics-big-number {
+  font-size: 32px;
+  font-weight: 700;
+  margin: 4px 0;
+}
+
+.analytics-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 160px;
+  padding-top: 8px;
+}
+
+.analytics-chart-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  height: 100%;
+  min-width: 3px;
+}
+
+.analytics-chart-bar {
+  width: 100%;
+  min-height: 2px;
+  background: var(--gradient-ember);
+  border-radius: 2px 2px 0 0;
+}
+
+.analytics-chart-label {
+  margin-top: 6px;
+  font-size: 10px;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+
+.analytics-list-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.analytics-list-row:last-child {
+  border-bottom: none;
+}
+
+.analytics-usage-row {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.analytics-usage-row:last-child {
+  border-bottom: none;
+}
+
+.analytics-usage-row-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+  font-size: 14px;
+}
+
+.progress-track {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--secondary);
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: var(--gradient-ember);
+  border-radius: 999px;
+}
