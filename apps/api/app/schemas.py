@@ -47,6 +47,10 @@ class PasswordResetConfirm(BaseModel):
     new_password: str = Field(min_length=8)
 
 
+class EmailVerificationConfirm(BaseModel):
+    token: str = Field(min_length=1)
+
+
 class GoogleLoginRequest(BaseModel):
     id_token: str = Field(min_length=1)
 
@@ -57,6 +61,7 @@ class UserOut(BaseModel):
     role: UserRole
     share_generations_to_feed: bool
     has_password: bool
+    email_verified: bool
     created_at: datetime
 
     model_config = {"from_attributes": True}

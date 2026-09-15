@@ -15,6 +15,7 @@ import "./globals.css";
 
 import { AuthProvider } from "@/lib/auth-context";
 
+import { EmailVerificationBanner } from "./components/EmailVerificationBanner";
 import { Footer } from "./components/Footer";
 import { NavBar } from "./components/NavBar";
 
@@ -35,6 +36,7 @@ export default function RootLayout({
           <div className="app-shell">
             <NavBar />
             <div className="app-content">
+              <EmailVerificationBanner />
               <main>{children}</main>
               <Footer />
             </div>

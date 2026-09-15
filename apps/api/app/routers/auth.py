@@ -9,10 +9,17 @@ from app.config import get_settings
 from app.db import get_db
 from app.deps import get_current_user
 from app.google_auth import GoogleAuthError, verify_google_id_token
-from app.models import PasswordResetToken, Subscription, User, UserRole
+from app.models import (
+    EmailVerificationToken,
+    PasswordResetToken,
+    Subscription,
+    User,
+    UserRole,
+)
 from app.scheduler.tasks import send_email_task
 from app.schemas import (
     ChangePasswordRequest,
+    EmailVerificationConfirm,
     GoogleLoginRequest,
     PasswordResetConfirm,
     PasswordResetRequest,
@@ -23,6 +30,7 @@ from app.schemas import (
     UserUpdate,
 )
 from app.security import (
+    EMAIL_VERIFICATION_TOKEN_EXPIRE_MINUTES,
     LOGIN_LOCKOUT_MINUTES,
     PASSWORD_RESET_TOKEN_EXPIRE_MINUTES,
     create_access_token,
@@ -36,6 +44,45 @@ from app.security import (
 )
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+def _issue_email_verification_token(user: User, db: Session) -> str:
+    """Mirrors the password-reset issuance below: at most one valid
+    link per user, hash-only storage. Caller commits."""
+    now = datetime.now(UTC)
+    for stale_token in db.scalars(
+        select(EmailVerificationToken).where(
+            EmailVerificationToken.user_id == user.id,
+            EmailVerificationToken.used_at.is_(None),
+            EmailVerificationToken.expires_at > now,
+        )
+    ):
+        stale_token.used_at = now
+    raw_token = generate_url_token()
+    db.add(
+        EmailVerificationToken(
+            user_id=user.id,
+            token_hash=hash_url_token(raw_token),
+            expires_at=now + timedelta(minutes=EMAIL_VERIFICATION_TOKEN_EXPIRE_MINUTES),
+        )
+    )
+    return raw_token
+
+
+def _send_verification_email(user: User, db: Session) -> None:
+    if not get_settings().smtp_host:
+        return
+    raw_token = _issue_email_verification_token(user, db)
+    db.commit()
+    verify_link = f"{get_settings().frontend_base_url}/verify-email?token={raw_token}"
+    send_email_task.delay(
+        user.email,
+        "Cindra — подтвердите email",
+        "Чтобы подтвердить адрес, перейдите по ссылке (действует "
+        f"{EMAIL_VERIFICATION_TOKEN_EXPIRE_MINUTES // 60} ч):\n\n{verify_link}\n\n"
+        "Ничего страшного, если вы не сделаете этого прямо сейчас — это не помешает "
+        "пользоваться Cindra.",
+    )
 
 
 @router.post("/register", response_model=UserOut, status_code=status.HTTP_201_CREATED)
@@ -72,6 +119,13 @@ def register(payload: UserCreate, db: Session = Depends(get_db)) -> User:
             status_code=status.HTTP_409_CONFLICT, detail="Email уже зарегистрирован"
         ) from None
     db.refresh(user)
+    try:
+        # Best-effort: verification is informational-only (see
+        # User.email_verified), so a broken mail relay or SMTP being
+        # unconfigured must never turn into a failed registration.
+        _send_verification_email(user, db)
+    except Exception:  # noqa: BLE001 -- a broken mail relay must not fail registration
+        db.rollback()
     return user
 
 
@@ -128,7 +182,10 @@ def login_with_google(payload: GoogleLoginRequest, db: Session = Depends(get_db)
     email = claims["email"]
     user = db.scalar(select(User).where(User.email == email))
     if user is None:
-        user = User(email=email, hashed_password=None)
+        # Google has already proven control of this address -- same
+        # reasoning as the password-drop below, just for a brand-new
+        # account instead of an existing one.
+        user = User(email=email, hashed_password=None, email_verified=True)
         db.add(user)
         try:
             db.flush()
@@ -159,6 +216,7 @@ def login_with_google(payload: GoogleLoginRequest, db: Session = Depends(get_db)
         # that password themselves keeps full access through the same
         # Google account (/auth/login already tells them where to go).
         user.hashed_password = None
+        user.email_verified = True
         db.commit()
         db.refresh(user)
     return Token(access_token=create_access_token(user.id))
@@ -307,4 +365,47 @@ def confirm_password_reset(payload: PasswordResetConfirm, db: Session = Depends(
     # CIN-159 lockout too, same as a normal successful login would.
     record_successful_login(user)
     reset_token.used_at = now
+    db.commit()
+
+
+@router.post("/verify-email/request", status_code=status.HTTP_200_OK)
+def request_email_verification(
+    current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
+) -> dict:
+    if current_user.email_verified:
+        return {"detail": "Email уже подтверждён"}
+    if not get_settings().smtp_host:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Отправка email не настроена на сервере",
+        )
+    _send_verification_email(current_user, db)
+    return {"detail": "Мы отправили ссылку для подтверждения на ваш email"}
+
+
+@router.post("/verify-email/confirm", status_code=status.HTTP_204_NO_CONTENT)
+def confirm_email_verification(
+    payload: EmailVerificationConfirm, db: Session = Depends(get_db)
+) -> None:
+    # Unauthenticated, token-only -- same as /password-reset/confirm:
+    # the link may be opened on a device/browser where the user never
+    # logged in, so the token itself has to be the proof.
+    token_hash = hash_url_token(payload.token)
+    verification_token = db.scalar(
+        select(EmailVerificationToken).where(EmailVerificationToken.token_hash == token_hash)
+    )
+    now = datetime.now(UTC)
+    if (
+        verification_token is None
+        or verification_token.used_at is not None
+        or verification_token.expires_at <= now
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Ссылка недействительна или устарела — запросите новую",
+        )
+
+    user = db.get(User, verification_token.user_id)
+    user.email_verified = True
+    verification_token.used_at = now
     db.commit()

@@ -62,6 +62,7 @@ def test_request_for_registered_email_sends_a_reset_link(
     client: TestClient, db: Session, sent_emails: list[dict]
 ) -> None:
     _register(client)
+    sent_emails.clear()  # only care about emails sent from here on
     response = client.post("/auth/password-reset/request", json={"email": "ada@cindra.dev"})
     assert response.status_code == 200
 
@@ -104,6 +105,7 @@ def test_second_request_invalidates_the_first_token(
     client: TestClient, db: Session, sent_emails: list[dict]
 ) -> None:
     _register(client)
+    sent_emails.clear()  # only care about emails sent from here on
     client.post("/auth/password-reset/request", json={"email": "ada@cindra.dev"})
     client.post("/auth/password-reset/request", json={"email": "ada@cindra.dev"})
 
@@ -126,6 +128,7 @@ def test_confirm_with_valid_token_changes_password_and_new_password_logs_in(
     client: TestClient, sent_emails: list[dict]
 ) -> None:
     _register(client)
+    sent_emails.clear()  # only care about emails sent from here on
     client.post("/auth/password-reset/request", json={"email": "ada@cindra.dev"})
     token = _extract_token(sent_emails[0]["body"])
 
@@ -150,6 +153,7 @@ def test_confirm_with_same_token_twice_is_rejected_the_second_time(
     client: TestClient, sent_emails: list[dict]
 ) -> None:
     _register(client)
+    sent_emails.clear()  # only care about emails sent from here on
     client.post("/auth/password-reset/request", json={"email": "ada@cindra.dev"})
     token = _extract_token(sent_emails[0]["body"])
 
@@ -178,6 +182,7 @@ def test_confirm_with_expired_token_is_rejected(
     client: TestClient, db: Session, sent_emails: list[dict]
 ) -> None:
     _register(client)
+    sent_emails.clear()  # only care about emails sent from here on
     client.post("/auth/password-reset/request", json={"email": "ada@cindra.dev"})
     token = _extract_token(sent_emails[0]["body"])
 
@@ -199,6 +204,7 @@ def test_confirm_clears_login_lockout(
     client: TestClient, db: Session, sent_emails: list[dict]
 ) -> None:
     _register(client)
+    sent_emails.clear()  # only care about emails sent from here on
     wrong = {"email": "ada@cindra.dev", "password": "wrong-password"}
     for _ in range(5):
         client.post("/auth/login", json=wrong)

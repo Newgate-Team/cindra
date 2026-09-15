@@ -538,6 +538,30 @@ button.icon-button {
   font-size: 14px;
 }
 
+.verification-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  margin-bottom: 16px;
+  border-radius: calc(var(--radius) - 4px);
+  background: var(--warning);
+  color: var(--warning-foreground);
+  font-size: 14px;
+}
+
+.verification-banner button.secondary {
+  border-color: var(--warning-foreground);
+  color: var(--warning-foreground);
+  padding: 4px 12px;
+}
+
+.verification-banner button.icon-button {
+  margin-left: auto;
+  color: var(--warning-foreground);
+}
+
 .muted {
   color: var(--muted-foreground);
   font-size: 14px;
