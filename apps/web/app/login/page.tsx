@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
@@ -56,6 +57,9 @@ export default function LoginPage() {
           {submitting ? "Входим…" : "Войти"}
         </button>
       </form>
+      <p className="muted">
+        <Link href="/forgot-password">Забыли пароль?</Link>
+      </p>
       <GoogleSignInButton onError={setError} />
     </>
   );

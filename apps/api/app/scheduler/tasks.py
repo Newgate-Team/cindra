@@ -1,8 +1,10 @@
+import smtplib
 import subprocess
 from datetime import UTC, datetime
 
 from app.celery_app import celery_app
 from app.db import SessionLocal
+from app.email import send_email
 from app.models import Post, PostStatus, SocialAccount
 from app.scheduler import backup
 from app.scheduler.registry import get_publisher
@@ -116,3 +118,17 @@ def backup_database(self) -> str:
     key = backup.upload_backup(data)
     backup.rotate_backups()
     return key
+
+
+@celery_app.task(
+    bind=True,
+    # Retry on real delivery flakiness (relay unreachable/times out),
+    # not on EmailNotConfiguredError -- that's a standing config gap,
+    # not a transient failure, so retrying it would just spin uselessly.
+    autoretry_for=(smtplib.SMTPException, ConnectionError, OSError, TimeoutError),
+    retry_backoff=True,
+    retry_backoff_max=300,
+    retry_kwargs={"max_retries": 3},
+)
+def send_email_task(self, to: str, subject: str, body: str) -> None:
+    send_email(to, subject, body)
