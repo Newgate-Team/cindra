@@ -21,6 +21,7 @@ const PLATFORM_LABELS: Record<Post["platform"], string> = {
   youtube: "YouTube",
   linkedin: "LinkedIn",
   reddit: "Reddit",
+  twitter: "X (Twitter)",
 };
 
 // Текст публикации обрезан в таблице до 80 символов -- иконка рядом

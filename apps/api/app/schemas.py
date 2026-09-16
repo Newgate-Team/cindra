@@ -421,6 +421,15 @@ class RedditConnectRequest(BaseModel):
     state: str = Field(min_length=1)
 
 
+class TwitterOAuthStartOut(BaseModel):
+    authorization_url: str
+
+
+class TwitterConnectRequest(BaseModel):
+    code: str = Field(min_length=1)
+    state: str = Field(min_length=1)
+
+
 class SocialAccountOut(BaseModel):
     id: uuid.UUID
     platform: SocialPlatform

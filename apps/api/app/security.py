@@ -1,3 +1,4 @@
+import base64
 import hashlib
 import secrets
 import uuid
@@ -281,3 +282,45 @@ def decode_reddit_oauth_state(token: str) -> uuid.UUID:
     if payload.get("typ") != _REDDIT_OAUTH_STATE_TYPE:
         raise jwt.InvalidTokenError("not a reddit_oauth_state token")
     return uuid.UUID(payload["sub"])
+
+
+TWITTER_OAUTH_STATE_EXPIRE_MINUTES = 10
+_TWITTER_OAUTH_STATE_TYPE = "twitter_oauth_state"
+
+
+def create_twitter_oauth_state(user_id: uuid.UUID) -> tuple[str, str]:
+    """Same CSRF/user-binding purpose as create_tiktok_oauth_state, but
+    returns (state_token, code_challenge) instead of a single string --
+    X's OAuth2 flow is the only one in this app that requires PKCE
+    (Proof Key for Code Exchange). Rather than a separate server-side
+    store to carry the code_verifier from /start to /connect, it rides
+    inside this same signed state JWT as an extra claim: the JWT is
+    already the one piece of state that survives the redirect round
+    trip unmodified, so there's no reason to introduce a second one.
+    """
+    settings = get_settings()
+    code_verifier = secrets.token_urlsafe(96)[:128]
+    code_challenge = (
+        base64.urlsafe_b64encode(hashlib.sha256(code_verifier.encode()).digest())
+        .decode()
+        .rstrip("=")
+    )
+    expire = datetime.now(UTC) + timedelta(minutes=TWITTER_OAUTH_STATE_EXPIRE_MINUTES)
+    payload = {
+        "sub": str(user_id),
+        "nonce": uuid.uuid4().hex,
+        "exp": expire,
+        "typ": _TWITTER_OAUTH_STATE_TYPE,
+        "cv": code_verifier,
+    }
+    return jwt.encode(payload, settings.jwt_secret, algorithm="HS256"), code_challenge
+
+
+def decode_twitter_oauth_state(token: str) -> tuple[uuid.UUID, str]:
+    """Returns (user_id, code_verifier) -- the verifier decoded back
+    out of the same claim create_twitter_oauth_state embedded it in."""
+    settings = get_settings()
+    payload = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
+    if payload.get("typ") != _TWITTER_OAUTH_STATE_TYPE:
+        raise jwt.InvalidTokenError("not a twitter_oauth_state token")
+    return uuid.UUID(payload["sub"]), payload["cv"]

@@ -111,6 +111,9 @@ class Settings(BaseSettings):
     # app works fine without a custom one, Reddit specifically
     # requires a descriptive, app-unique string on every API call.
     reddit_user_agent: str = "cindra/1.0 (web app; by /u/cindra-app)"
+    twitter_client_id: str = ""
+    twitter_client_secret: str = ""
+    twitter_redirect_uri: str = "https://cindra-chi.vercel.app/oauth/twitter/callback"
     # Comma-separated. Without CORS the browser blocks every request
     # from the web app (blocked at the OPTIONS preflight, not
     # something curl-based manual testing ever exercises) -- found

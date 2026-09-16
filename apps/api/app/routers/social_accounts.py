@@ -26,6 +26,8 @@ from app.schemas import (
     TikTokCreatorInfoOut,
     TikTokOAuthStartOut,
     TikTokPublishStatusOut,
+    TwitterConnectRequest,
+    TwitterOAuthStartOut,
     YouTubeConnectRequest,
     YouTubeOAuthStartOut,
 )
@@ -35,16 +37,25 @@ from app.security import (
     create_reddit_oauth_state,
     create_telegram_verification_token,
     create_tiktok_oauth_state,
+    create_twitter_oauth_state,
     create_youtube_oauth_state,
     decode_linkedin_oauth_state,
     decode_meta_oauth_state,
     decode_reddit_oauth_state,
     decode_telegram_verification_token,
     decode_tiktok_oauth_state,
+    decode_twitter_oauth_state,
     decode_youtube_oauth_state,
 )
 from app.social_accounts import upsert_social_account
-from app.social_integrations import instagram, linkedin, reddit, tiktok, youtube
+from app.social_integrations import (
+    instagram,
+    linkedin,
+    reddit,
+    tiktok,
+    twitter,
+    youtube,
+)
 from app.social_integrations.errors import PermanentPublishError, TransientPublishError
 from app.social_integrations.telegram import get_chat, get_chat_member, get_me
 from app.teams import visible_user_ids
@@ -577,6 +588,88 @@ def connect_reddit(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Не удалось подключить Reddit: {exc}",
+        ) from exc
+    except TransientPublishError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        ) from exc
+    return account
+
+
+@router.post("/twitter/start", response_model=TwitterOAuthStartOut)
+def start_twitter_oauth(
+    current_user: User = Depends(get_current_user),
+) -> TwitterOAuthStartOut:
+    settings = get_settings()
+    if not settings.twitter_client_id or not settings.twitter_client_secret:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="X (Twitter) ещё не настроен на сервере",
+        )
+    state_token, code_challenge = create_twitter_oauth_state(current_user.id)
+    query = urlencode(
+        {
+            "response_type": "code",
+            "client_id": settings.twitter_client_id,
+            "redirect_uri": settings.twitter_redirect_uri,
+            # offline.access: without it X issues no refresh token at
+            # all, same reasoning as YouTube's access_type=offline.
+            "scope": "tweet.read tweet.write users.read offline.access",
+            "state": state_token,
+            "code_challenge": code_challenge,
+            "code_challenge_method": "S256",
+        }
+    )
+    return TwitterOAuthStartOut(
+        authorization_url=f"https://twitter.com/i/oauth2/authorize?{query}"
+    )
+
+
+@router.post(
+    "/twitter/connect", response_model=SocialAccountOut, status_code=status.HTTP_201_CREATED
+)
+def connect_twitter(
+    payload: TwitterConnectRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> SocialAccount:
+    try:
+        state_user_id, code_verifier = decode_twitter_oauth_state(payload.state)
+    except (jwt.InvalidTokenError, ValueError, KeyError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="X OAuth state истёк или недействителен — начните подключение заново",
+        ) from None
+    if state_user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="X OAuth был начат другим пользователем",
+        )
+
+    settings = get_settings()
+    try:
+        token = twitter.exchange_code_for_token(
+            payload.code,
+            code_verifier,
+            settings.twitter_client_id,
+            settings.twitter_client_secret,
+            settings.twitter_redirect_uri,
+        )
+        me = twitter.get_me(token["access_token"])
+        account = upsert_social_account(
+            db,
+            current_user,
+            platform=SocialPlatform.twitter,
+            external_account_id=me["id"],
+            access_token=token["access_token"],
+            refresh_token=token.get("refresh_token"),
+            token_expires_at=datetime.now(UTC) + timedelta(seconds=int(token["expires_in"])),
+            display_name=me.get("username"),
+        )
+    except (KeyError, ValueError, PermanentPublishError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Не удалось подключить X: {exc}",
         ) from exc
     except TransientPublishError as exc:
         raise HTTPException(

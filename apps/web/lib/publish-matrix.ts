@@ -16,6 +16,9 @@ const ALLOWED_CONTENT_TYPES: Record<SocialPlatform, GenerationContentType[]> = {
   // own hosted URL, not a native asset upload -- see reddit.py's
   // module docstring and publish_matrix.py's comment on this entry.
   reddit: ["text", "image", "video"],
+  // Text-only, deliberately -- see publish_matrix.py's comment on the
+  // same entry (X's media upload isn't implemented at all here).
+  twitter: ["text"],
 };
 
 const ALLOWED_CONTENT_KINDS: Record<SocialPlatform, Partial<Record<GenerationContentType, string[]>>> = {
@@ -26,6 +29,7 @@ const ALLOWED_CONTENT_KINDS: Record<SocialPlatform, Partial<Record<GenerationCon
   youtube: { video: ["post"] },
   linkedin: { text: ["post", "video_script"], image: ["post"] },
   reddit: { text: ["post", "video_script"], image: ["post"], video: ["post"] },
+  twitter: { text: ["post", "video_script"] },
 };
 
 export const CONTENT_KIND_LABELS: Record<string, string> = {

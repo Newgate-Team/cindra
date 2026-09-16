@@ -22,6 +22,7 @@ const PLATFORM_LABELS: Record<string, string> = {
   youtube: "YouTube",
   linkedin: "LinkedIn",
   reddit: "Reddit",
+  twitter: "X (Twitter)",
 };
 
 const PLATFORM_ICONS: Record<string, string> = {
@@ -32,6 +33,7 @@ const PLATFORM_ICONS: Record<string, string> = {
   youtube: "/youtube-icon.svg",
   linkedin: "/linkedin-icon.svg",
   reddit: "/reddit-icon.svg",
+  twitter: "/twitter-icon.svg",
 };
 
 interface TelegramVerification {
@@ -59,6 +61,8 @@ function SocialAccountsManager() {
   const [connectingLinkedIn, setConnectingLinkedIn] = useState(false);
   const [redditError, setRedditError] = useState<string | null>(null);
   const [connectingReddit, setConnectingReddit] = useState(false);
+  const [twitterError, setTwitterError] = useState<string | null>(null);
+  const [connectingTwitter, setConnectingTwitter] = useState(false);
 
   function reload() {
     api.get<SocialAccount[]>("/social-accounts", token).then(setAccounts);
@@ -214,6 +218,22 @@ function SocialAccountsManager() {
     } catch (err) {
       setRedditError(err instanceof ApiError ? err.message : "Не удалось начать вход в Reddit");
       setConnectingReddit(false);
+    }
+  }
+
+  async function handleConnectTwitter() {
+    setTwitterError(null);
+    setConnectingTwitter(true);
+    try {
+      const result = await api.post<{ authorization_url: string }>(
+        "/social-accounts/twitter/start",
+        {},
+        token
+      );
+      window.location.href = result.authorization_url;
+    } catch (err) {
+      setTwitterError(err instanceof ApiError ? err.message : "Не удалось начать вход в X");
+      setConnectingTwitter(false);
     }
   }
 
@@ -397,6 +417,18 @@ function SocialAccountsManager() {
         {redditError && <p className="error">{redditError}</p>}
         <button type="button" onClick={handleConnectReddit} disabled={connectingReddit}>
           {connectingReddit ? "Открываем Reddit…" : "Войти через Reddit"}
+        </button>
+      </div>
+
+      <h2>Подключить X (Twitter)</h2>
+      <div className="card">
+        <p className="muted">
+          Подключается через OAuth X. Публикуется только текст (до 280 символов) — изображения
+          и видео пока не поддерживаются.
+        </p>
+        {twitterError && <p className="error">{twitterError}</p>}
+        <button type="button" onClick={handleConnectTwitter} disabled={connectingTwitter}>
+          {connectingTwitter ? "Открываем X…" : "Войти через X"}
         </button>
       </div>
     </>
