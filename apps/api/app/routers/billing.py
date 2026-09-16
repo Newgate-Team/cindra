@@ -16,6 +16,7 @@ from app.models import (
     User,
 )
 from app.schemas import ConfirmSubscriptionRequest, SubscriptionOut
+from app.teams import billing_owner
 
 router = APIRouter(prefix="/billing", tags=["billing"])
 
@@ -43,7 +44,12 @@ def _tier_for_plan_id(plan_id: str) -> SubscriptionTier | None:
 def get_subscription(
     current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
 ) -> Subscription:
-    return db.scalar(select(Subscription).where(Subscription.user_id == current_user.id))
+    # Roadmap item 5: a team member's own personal Subscription isn't
+    # what actually governs their quota once they're on a team (see
+    # app/teams.py::billing_owner, app/usage.py) -- showing it here
+    # instead would just be wrong, not merely incomplete.
+    owner = billing_owner(db, current_user)
+    return db.scalar(select(Subscription).where(Subscription.user_id == owner.id))
 
 
 @router.post("/paypal/confirm-subscription", response_model=SubscriptionOut)
@@ -58,7 +64,18 @@ def confirm_paypal_subscription(
     checks `custom_id` matches the authenticated user before touching
     anything, exactly the same "don't trust client data" posture the
     old CloudPayments webhook applied to AccountId.
+
+    Roadmap item 5: only the team's billing owner can change what this
+    resolves to (GET /billing/subscription) -- a non-owner member
+    paying here would create a Subscription row under their own id
+    that billing_owner() never looks at, a confusing dead end (they'd
+    pay and nothing about the team's actual quota would change).
     """
+    if billing_owner(db, current_user).id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Изменить тариф команды может только её владелец",
+        )
     try:
         remote = paypal.get_subscription(payload.subscription_id)
     except Exception as exc:

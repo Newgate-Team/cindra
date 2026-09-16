@@ -3,7 +3,7 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import User
+from app.models import Team, User
 
 
 def visible_user_ids(db: Session, user: User) -> list[uuid.UUID]:
@@ -19,3 +19,23 @@ def visible_user_ids(db: Session, user: User) -> list[uuid.UUID]:
     if user.team_id is None:
         return [user.id]
     return list(db.scalars(select(User.id).where(User.team_id == user.team_id)))
+
+
+def billing_owner(db: Session, user: User) -> User:
+    """Whose Subscription actually governs `user`'s tier/quota: the
+    team owner's if `user` is on a team (a shared billing quota is the
+    whole point of a team -- see app/usage.py), otherwise their own.
+
+    The ONE place billing authority is resolved -- every place that
+    looks up a Subscription to check a limit should resolve through
+    this rather than always using `user`'s own row, or a team member
+    on their own free-tier personal subscription would stay capped at
+    it even while their team pays for Business.
+    """
+    if user.team_id is None:
+        return user
+    team = db.get(Team, user.team_id)
+    if team is None:
+        return user
+    owner = db.get(User, team.owner_user_id)
+    return owner if owner is not None else user

@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.models import SocialAccount, SocialPlatform, Subscription, User
 from app.plans import PLAN_LIMITS, effective_tier
-from app.teams import visible_user_ids
+from app.teams import billing_owner, visible_user_ids
 from app.token_crypto import decrypt_token, encrypt_token
 
 
@@ -20,11 +20,10 @@ def _enforce_connected_account_limit(db: Session, user: User) -> None:
     sharing accounts in the first place, and counting only the calling
     user's own rows here would let each teammate independently connect
     up to the free-tier limit, multiplying it by team size. The limit
-    itself still resolves off `user`'s own Subscription (billing quota
-    pooling -- whose subscription actually governs a team -- is its
-    own separate, not-yet-wired concern; this only fixes the counting
-    side, which is a real bypass if left alone once accounts are
-    shared).
+    itself resolves off the team's billing owner (billing_owner), not
+    necessarily `user` -- a member on their own free-tier personal
+    Subscription must not stay capped at it while their team pays for
+    a higher tier.
 
     Facebook rows are excluded from both the count and the check
     itself: connect_instagram() always creates one alongside the
@@ -47,7 +46,8 @@ def _enforce_connected_account_limit(db: Session, user: User) -> None:
     slot) isn't worth the added complexity for what's already a rare,
     low-value thing to even try to race.
     """
-    subscription = db.scalar(select(Subscription).where(Subscription.user_id == user.id))
+    owner = billing_owner(db, user)
+    subscription = db.scalar(select(Subscription).where(Subscription.user_id == owner.id))
     tier = effective_tier(subscription)
     limit = PLAN_LIMITS[tier].max_connected_accounts
     if limit is None:

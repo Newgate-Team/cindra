@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ApiError, api } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
-import type { Subscription, SubscriptionTier } from "@/lib/types";
+import type { Subscription, SubscriptionTier, Team } from "@/lib/types";
 
 import { RequireAuth } from "../components/RequireAuth";
 
@@ -157,6 +157,12 @@ function BillingSummary() {
   const { token, user } = useAuth();
   const [subscription, setSubscription] = useState<Subscription | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Whether *this* account can change the plan shown above. Solo
+  // (not on a team) by default; a team's plan is shared (roadmap item
+  // 5), so only its owner may change it -- the backend enforces this
+  // regardless, but showing a working-looking button to a member who'd
+  // just get a 403 after the full PayPal flow is a bad experience.
+  const [canManageBilling, setCanManageBilling] = useState(true);
 
   // Memoized so it's a stable reference across renders (CIN-88) --
   // UpgradeButton's useEffect depends on it, and an unmemoized
@@ -172,6 +178,16 @@ function BillingSummary() {
   }, [token]);
 
   useEffect(reload, [reload]);
+
+  useEffect(() => {
+    if (!user) return;
+    api
+      .get<Team>("/team", token)
+      .then((team) => setCanManageBilling(team.owner_user_id === user.id))
+      .catch((err) => {
+        if (err instanceof ApiError && err.status === 404) setCanManageBilling(true);
+      });
+  }, [token, user]);
 
   const currentIndex = subscription ? TIER_ORDER.indexOf(subscription.tier) : -1;
 
@@ -224,9 +240,12 @@ function BillingSummary() {
                   ) : (
                     tierIndex > currentIndex &&
                     user &&
-                    (tier === "pro" || tier === "business") && (
+                    (tier === "pro" || tier === "business") &&
+                    (canManageBilling ? (
                       <UpgradeButton tier={tier} userId={user.id} onConfirmed={reload} />
-                    )
+                    ) : (
+                      <p className="muted">Изменить тариф команды может только её владелец</p>
+                    ))
                   )}
                 </div>
               );
