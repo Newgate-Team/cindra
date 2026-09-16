@@ -1,5 +1,5 @@
 export type UserRole = "agency" | "solo";
-export type SocialPlatform = "telegram" | "instagram" | "facebook" | "tiktok";
+export type SocialPlatform = "telegram" | "instagram" | "facebook" | "tiktok" | "youtube";
 export type GenerationContentType = "text" | "image" | "video";
 export type AttachmentType = "image" | "video" | "audio" | "document";
 export type GenerationStatus = "queued" | "processing" | "completed" | "failed" | "flagged";

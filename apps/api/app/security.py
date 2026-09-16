@@ -194,3 +194,36 @@ def decode_meta_oauth_state(token: str) -> uuid.UUID:
     if payload.get("typ") != _META_OAUTH_STATE_TYPE:
         raise jwt.InvalidTokenError("not a meta_oauth_state token")
     return uuid.UUID(payload["sub"])
+
+
+YOUTUBE_OAUTH_STATE_EXPIRE_MINUTES = 10
+_YOUTUBE_OAUTH_STATE_TYPE = "youtube_oauth_state"
+
+
+def create_youtube_oauth_state(user_id: uuid.UUID) -> str:
+    """Same purpose/CSRF reasoning as create_tiktok_oauth_state --
+    binds the YouTube (Google) OAuth callback to the authenticated
+    Cindra user who started the flow. A separate client/secret and
+    state type from the existing Google Sign-In flow (app/google_auth.py)
+    on purpose: that one is a login-only ID-token exchange with no
+    refresh token; this one needs offline access + the youtube.upload
+    scope to actually publish videos later, a different consent and a
+    different credential the account owner registers separately.
+    """
+    settings = get_settings()
+    expire = datetime.now(UTC) + timedelta(minutes=YOUTUBE_OAUTH_STATE_EXPIRE_MINUTES)
+    payload = {
+        "sub": str(user_id),
+        "nonce": uuid.uuid4().hex,
+        "exp": expire,
+        "typ": _YOUTUBE_OAUTH_STATE_TYPE,
+    }
+    return jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
+
+
+def decode_youtube_oauth_state(token: str) -> uuid.UUID:
+    settings = get_settings()
+    payload = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
+    if payload.get("typ") != _YOUTUBE_OAUTH_STATE_TYPE:
+        raise jwt.InvalidTokenError("not a youtube_oauth_state token")
+    return uuid.UUID(payload["sub"])

@@ -33,6 +33,21 @@ def test_tiktok_only_allows_video_posts() -> None:
     ) == {"post"}
 
 
+def test_youtube_only_allows_video_posts() -> None:
+    assert allowed_content_types_for({SocialPlatform.youtube}) == {
+        GenerationContentType.video
+    }
+    assert allowed_content_kinds_for(
+        {SocialPlatform.youtube}, GenerationContentType.video
+    ) == {"post"}
+
+
+def test_youtube_and_tiktok_intersect_to_video_posts() -> None:
+    assert allowed_content_types_for({SocialPlatform.youtube, SocialPlatform.tiktok}) == {
+        GenerationContentType.video
+    }
+
+
 def test_mixed_targets_intersect_to_media_only() -> None:
     result = allowed_content_types_for({SocialPlatform.instagram, SocialPlatform.telegram})
     assert result == {GenerationContentType.image, GenerationContentType.video}

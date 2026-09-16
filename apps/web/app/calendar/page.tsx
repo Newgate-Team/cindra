@@ -18,6 +18,7 @@ const PLATFORM_LABELS: Record<Post["platform"], string> = {
   instagram: "Instagram",
   facebook: "Facebook",
   tiktok: "TikTok",
+  youtube: "YouTube",
 };
 
 // Текст публикации обрезан в таблице до 80 символов -- иконка рядом

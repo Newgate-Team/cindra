@@ -19,6 +19,7 @@ const PLATFORM_LABELS: Record<string, string> = {
   instagram: "Instagram",
   facebook: "Facebook-страница",
   tiktok: "TikTok",
+  youtube: "YouTube",
 };
 
 const PLATFORM_ICONS: Record<string, string> = {
@@ -26,6 +27,7 @@ const PLATFORM_ICONS: Record<string, string> = {
   instagram: "/instagram-icon.png",
   facebook: "/facebook-icon.png",
   tiktok: "/tiktok-icon.svg",
+  youtube: "/youtube-icon.svg",
 };
 
 interface TelegramVerification {
@@ -47,6 +49,8 @@ function SocialAccountsManager() {
   const [connectingTikTok, setConnectingTikTok] = useState(false);
   const [instagramError, setInstagramError] = useState<string | null>(null);
   const [connectingInstagram, setConnectingInstagram] = useState(false);
+  const [youtubeError, setYouTubeError] = useState<string | null>(null);
+  const [connectingYouTube, setConnectingYouTube] = useState(false);
 
   function reload() {
     api.get<SocialAccount[]>("/social-accounts", token).then(setAccounts);
@@ -154,6 +158,22 @@ function SocialAccountsManager() {
     } catch (err) {
       setTikTokError(err instanceof ApiError ? err.message : "Не удалось начать вход в TikTok");
       setConnectingTikTok(false);
+    }
+  }
+
+  async function handleConnectYouTube() {
+    setYouTubeError(null);
+    setConnectingYouTube(true);
+    try {
+      const result = await api.post<{ authorization_url: string }>(
+        "/social-accounts/youtube/start",
+        {},
+        token
+      );
+      window.location.href = result.authorization_url;
+    } catch (err) {
+      setYouTubeError(err instanceof ApiError ? err.message : "Не удалось начать вход в YouTube");
+      setConnectingYouTube(false);
     }
   }
 
@@ -300,6 +320,18 @@ function SocialAccountsManager() {
         {tiktokError && <p className="error">{tiktokError}</p>}
         <button type="button" onClick={handleConnectTikTok} disabled={connectingTikTok}>
           {connectingTikTok ? "Открываем TikTok…" : "Войти через TikTok"}
+        </button>
+      </div>
+
+      <h2>Подключить YouTube</h2>
+      <div className="card">
+        <p className="muted">
+          Подключается через Google OAuth. Cindra запросит только разрешение на загрузку видео на
+          канал (YouTube Data API), без доступа к остальному аккаунту Google.
+        </p>
+        {youtubeError && <p className="error">{youtubeError}</p>}
+        <button type="button" onClick={handleConnectYouTube} disabled={connectingYouTube}>
+          {connectingYouTube ? "Открываем YouTube…" : "Войти через YouTube"}
         </button>
       </div>
     </>
