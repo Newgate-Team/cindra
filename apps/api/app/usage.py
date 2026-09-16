@@ -13,6 +13,7 @@ from app.models import (
     User,
 )
 from app.plans import effective_tier, limit_for
+from app.teams import billing_owner, visible_user_ids
 
 
 def _kind_label(
@@ -45,8 +46,11 @@ def _check_limit(
     # CIN-158: `for_update` closes a TOCTOU race -- two concurrent
     # requests can both read the same (pre-insert) usage count and both
     # pass the check, over-provisioning past the limit. Locking the
-    # user's Subscription row (one per user, so it's a natural mutex)
-    # serializes the read-count-then-insert sequence for that user.
+    # billing owner's Subscription row (one per user, so it's a
+    # natural mutex; shared by the whole team once on one -- see
+    # billing_owner) serializes the read-count-then-insert sequence
+    # not just for one user but across every teammate drawing on the
+    # same pool, which is exactly what a shared quota needs.
     #
     # Only safe for callers that check and record in the SAME short
     # transaction (enforce_and_record_usage/_bulk below) -- holding this
@@ -56,7 +60,15 @@ def _check_limit(
     # check_usage_limit (CIN-139's check-now/record-after-the-model-call
     # split) deliberately passes for_update=False and keeps the
     # narrower race it already had -- see that function's docstring.
-    query = select(Subscription).where(Subscription.user_id == user.id)
+    #
+    # Roadmap item 5: tier resolves off the team's billing owner (a
+    # member on their own free-tier personal Subscription must not
+    # stay capped at it while the team pays for Business), and usage is
+    # counted across every visible teammate, not just this one -- the
+    # whole point of a shared team is one pooled quota, not one slot
+    # per member.
+    owner = billing_owner(db, user)
+    query = select(Subscription).where(Subscription.user_id == owner.id)
     if for_update:
         query = query.with_for_update()
     subscription = db.scalar(query)
@@ -71,7 +83,7 @@ def _check_limit(
             select(func.count())
             .select_from(UsageEvent)
             .where(
-                UsageEvent.user_id == user.id,
+                UsageEvent.user_id.in_(visible_user_ids(db, user)),
                 UsageEvent.event_type == event_type,
                 UsageEvent.created_at >= period_start,
             )
@@ -191,13 +203,16 @@ _USAGE_KINDS: list[tuple[UsageEventType, GenerationContentType | None]] = [
 
 
 def usage_summary(db: Session, user: User) -> list[UsageSummaryRow]:
-    """This billing period's usage against the user's tier limit, one
-    row per billable kind -- powers the analytics "usage vs. limits"
-    section. Read-only; mirrors _check_limit's query exactly so the
-    numbers shown always match what actually gates the user."""
-    subscription = db.scalar(select(Subscription).where(Subscription.user_id == user.id))
+    """This billing period's usage against the tier limit, one row per
+    billable kind -- powers the analytics "usage vs. limits" section.
+    Read-only; mirrors _check_limit's query exactly (team-pooled the
+    same way) so the numbers shown always match what actually gates
+    the user."""
+    owner = billing_owner(db, user)
+    subscription = db.scalar(select(Subscription).where(Subscription.user_id == owner.id))
     tier = effective_tier(subscription)
     period_start = current_period_start()
+    visible_ids = visible_user_ids(db, user)
 
     rows = []
     for event_type, content_type in _USAGE_KINDS:
@@ -205,7 +220,7 @@ def usage_summary(db: Session, user: User) -> list[UsageSummaryRow]:
             select(func.count())
             .select_from(UsageEvent)
             .where(
-                UsageEvent.user_id == user.id,
+                UsageEvent.user_id.in_(visible_ids),
                 UsageEvent.event_type == event_type,
                 UsageEvent.created_at >= period_start,
             )
