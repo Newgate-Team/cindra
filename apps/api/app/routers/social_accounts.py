@@ -16,6 +16,8 @@ from app.schemas import (
     LinkedInConnectRequest,
     LinkedInOAuthStartOut,
     MetaOAuthStartOut,
+    RedditConnectRequest,
+    RedditOAuthStartOut,
     SocialAccountOut,
     TelegramConnectRequest,
     TelegramStartVerificationOut,
@@ -30,17 +32,19 @@ from app.schemas import (
 from app.security import (
     create_linkedin_oauth_state,
     create_meta_oauth_state,
+    create_reddit_oauth_state,
     create_telegram_verification_token,
     create_tiktok_oauth_state,
     create_youtube_oauth_state,
     decode_linkedin_oauth_state,
     decode_meta_oauth_state,
+    decode_reddit_oauth_state,
     decode_telegram_verification_token,
     decode_tiktok_oauth_state,
     decode_youtube_oauth_state,
 )
 from app.social_accounts import upsert_social_account
-from app.social_integrations import instagram, linkedin, tiktok, youtube
+from app.social_integrations import instagram, linkedin, reddit, tiktok, youtube
 from app.social_integrations.errors import PermanentPublishError, TransientPublishError
 from app.social_integrations.telegram import get_chat, get_chat_member, get_me
 from app.teams import visible_user_ids
@@ -490,6 +494,89 @@ def connect_linkedin(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Не удалось подключить LinkedIn: {exc}",
+        ) from exc
+    except TransientPublishError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        ) from exc
+    return account
+
+
+@router.post("/reddit/start", response_model=RedditOAuthStartOut)
+def start_reddit_oauth(
+    current_user: User = Depends(get_current_user),
+) -> RedditOAuthStartOut:
+    settings = get_settings()
+    if not settings.reddit_client_id or not settings.reddit_client_secret:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Reddit ещё не настроен на сервере",
+        )
+    state_token = create_reddit_oauth_state(current_user.id)
+    query = urlencode(
+        {
+            "client_id": settings.reddit_client_id,
+            "response_type": "code",
+            "state": state_token,
+            "redirect_uri": settings.reddit_redirect_uri,
+            # duration=permanent: without it Reddit issues a 1-hour
+            # access token and NO refresh token at all (a "temporary"
+            # grant meant for short read-only sessions) -- publishing
+            # later from a background task needs a refresh token.
+            "duration": "permanent",
+            "scope": "identity submit",
+        }
+    )
+    return RedditOAuthStartOut(
+        authorization_url=f"https://www.reddit.com/api/v1/authorize?{query}"
+    )
+
+
+@router.post(
+    "/reddit/connect", response_model=SocialAccountOut, status_code=status.HTTP_201_CREATED
+)
+def connect_reddit(
+    payload: RedditConnectRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> SocialAccount:
+    try:
+        state_user_id = decode_reddit_oauth_state(payload.state)
+    except (jwt.InvalidTokenError, ValueError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Reddit OAuth state истёк или недействителен — начните подключение заново",
+        ) from None
+    if state_user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Reddit OAuth был начат другим пользователем",
+        )
+
+    settings = get_settings()
+    try:
+        token = reddit.exchange_code_for_token(
+            payload.code,
+            settings.reddit_client_id,
+            settings.reddit_client_secret,
+            settings.reddit_redirect_uri,
+            settings.reddit_user_agent,
+        )
+        identity = reddit.get_identity(token["access_token"], settings.reddit_user_agent)
+        account = upsert_social_account(
+            db,
+            current_user,
+            platform=SocialPlatform.reddit,
+            external_account_id=identity["name"],
+            access_token=token["access_token"],
+            refresh_token=token.get("refresh_token"),
+            token_expires_at=datetime.now(UTC) + timedelta(seconds=int(token["expires_in"])),
+            display_name=identity.get("name"),
+        )
+    except (KeyError, ValueError, PermanentPublishError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Не удалось подключить Reddit: {exc}",
         ) from exc
     except TransientPublishError as exc:
         raise HTTPException(

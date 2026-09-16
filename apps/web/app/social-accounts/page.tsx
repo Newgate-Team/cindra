@@ -21,6 +21,7 @@ const PLATFORM_LABELS: Record<string, string> = {
   tiktok: "TikTok",
   youtube: "YouTube",
   linkedin: "LinkedIn",
+  reddit: "Reddit",
 };
 
 const PLATFORM_ICONS: Record<string, string> = {
@@ -30,6 +31,7 @@ const PLATFORM_ICONS: Record<string, string> = {
   tiktok: "/tiktok-icon.svg",
   youtube: "/youtube-icon.svg",
   linkedin: "/linkedin-icon.svg",
+  reddit: "/reddit-icon.svg",
 };
 
 interface TelegramVerification {
@@ -55,6 +57,8 @@ function SocialAccountsManager() {
   const [connectingYouTube, setConnectingYouTube] = useState(false);
   const [linkedinError, setLinkedInError] = useState<string | null>(null);
   const [connectingLinkedIn, setConnectingLinkedIn] = useState(false);
+  const [redditError, setRedditError] = useState<string | null>(null);
+  const [connectingReddit, setConnectingReddit] = useState(false);
 
   function reload() {
     api.get<SocialAccount[]>("/social-accounts", token).then(setAccounts);
@@ -194,6 +198,22 @@ function SocialAccountsManager() {
     } catch (err) {
       setLinkedInError(err instanceof ApiError ? err.message : "Не удалось начать вход в LinkedIn");
       setConnectingLinkedIn(false);
+    }
+  }
+
+  async function handleConnectReddit() {
+    setRedditError(null);
+    setConnectingReddit(true);
+    try {
+      const result = await api.post<{ authorization_url: string }>(
+        "/social-accounts/reddit/start",
+        {},
+        token
+      );
+      window.location.href = result.authorization_url;
+    } catch (err) {
+      setRedditError(err instanceof ApiError ? err.message : "Не удалось начать вход в Reddit");
+      setConnectingReddit(false);
     }
   }
 
@@ -364,6 +384,19 @@ function SocialAccountsManager() {
         {linkedinError && <p className="error">{linkedinError}</p>}
         <button type="button" onClick={handleConnectLinkedIn} disabled={connectingLinkedIn}>
           {connectingLinkedIn ? "Открываем LinkedIn…" : "Войти через LinkedIn"}
+        </button>
+      </div>
+
+      <h2>Подключить Reddit</h2>
+      <div className="card">
+        <p className="muted">
+          Подключается через Reddit OAuth. Публикуется в ваш профиль (u/username) — выбор
+          отдельного сабреддита пока не поддерживается. Текст выходит постом, изображение и
+          видео — ссылкой на уже опубликованный в Cindra файл.
+        </p>
+        {redditError && <p className="error">{redditError}</p>}
+        <button type="button" onClick={handleConnectReddit} disabled={connectingReddit}>
+          {connectingReddit ? "Открываем Reddit…" : "Войти через Reddit"}
         </button>
       </div>
     </>

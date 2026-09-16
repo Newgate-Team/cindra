@@ -5,7 +5,8 @@ export type SocialPlatform =
   | "facebook"
   | "tiktok"
   | "youtube"
-  | "linkedin";
+  | "linkedin"
+  | "reddit";
 export type GenerationContentType = "text" | "image" | "video";
 export type AttachmentType = "image" | "video" | "audio" | "document";
 export type GenerationStatus = "queued" | "processing" | "completed" | "failed" | "flagged";

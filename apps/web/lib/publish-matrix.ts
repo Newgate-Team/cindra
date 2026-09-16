@@ -12,6 +12,10 @@ const ALLOWED_CONTENT_TYPES: Record<SocialPlatform, GenerationContentType[]> = {
   // Video deliberately excluded -- see publish_matrix.py's comment on
   // the same entry (scoped-out follow-up, not yet implemented).
   linkedin: ["text", "image"],
+  // Image/video go out as a Reddit "link" post pointing at Cindra's
+  // own hosted URL, not a native asset upload -- see reddit.py's
+  // module docstring and publish_matrix.py's comment on this entry.
+  reddit: ["text", "image", "video"],
 };
 
 const ALLOWED_CONTENT_KINDS: Record<SocialPlatform, Partial<Record<GenerationContentType, string[]>>> = {
@@ -21,6 +25,7 @@ const ALLOWED_CONTENT_KINDS: Record<SocialPlatform, Partial<Record<GenerationCon
   tiktok: { video: ["post"] },
   youtube: { video: ["post"] },
   linkedin: { text: ["post", "video_script"], image: ["post"] },
+  reddit: { text: ["post", "video_script"], image: ["post"], video: ["post"] },
 };
 
 export const CONTENT_KIND_LABELS: Record<string, string> = {
