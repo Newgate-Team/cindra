@@ -412,6 +412,15 @@ class LinkedInConnectRequest(BaseModel):
     state: str = Field(min_length=1)
 
 
+class RedditOAuthStartOut(BaseModel):
+    authorization_url: str
+
+
+class RedditConnectRequest(BaseModel):
+    code: str = Field(min_length=1)
+    state: str = Field(min_length=1)
+
+
 class SocialAccountOut(BaseModel):
     id: uuid.UUID
     platform: SocialPlatform

@@ -103,6 +103,14 @@ class Settings(BaseSettings):
     # against LinkedIn's current Developer Portal docs at that time,
     # not just trust this default forever.
     linkedin_api_version: str = "202501"
+    reddit_client_id: str = ""
+    reddit_client_secret: str = ""
+    reddit_redirect_uri: str = "https://cindra-chi.vercel.app/oauth/reddit/callback"
+    # Reddit rejects (or heavily rate-limits) requests with a generic/
+    # missing User-Agent -- every other platform integration in this
+    # app works fine without a custom one, Reddit specifically
+    # requires a descriptive, app-unique string on every API call.
+    reddit_user_agent: str = "cindra/1.0 (web app; by /u/cindra-app)"
     # Comma-separated. Without CORS the browser blocks every request
     # from the web app (blocked at the OPTIONS preflight, not
     # something curl-based manual testing ever exercises) -- found

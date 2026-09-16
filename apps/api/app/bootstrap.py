@@ -10,6 +10,7 @@ from app.social_integrations import (
     facebook,
     instagram,
     linkedin,
+    reddit,
     telegram,
     tiktok,
     youtube,
@@ -38,6 +39,7 @@ def bootstrap() -> None:
     register_publisher(SocialPlatform.tiktok, tiktok.publish)
     register_publisher(SocialPlatform.youtube, youtube.publish)
     register_publisher(SocialPlatform.linkedin, linkedin.publish)
+    register_publisher(SocialPlatform.reddit, reddit.publish)
 
     # CIN-121: the Celery worker runs with --loglevel=info (railway.toml),
     # which sets the root logger to INFO -- httpx's own request logger

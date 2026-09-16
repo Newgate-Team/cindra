@@ -24,6 +24,7 @@ from app.models import (
 from app.security import (
     create_linkedin_oauth_state,
     create_meta_oauth_state,
+    create_reddit_oauth_state,
     create_youtube_oauth_state,
 )
 from app.social_accounts import get_access_token, upsert_social_account
@@ -836,5 +837,84 @@ def test_connect_linkedin_rejects_state_issued_for_a_different_user(
 def test_connect_linkedin_requires_auth(client: TestClient) -> None:
     response = client.post(
         "/social-accounts/linkedin/connect", json={"code": "auth-code", "state": "whatever"}
+    )
+    assert response.status_code == 401
+
+
+def _reddit_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(get_settings(), "reddit_client_id", "client-id")
+    monkeypatch.setattr(get_settings(), "reddit_client_secret", "client-secret")
+
+
+def test_start_reddit_oauth_returns_503_when_unconfigured(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    response = client.post("/social-accounts/reddit/start", headers=headers)
+    assert response.status_code == 503
+
+
+def test_start_reddit_oauth_returns_state_bound_to_current_user(
+    client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _reddit_configured(monkeypatch)
+    headers = _auth_headers(client)
+    response = client.post("/social-accounts/reddit/start", headers=headers)
+    assert response.status_code == 200
+    url = response.json()["authorization_url"]
+    assert url.startswith("https://www.reddit.com/api/v1/authorize?")
+    query = parse_qs(urlparse(url).query)
+    assert query["duration"] == ["permanent"]
+    state = query["state"][0]
+    assert jwt.decode(state, get_settings().jwt_secret, algorithms=["HS256"])["sub"] == str(
+        _user_id(db)
+    )
+
+
+def test_start_reddit_oauth_requires_auth(client: TestClient) -> None:
+    assert client.post("/social-accounts/reddit/start").status_code == 401
+
+
+def test_connect_reddit_creates_social_account(client: TestClient, db: Session) -> None:
+    headers = _auth_headers(client)
+    state = create_reddit_oauth_state(_user_id(db))
+    with (
+        patch(
+            "app.routers.social_accounts.reddit.exchange_code_for_token",
+            return_value={"access_token": "access", "refresh_token": "refresh", "expires_in": 3600},
+        ),
+        patch(
+            "app.routers.social_accounts.reddit.get_identity",
+            return_value={"name": "ada_lovelace", "id": "t2_abc123"},
+        ),
+    ):
+        response = client.post(
+            "/social-accounts/reddit/connect",
+            json={"code": "auth-code", "state": state},
+            headers=headers,
+        )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["platform"] == "reddit"
+    assert body["external_account_id"] == "ada_lovelace"
+    assert body["display_name"] == "ada_lovelace"
+
+
+def test_connect_reddit_rejects_state_issued_for_a_different_user(
+    client: TestClient, db: Session
+) -> None:
+    headers = _auth_headers(client)
+    someone_elses_state = create_reddit_oauth_state(uuid.uuid4())
+    response = client.post(
+        "/social-accounts/reddit/connect",
+        json={"code": "auth-code", "state": someone_elses_state},
+        headers=headers,
+    )
+    assert response.status_code == 400
+    assert "другим пользователем" in response.json()["detail"]
+
+
+def test_connect_reddit_requires_auth(client: TestClient) -> None:
+    response = client.post(
+        "/social-accounts/reddit/connect", json={"code": "auth-code", "state": "whatever"}
     )
     assert response.status_code == 401

@@ -22,6 +22,15 @@ ALLOWED_CONTENT_TYPES: dict[SocialPlatform, frozenset[GenerationContentType]] = 
     # budget") instead of generating a video that then fails at the
     # very last step.
     SocialPlatform.linkedin: frozenset({_TEXT, _IMAGE}),
+    # Unlike LinkedIn's video exclusion, this isn't a scoped-out corner
+    # -- reddit.py deliberately never implements Reddit's native
+    # asset-upload lease/S3 protocol at all, for text OR media. Every
+    # Cindra-generated image/video already has a stable public R2 URL,
+    # and Reddit's "link" post kind (a first-class post type, not a
+    # workaround) auto-embeds a direct image/video URL the same way a
+    # native upload would display. So image and video are both fully
+    # supported here, just via `kind=link` instead of asset upload.
+    SocialPlatform.reddit: frozenset({_TEXT, _IMAGE, _VIDEO}),
 }
 
 # content_kind per platform+content_type. "story" only exists as a
@@ -51,6 +60,11 @@ ALLOWED_CONTENT_KINDS: dict[SocialPlatform, dict[GenerationContentType, frozense
     SocialPlatform.linkedin: {
         _TEXT: frozenset({"post", "video_script"}),
         _IMAGE: frozenset({"post"}),
+    },
+    SocialPlatform.reddit: {
+        _TEXT: frozenset({"post", "video_script"}),
+        _IMAGE: frozenset({"post"}),
+        _VIDEO: frozenset({"post"}),
     },
 }
 

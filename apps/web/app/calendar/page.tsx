@@ -20,6 +20,7 @@ const PLATFORM_LABELS: Record<Post["platform"], string> = {
   tiktok: "TikTok",
   youtube: "YouTube",
   linkedin: "LinkedIn",
+  reddit: "Reddit",
 };
 
 // Текст публикации обрезан в таблице до 80 символов -- иконка рядом
