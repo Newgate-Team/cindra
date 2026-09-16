@@ -14,6 +14,7 @@ from app.models import (
     SocialPlatform,
     User,
 )
+from app.teams import visible_user_ids
 
 
 @dataclass(frozen=True)
@@ -36,7 +37,7 @@ class PostsOverview:
 def posts_overview(db: Session, user: User, since: datetime) -> PostsOverview:
     rows = db.execute(
         select(Post.status, func.count())
-        .where(Post.user_id == user.id, Post.created_at >= since)
+        .where(Post.user_id.in_(visible_user_ids(db, user)), Post.created_at >= since)
         .group_by(Post.status)
     ).all()
     counts = dict(rows)
@@ -60,7 +61,7 @@ def posts_by_platform(db: Session, user: User, since: datetime) -> list[Platform
     rows = db.execute(
         select(SocialAccount.platform, Post.status, func.count())
         .join(SocialAccount, SocialAccount.id == Post.social_account_id)
-        .where(Post.user_id == user.id, Post.created_at >= since)
+        .where(Post.user_id.in_(visible_user_ids(db, user)), Post.created_at >= since)
         .group_by(SocialAccount.platform, Post.status)
     ).all()
     by_platform: dict[SocialPlatform, dict[PostStatus, int]] = {}
@@ -85,7 +86,7 @@ class ContentKindCount:
 def posts_by_content_kind(db: Session, user: User, since: datetime) -> list[ContentKindCount]:
     rows = db.execute(
         select(Post.content_kind, func.count())
-        .where(Post.user_id == user.id, Post.created_at >= since)
+        .where(Post.user_id.in_(visible_user_ids(db, user)), Post.created_at >= since)
         .group_by(Post.content_kind)
         .order_by(func.count().desc())
     ).all()
@@ -113,7 +114,7 @@ def daily_published_posts(db: Session, user: User, since: datetime) -> list[Dail
     """
     published_ats = db.scalars(
         select(Post.published_at).where(
-            Post.user_id == user.id,
+            Post.user_id.in_(visible_user_ids(db, user)),
             Post.status == PostStatus.published,
             Post.published_at >= since,
         )
@@ -154,7 +155,7 @@ class GenerationsOverview:
 def generations_overview(db: Session, user: User, since: datetime) -> GenerationsOverview:
     rows = db.execute(
         select(GenerationJob.status, func.count())
-        .where(GenerationJob.user_id == user.id, GenerationJob.created_at >= since)
+        .where(GenerationJob.user_id.in_(visible_user_ids(db, user)), GenerationJob.created_at >= since)
         .group_by(GenerationJob.status)
     ).all()
     counts = dict(rows)
@@ -180,7 +181,7 @@ def generations_by_content_type(
 ) -> list[ContentTypeGenerationCounts]:
     rows = db.execute(
         select(GenerationJob.content_type, GenerationJob.status, func.count())
-        .where(GenerationJob.user_id == user.id, GenerationJob.created_at >= since)
+        .where(GenerationJob.user_id.in_(visible_user_ids(db, user)), GenerationJob.created_at >= since)
         .group_by(GenerationJob.content_type, GenerationJob.status)
     ).all()
     by_type: dict[GenerationContentType, dict[GenerationStatus, int]] = {}

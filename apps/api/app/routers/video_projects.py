@@ -33,6 +33,7 @@ from app.schemas import (
     VideoProjectUpdate,
     VideoStyleOut,
 )
+from app.teams import visible_user_ids
 from app.usage import check_usage_limit, record_usage
 from app.video_styles import VIDEO_STYLES
 
@@ -63,7 +64,7 @@ def _owned_project(
             status_code=status.HTTP_404_NOT_FOUND, detail="Проект не найден"
         ) from None
     project = db.get(VideoProject, key, with_for_update=for_update)
-    if project is None or project.user_id != user.id:
+    if project is None or project.user_id not in visible_user_ids(db, user):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Проект не найден")
     return project
 
@@ -193,7 +194,7 @@ def list_projects(
     # unbounded.
     query = (
         select(VideoProject)
-        .where(VideoProject.user_id == current_user.id)
+        .where(VideoProject.user_id.in_(visible_user_ids(db, current_user)))
         .order_by(VideoProject.created_at.desc())
     )
     rows, total = paginate(db, query, limit, offset)

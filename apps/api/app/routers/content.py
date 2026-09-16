@@ -50,6 +50,7 @@ from app.schemas import (
     LayoutRenderRequest,
     LayoutTemplateOut,
 )
+from app.teams import visible_user_ids
 from app.usage import check_usage_limit, enforce_and_record_usage, record_usage
 
 router = APIRouter(prefix="/content", tags=["content"])
@@ -120,7 +121,8 @@ def generate_content(
         ).all()
         found_ids = {a.id for a in accounts}
         missing = set(payload.target_account_ids) - found_ids
-        if missing or any(a.user_id != current_user.id for a in accounts):
+        visible_ids = visible_user_ids(db, current_user)
+        if missing or any(a.user_id not in visible_ids for a in accounts):
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="Соцаккаунт не найден"
             )
@@ -387,7 +389,7 @@ def get_generation_job(
     db: Session = Depends(get_db),
 ) -> GenerationJob:
     job = db.get(GenerationJob, job_id)
-    if job is None or job.user_id != current_user.id:
+    if job is None or job.user_id not in visible_user_ids(db, current_user):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Задача не найдена"
         )
