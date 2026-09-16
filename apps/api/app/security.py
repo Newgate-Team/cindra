@@ -59,6 +59,11 @@ PASSWORD_RESET_TOKEN_EXPIRE_MINUTES = 30
 # "confirm your email" message unread for a day or more.
 EMAIL_VERIFICATION_TOKEN_EXPIRE_MINUTES = 60 * 24
 
+# A week: unlike password reset or email verification, accepting this
+# is a real decision someone often needs to sit with (or just gets to
+# a few days later), not something clicked within minutes of arriving.
+TEAM_INVITE_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7
+
 
 def is_locked_out(user: User) -> bool:
     return user.locked_until is not None and user.locked_until > datetime.now(UTC)

@@ -52,6 +52,46 @@ class EmailVerificationConfirm(BaseModel):
     token: str = Field(min_length=1)
 
 
+class TeamCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+
+
+class TeamInviteCreate(BaseModel):
+    email: EmailStr
+
+
+class TeamInviteAccept(BaseModel):
+    token: str = Field(min_length=1)
+
+
+class TeamMemberOut(BaseModel):
+    id: uuid.UUID
+    email: EmailStr
+    role: UserRole
+    is_owner: bool
+
+    model_config = {"from_attributes": True}
+
+
+class TeamInviteOut(BaseModel):
+    id: uuid.UUID
+    email: EmailStr
+    expires_at: datetime
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class TeamOut(BaseModel):
+    id: uuid.UUID
+    name: str
+    owner_user_id: uuid.UUID
+    members: list[TeamMemberOut]
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class GoogleLoginRequest(BaseModel):
     id_token: str = Field(min_length=1)
 

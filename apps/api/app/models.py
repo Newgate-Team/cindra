@@ -141,6 +141,16 @@ class User(Base):
     # reasoning as CIN-140's password-drop on Google sign-in). Informational
     # only for now -- nothing in the product is gated on this yet.
     email_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # NULL = solo user, resources scoped to just this user_id (the
+    # original, only behaviour before roadmap item 5). Set once this
+    # user creates or accepts a team -- app/teams.py's
+    # visible_user_ids() is the single place that turns this into "who
+    # else can see this user's stuff", so every resource-ownership
+    # query goes through that helper rather than re-deriving team
+    # membership itself.
+    team_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("teams.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
@@ -152,6 +162,68 @@ class User(Base):
         nothing for POST /auth/change-password to check against, so the
         frontend needs to know whether to offer that form at all."""
         return self.hashed_password is not None
+
+
+class Team(Base):
+    """Roadmap item 5 -- a shared agency workspace. Deliberately thin:
+    creation is gated to role=agency (see POST /team), and everything
+    a team actually shares (connected accounts, posts, generations,
+    billing quota) is wired in as separate, incremental follow-ups via
+    app/teams.py::visible_user_ids() rather than all at once here --
+    each resource type gets its own dedicated cross-team isolation
+    tests before its queries start trusting team_id.
+    """
+
+    __tablename__ = "teams"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    # The billing/management authority -- who can invite, remove
+    # members, and (once wired in) whose Subscription the whole team
+    # draws quota from. Not just "whoever created it" forever: nothing
+    # currently supports transferring this, but the column exists
+    # separately from "first member" so that's addable later without a
+    # schema change.
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+
+
+class TeamInvite(Base):
+    """One outstanding invite to join a team, identified by email (the
+    invitee doesn't need an account yet to be invited). Accepting is a
+    separate, AUTHENTICATED action (POST /team/invites/accept) that
+    requires the logged-in user's own email to match -- deliberately
+    not "anyone who has the link joins automatically", and deliberately
+    not auto-creating an account either: an existing user's own
+    pre-team resources stay theirs until they explicitly accept, so a
+    careless invite can't silently expose someone's private drafts to
+    a team they never agreed to join.
+    """
+
+    __tablename__ = "team_invites"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    team_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("teams.id", ondelete="CASCADE"), nullable=False
+    )
+    email: Mapped[str] = mapped_column(String(320), nullable=False)
+    invited_by_user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
 
 
 class PasswordResetToken(Base):

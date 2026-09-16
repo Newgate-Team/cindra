@@ -97,6 +97,17 @@ export function SplitTestIcon({ size = 20 }: IconProps) {
   );
 }
 
+export function TeamIcon({ size = 20 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" {...common}>
+      <circle cx="9" cy="8" r="3" />
+      <path d="M3.5 19c0-3 2.5-5.5 5.5-5.5s5.5 2.5 5.5 5.5" />
+      <circle cx="17" cy="8.5" r="2.5" />
+      <path d="M15.5 13.6c2.3.4 4 2.5 4 5.4" />
+    </svg>
+  );
+}
+
 export function GearIcon({ size = 20 }: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" {...common}>

@@ -147,6 +147,21 @@ export interface ImageTemplate {
   preview_url: string | null;
 }
 
+export interface TeamMember {
+  id: string;
+  email: string;
+  role: UserRole;
+  is_owner: boolean;
+}
+
+export interface Team {
+  id: string;
+  name: string;
+  owner_user_id: string;
+  members: TeamMember[];
+  created_at: string;
+}
+
 export interface ABTest {
   id: string;
   topic: string;

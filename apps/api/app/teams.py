@@ -1,0 +1,21 @@
+import uuid
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.models import User
+
+
+def visible_user_ids(db: Session, user: User) -> list[uuid.UUID]:
+    """Whose resources `user` should see: just themselves if they're
+    not on a team, everyone on the same team otherwise.
+
+    This is the ONE place team membership turns into resource
+    visibility -- every ownership-scoped query that gets taught about
+    teams should filter on this list (e.g. `Post.user_id.in_(...)`)
+    instead of re-deriving membership itself, so there's a single spot
+    to get right and a single spot to test.
+    """
+    if user.team_id is None:
+        return [user.id]
+    return list(db.scalars(select(User.id).where(User.team_id == user.team_id)))
