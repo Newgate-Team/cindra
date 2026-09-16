@@ -8,6 +8,7 @@ const ALLOWED_CONTENT_TYPES: Record<SocialPlatform, GenerationContentType[]> = {
   facebook: ["text", "image", "video"],
   instagram: ["image", "video"],
   tiktok: ["video"],
+  youtube: ["video"],
 };
 
 const ALLOWED_CONTENT_KINDS: Record<SocialPlatform, Partial<Record<GenerationContentType, string[]>>> = {
@@ -15,6 +16,7 @@ const ALLOWED_CONTENT_KINDS: Record<SocialPlatform, Partial<Record<GenerationCon
   facebook: { text: ["post", "video_script"], image: ["post"], video: ["post"] },
   instagram: { image: ["post", "story"], video: ["post", "story"] },
   tiktok: { video: ["post"] },
+  youtube: { video: ["post"] },
 };
 
 export const CONTENT_KIND_LABELS: Record<string, string> = {

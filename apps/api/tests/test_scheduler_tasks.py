@@ -8,6 +8,7 @@ from app.scheduler import registry
 from app.scheduler.registry import register_publisher
 from app.scheduler.tasks import enqueue_due_posts, publish_post
 from app.social_accounts import upsert_social_account
+from app.social_integrations import youtube
 from app.social_integrations.errors import PermanentPublishError, TransientPublishError
 
 
@@ -114,6 +115,15 @@ def test_unregistered_platform_fails_cleanly(db: Session, user: User) -> None:
     db.refresh(post)
     assert post.status == PostStatus.failed
     assert "telegram" in post.error_message.lower()
+
+
+def test_bootstrap_registers_a_publisher_for_every_platform() -> None:
+    # Cheap, direct check that adding a platform to the SocialPlatform
+    # enum was actually wired into app/bootstrap.py -- catches a
+    # forgotten register_publisher() call immediately instead of only
+    # at actual publish time (see test_unregistered_platform_fails_cleanly
+    # for what that failure mode looks like).
+    assert registry.get_publisher(SocialPlatform.youtube) is youtube.publish
 
 
 def test_unknown_post_id_is_a_noop() -> None:

@@ -28,6 +28,7 @@ class SocialPlatform(str, enum.Enum):
     instagram = "instagram"
     facebook = "facebook"
     tiktok = "tiktok"
+    youtube = "youtube"
 
 
 class SubscriptionTier(str, enum.Enum):

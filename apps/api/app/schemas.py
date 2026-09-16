@@ -394,6 +394,15 @@ class TikTokPublishStatusOut(BaseModel):
     publicly_available_post_id: list[str] = Field(default_factory=list)
 
 
+class YouTubeOAuthStartOut(BaseModel):
+    authorization_url: str
+
+
+class YouTubeConnectRequest(BaseModel):
+    code: str = Field(min_length=1)
+    state: str = Field(min_length=1)
+
+
 class SocialAccountOut(BaseModel):
     id: uuid.UUID
     platform: SocialPlatform

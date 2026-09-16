@@ -3,6 +3,7 @@ import uuid
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
+from urllib.parse import parse_qs, urlparse
 
 import jwt
 import pytest
@@ -20,7 +21,7 @@ from app.models import (
     SubscriptionTier,
     User,
 )
-from app.security import create_meta_oauth_state
+from app.security import create_meta_oauth_state, create_youtube_oauth_state
 from app.social_accounts import get_access_token, upsert_social_account
 from app.social_integrations.errors import PermanentPublishError
 from app.token_crypto import decrypt_token, encrypt_token
@@ -677,3 +678,82 @@ def test_connect_instagram_rejects_state_issued_for_a_different_user(
     )
     assert response.status_code == 400
     assert "другим пользователем" in response.json()["detail"]
+
+
+def _youtube_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(get_settings(), "youtube_client_id", "client-id")
+    monkeypatch.setattr(get_settings(), "youtube_client_secret", "client-secret")
+
+
+def test_start_youtube_oauth_returns_503_when_unconfigured(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    response = client.post("/social-accounts/youtube/start", headers=headers)
+    assert response.status_code == 503
+
+
+def test_start_youtube_oauth_returns_state_bound_to_current_user(
+    client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _youtube_configured(monkeypatch)
+    headers = _auth_headers(client)
+    response = client.post("/social-accounts/youtube/start", headers=headers)
+    assert response.status_code == 200
+    url = response.json()["authorization_url"]
+    assert url.startswith("https://accounts.google.com/o/oauth2/v2/auth?")
+    assert "access_type=offline" in url
+    assert "prompt=consent" in url
+    state = parse_qs(urlparse(url).query)["state"][0]
+    assert jwt.decode(state, get_settings().jwt_secret, algorithms=["HS256"])["sub"] == str(
+        _user_id(db)
+    )
+
+
+def test_start_youtube_oauth_requires_auth(client: TestClient) -> None:
+    assert client.post("/social-accounts/youtube/start").status_code == 401
+
+
+def test_connect_youtube_creates_social_account(client: TestClient, db: Session) -> None:
+    headers = _auth_headers(client)
+    state = create_youtube_oauth_state(_user_id(db))
+    with (
+        patch(
+            "app.routers.social_accounts.youtube.exchange_code_for_token",
+            return_value={"access_token": "access", "refresh_token": "refresh", "expires_in": 3600},
+        ),
+        patch(
+            "app.routers.social_accounts.youtube.get_channel_info",
+            return_value={"id": "UC123", "snippet": {"title": "Cindra Demo"}},
+        ),
+    ):
+        response = client.post(
+            "/social-accounts/youtube/connect",
+            json={"code": "auth-code", "state": state},
+            headers=headers,
+        )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["platform"] == "youtube"
+    assert body["external_account_id"] == "UC123"
+    assert body["display_name"] == "Cindra Demo"
+
+
+def test_connect_youtube_rejects_state_issued_for_a_different_user(
+    client: TestClient, db: Session
+) -> None:
+    headers = _auth_headers(client)
+    someone_elses_state = create_youtube_oauth_state(uuid.uuid4())
+    response = client.post(
+        "/social-accounts/youtube/connect",
+        json={"code": "auth-code", "state": someone_elses_state},
+        headers=headers,
+    )
+    assert response.status_code == 400
+    assert "другим пользователем" in response.json()["detail"]
+
+
+def test_connect_youtube_requires_auth(client: TestClient) -> None:
+    response = client.post(
+        "/social-accounts/youtube/connect", json={"code": "auth-code", "state": "whatever"}
+    )
+    assert response.status_code == 401

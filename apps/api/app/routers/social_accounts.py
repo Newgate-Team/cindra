@@ -22,17 +22,21 @@ from app.schemas import (
     TikTokCreatorInfoOut,
     TikTokOAuthStartOut,
     TikTokPublishStatusOut,
+    YouTubeConnectRequest,
+    YouTubeOAuthStartOut,
 )
 from app.security import (
     create_meta_oauth_state,
     create_telegram_verification_token,
     create_tiktok_oauth_state,
+    create_youtube_oauth_state,
     decode_meta_oauth_state,
     decode_telegram_verification_token,
     decode_tiktok_oauth_state,
+    decode_youtube_oauth_state,
 )
 from app.social_accounts import upsert_social_account
-from app.social_integrations import instagram, tiktok
+from app.social_integrations import instagram, tiktok, youtube
 from app.social_integrations.errors import PermanentPublishError, TransientPublishError
 from app.social_integrations.telegram import get_chat, get_chat_member, get_me
 from app.teams import visible_user_ids
@@ -315,6 +319,91 @@ def connect_tiktok(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Не удалось подключить TikTok: {exc}",
+        ) from exc
+    except TransientPublishError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        ) from exc
+    return account
+
+
+@router.post("/youtube/start", response_model=YouTubeOAuthStartOut)
+def start_youtube_oauth(
+    current_user: User = Depends(get_current_user),
+) -> YouTubeOAuthStartOut:
+    settings = get_settings()
+    if not settings.youtube_client_id or not settings.youtube_client_secret:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="YouTube ещё не настроен на сервере",
+        )
+    state_token = create_youtube_oauth_state(current_user.id)
+    query = urlencode(
+        {
+            "client_id": settings.youtube_client_id,
+            "redirect_uri": settings.youtube_redirect_uri,
+            "response_type": "code",
+            "scope": "https://www.googleapis.com/auth/youtube.upload",
+            # offline + consent: without both, Google only issues a
+            # refresh_token on the very first consent a user ever
+            # grants this client -- a reconnect after revoking access
+            # would otherwise silently come back with no refresh_token
+            # at all (ensure_fresh_access_token would then have nothing
+            # to refresh with once the short-lived access token expired).
+            "access_type": "offline",
+            "prompt": "consent",
+            "state": state_token,
+        }
+    )
+    return YouTubeOAuthStartOut(
+        authorization_url=f"https://accounts.google.com/o/oauth2/v2/auth?{query}"
+    )
+
+
+@router.post(
+    "/youtube/connect", response_model=SocialAccountOut, status_code=status.HTTP_201_CREATED
+)
+def connect_youtube(
+    payload: YouTubeConnectRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> SocialAccount:
+    try:
+        state_user_id = decode_youtube_oauth_state(payload.state)
+    except (jwt.InvalidTokenError, ValueError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="YouTube OAuth state истёк или недействителен — начните подключение заново",
+        ) from None
+    if state_user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="YouTube OAuth был начат другим пользователем",
+        )
+
+    settings = get_settings()
+    try:
+        token = youtube.exchange_code_for_token(
+            payload.code,
+            settings.youtube_client_id,
+            settings.youtube_client_secret,
+            settings.youtube_redirect_uri,
+        )
+        channel = youtube.get_channel_info(token["access_token"])
+        account = upsert_social_account(
+            db,
+            current_user,
+            platform=SocialPlatform.youtube,
+            external_account_id=channel["id"],
+            access_token=token["access_token"],
+            refresh_token=token.get("refresh_token"),
+            token_expires_at=datetime.now(UTC) + timedelta(seconds=int(token["expires_in"])),
+            display_name=channel.get("snippet", {}).get("title"),
+        )
+    except (KeyError, ValueError, PermanentPublishError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Не удалось подключить YouTube: {exc}",
         ) from exc
     except TransientPublishError as exc:
         raise HTTPException(

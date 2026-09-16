@@ -82,6 +82,15 @@ class Settings(BaseSettings):
     tiktok_client_key: str = ""
     tiktok_client_secret: str = ""
     tiktok_redirect_uri: str = "https://cindra-chi.vercel.app/oauth/tiktok/callback"
+    # YouTube Data API v3, a SEPARATE OAuth client from google_client_id
+    # above -- that one is Google Sign-In (ID-token only, no refresh
+    # token); this one needs offline access + the youtube.upload scope
+    # to publish videos, its own consent screen, its own client the
+    # account owner registers in Google Cloud Console. Redirect URI
+    # must be registered verbatim there, same as TikTok's.
+    youtube_client_id: str = ""
+    youtube_client_secret: str = ""
+    youtube_redirect_uri: str = "https://cindra-chi.vercel.app/oauth/youtube/callback"
     # Comma-separated. Without CORS the browser blocks every request
     # from the web app (blocked at the OPTIONS preflight, not
     # something curl-based manual testing ever exercises) -- found
