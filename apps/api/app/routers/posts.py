@@ -25,6 +25,7 @@ from app.models import (
 from app.pagination import DEFAULT_LIMIT, MAX_LIMIT, Page, paginate
 from app.scheduler.tasks import publish_post
 from app.schemas import PostCreate, PostOut, PostUpdate
+from app.teams import visible_user_ids
 from app.usage import check_usage_limit
 
 router = APIRouter(prefix="/posts", tags=["posts"])
@@ -135,7 +136,7 @@ def list_posts(
     query = (
         select(Post, SocialAccount)
         .join(SocialAccount, Post.social_account_id == SocialAccount.id)
-        .where(Post.user_id == current_user.id)
+        .where(Post.user_id.in_(visible_user_ids(db, current_user)))
         .order_by(Post.scheduled_for.desc())
     )
     rows, total = paginate(db, query, limit, offset)
@@ -158,8 +159,9 @@ def create_post(
         select(SocialAccount).where(SocialAccount.id.in_(payload.social_account_ids))
     ).all()
     accounts_by_id = {a.id: a for a in accounts}
+    visible_ids = visible_user_ids(db, current_user)
     if set(payload.social_account_ids) - accounts_by_id.keys() or any(
-        a.user_id != current_user.id for a in accounts
+        a.user_id not in visible_ids for a in accounts
     ):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Соцаккаунт не найден"
@@ -201,7 +203,7 @@ def create_post(
     # instead of a clean 404.
     if payload.generation_job_id is not None:
         job = db.get(GenerationJob, payload.generation_job_id)
-        if job is None or job.user_id != current_user.id:
+        if job is None or job.user_id not in visible_ids:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="Задача генерации не найдена"
             )
@@ -285,7 +287,7 @@ def get_post(
     db: Session = Depends(get_db),
 ) -> PostOut:
     post = db.get(Post, post_id)
-    if post is None or post.user_id != current_user.id:
+    if post is None or post.user_id not in visible_user_ids(db, current_user):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Публикация не найдена"
         )
@@ -294,7 +296,7 @@ def get_post(
 
 def _get_scheduled_post_owned_by(db: Session, post_id: str, current_user: User) -> Post:
     post = db.get(Post, post_id)
-    if post is None or post.user_id != current_user.id:
+    if post is None or post.user_id not in visible_user_ids(db, current_user):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Публикация не найдена"
         )

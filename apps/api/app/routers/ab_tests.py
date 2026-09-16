@@ -13,6 +13,7 @@ from app.models import (
     User,
 )
 from app.schemas import ABTestCreate, ABTestOut, ABTestWinner
+from app.teams import visible_user_ids
 from app.usage import enforce_and_record_usage_bulk
 
 router = APIRouter(prefix="/ab-tests", tags=["ab-tests"])
@@ -104,7 +105,7 @@ def get_ab_test(
     db: Session = Depends(get_db),
 ) -> ABTestOut:
     test = db.get(ABTest, test_id)
-    if test is None or test.user_id != current_user.id:
+    if test is None or test.user_id not in visible_user_ids(db, current_user):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Тест не найден")
     return _to_out(test, _variants(db, test.id))
 
@@ -117,7 +118,7 @@ def set_ab_test_winner(
     db: Session = Depends(get_db),
 ) -> ABTestOut:
     test = db.get(ABTest, test_id)
-    if test is None or test.user_id != current_user.id:
+    if test is None or test.user_id not in visible_user_ids(db, current_user):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Тест не найден")
 
     variants = _variants(db, test.id)
