@@ -48,6 +48,23 @@ def test_youtube_and_tiktok_intersect_to_video_posts() -> None:
     }
 
 
+def test_linkedin_allows_text_and_image_but_not_video() -> None:
+    assert allowed_content_types_for({SocialPlatform.linkedin}) == {
+        GenerationContentType.text,
+        GenerationContentType.image,
+    }
+    assert allowed_content_kinds_for(
+        {SocialPlatform.linkedin}, GenerationContentType.text
+    ) == {"post", "video_script"}
+
+
+def test_validate_linkedin_video_raises() -> None:
+    with pytest.raises(InvalidGenerationTargetError):
+        validate_generation_target(
+            {SocialPlatform.linkedin}, GenerationContentType.video, "post"
+        )
+
+
 def test_mixed_targets_intersect_to_media_only() -> None:
     result = allowed_content_types_for({SocialPlatform.instagram, SocialPlatform.telegram})
     assert result == {GenerationContentType.image, GenerationContentType.video}

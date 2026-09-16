@@ -227,3 +227,30 @@ def decode_youtube_oauth_state(token: str) -> uuid.UUID:
     if payload.get("typ") != _YOUTUBE_OAUTH_STATE_TYPE:
         raise jwt.InvalidTokenError("not a youtube_oauth_state token")
     return uuid.UUID(payload["sub"])
+
+
+LINKEDIN_OAUTH_STATE_EXPIRE_MINUTES = 10
+_LINKEDIN_OAUTH_STATE_TYPE = "linkedin_oauth_state"
+
+
+def create_linkedin_oauth_state(user_id: uuid.UUID) -> str:
+    """Same purpose/CSRF reasoning as create_tiktok_oauth_state -- binds
+    the LinkedIn OAuth callback to the authenticated Cindra user who
+    started the flow."""
+    settings = get_settings()
+    expire = datetime.now(UTC) + timedelta(minutes=LINKEDIN_OAUTH_STATE_EXPIRE_MINUTES)
+    payload = {
+        "sub": str(user_id),
+        "nonce": uuid.uuid4().hex,
+        "exp": expire,
+        "typ": _LINKEDIN_OAUTH_STATE_TYPE,
+    }
+    return jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
+
+
+def decode_linkedin_oauth_state(token: str) -> uuid.UUID:
+    settings = get_settings()
+    payload = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
+    if payload.get("typ") != _LINKEDIN_OAUTH_STATE_TYPE:
+        raise jwt.InvalidTokenError("not a linkedin_oauth_state token")
+    return uuid.UUID(payload["sub"])

@@ -91,6 +91,18 @@ class Settings(BaseSettings):
     youtube_client_id: str = ""
     youtube_client_secret: str = ""
     youtube_redirect_uri: str = "https://cindra-chi.vercel.app/oauth/youtube/callback"
+    # "Sign In with LinkedIn using OpenID Connect" + "Share on LinkedIn"
+    # products, both auto-approved for any LinkedIn app (no partner
+    # review needed, unlike LinkedIn's Marketing/organization APIs).
+    linkedin_client_id: str = ""
+    linkedin_client_secret: str = ""
+    linkedin_redirect_uri: str = "https://cindra-chi.vercel.app/oauth/linkedin/callback"
+    # LinkedIn's REST API requires a YYYYMM version string on every
+    # call and deprecates old ones roughly a year out -- whoever
+    # configures the real client credentials should also confirm this
+    # against LinkedIn's current Developer Portal docs at that time,
+    # not just trust this default forever.
+    linkedin_api_version: str = "202501"
     # Comma-separated. Without CORS the browser blocks every request
     # from the web app (blocked at the OPTIONS preflight, not
     # something curl-based manual testing ever exercises) -- found

@@ -13,6 +13,8 @@ from app.deps import get_current_user
 from app.models import SocialAccount, SocialPlatform, User
 from app.schemas import (
     InstagramConnectRequest,
+    LinkedInConnectRequest,
+    LinkedInOAuthStartOut,
     MetaOAuthStartOut,
     SocialAccountOut,
     TelegramConnectRequest,
@@ -26,17 +28,19 @@ from app.schemas import (
     YouTubeOAuthStartOut,
 )
 from app.security import (
+    create_linkedin_oauth_state,
     create_meta_oauth_state,
     create_telegram_verification_token,
     create_tiktok_oauth_state,
     create_youtube_oauth_state,
+    decode_linkedin_oauth_state,
     decode_meta_oauth_state,
     decode_telegram_verification_token,
     decode_tiktok_oauth_state,
     decode_youtube_oauth_state,
 )
 from app.social_accounts import upsert_social_account
-from app.social_integrations import instagram, tiktok, youtube
+from app.social_integrations import instagram, linkedin, tiktok, youtube
 from app.social_integrations.errors import PermanentPublishError, TransientPublishError
 from app.social_integrations.telegram import get_chat, get_chat_member, get_me
 from app.teams import visible_user_ids
@@ -404,6 +408,88 @@ def connect_youtube(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Не удалось подключить YouTube: {exc}",
+        ) from exc
+    except TransientPublishError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        ) from exc
+    return account
+
+
+@router.post("/linkedin/start", response_model=LinkedInOAuthStartOut)
+def start_linkedin_oauth(
+    current_user: User = Depends(get_current_user),
+) -> LinkedInOAuthStartOut:
+    settings = get_settings()
+    if not settings.linkedin_client_id or not settings.linkedin_client_secret:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="LinkedIn ещё не настроен на сервере",
+        )
+    state_token = create_linkedin_oauth_state(current_user.id)
+    query = urlencode(
+        {
+            "response_type": "code",
+            "client_id": settings.linkedin_client_id,
+            "redirect_uri": settings.linkedin_redirect_uri,
+            # openid+profile: identify the member (OIDC userinfo) to get
+            # their own URN. w_member_social: "Share on LinkedIn" --
+            # create/manage posts as that member. Both auto-approved
+            # products, no partner review needed (unlike LinkedIn's
+            # Marketing/organization-posting APIs).
+            "scope": "openid profile w_member_social",
+            "state": state_token,
+        }
+    )
+    return LinkedInOAuthStartOut(
+        authorization_url=f"https://www.linkedin.com/oauth/v2/authorization?{query}"
+    )
+
+
+@router.post(
+    "/linkedin/connect", response_model=SocialAccountOut, status_code=status.HTTP_201_CREATED
+)
+def connect_linkedin(
+    payload: LinkedInConnectRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> SocialAccount:
+    try:
+        state_user_id = decode_linkedin_oauth_state(payload.state)
+    except (jwt.InvalidTokenError, ValueError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="LinkedIn OAuth state истёк или недействителен — начните подключение заново",
+        ) from None
+    if state_user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="LinkedIn OAuth был начат другим пользователем",
+        )
+
+    settings = get_settings()
+    try:
+        token = linkedin.exchange_code_for_token(
+            payload.code,
+            settings.linkedin_client_id,
+            settings.linkedin_client_secret,
+            settings.linkedin_redirect_uri,
+        )
+        member = linkedin.get_member_info(token["access_token"])
+        account = upsert_social_account(
+            db,
+            current_user,
+            platform=SocialPlatform.linkedin,
+            external_account_id=member["sub"],
+            access_token=token["access_token"],
+            refresh_token=token.get("refresh_token"),
+            token_expires_at=datetime.now(UTC) + timedelta(seconds=int(token["expires_in"])),
+            display_name=member.get("name"),
+        )
+    except (KeyError, ValueError, PermanentPublishError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Не удалось подключить LinkedIn: {exc}",
         ) from exc
     except TransientPublishError as exc:
         raise HTTPException(
