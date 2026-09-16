@@ -15,6 +15,7 @@ import {
   LayoutIcon,
   ShareIcon,
   SplitTestIcon,
+  TeamIcon,
   WandIcon,
 } from "./icons";
 
@@ -27,6 +28,7 @@ const NAV_LINKS = [
   { href: "/feed", label: "Лента", icon: FeedIcon },
   { href: "/analytics", label: "Аналитика", icon: AnalyticsIcon },
   { href: "/social-accounts", label: "Соцсети", icon: ShareIcon },
+  { href: "/team", label: "Команда", icon: TeamIcon },
   { href: "/billing", label: "Тариф", icon: CardIcon },
   { href: "/settings", label: "Настройки", icon: GearIcon },
 ];

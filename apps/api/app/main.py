@@ -13,6 +13,7 @@ from app.routers import (
     metrics,
     posts,
     social_accounts,
+    team,
     video_projects,
 )
 
@@ -36,6 +37,7 @@ app.include_router(metrics.router)
 app.include_router(video_projects.router)
 app.include_router(analytics.router)
 app.include_router(ab_tests.router)
+app.include_router(team.router)
 
 
 @app.get("/health")
