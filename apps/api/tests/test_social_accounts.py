@@ -25,7 +25,9 @@ from app.security import (
     create_linkedin_oauth_state,
     create_meta_oauth_state,
     create_reddit_oauth_state,
+    create_twitter_oauth_state,
     create_youtube_oauth_state,
+    decode_twitter_oauth_state,
 )
 from app.social_accounts import get_access_token, upsert_social_account
 from app.social_integrations.errors import PermanentPublishError
@@ -916,5 +918,98 @@ def test_connect_reddit_rejects_state_issued_for_a_different_user(
 def test_connect_reddit_requires_auth(client: TestClient) -> None:
     response = client.post(
         "/social-accounts/reddit/connect", json={"code": "auth-code", "state": "whatever"}
+    )
+    assert response.status_code == 401
+
+
+def _twitter_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(get_settings(), "twitter_client_id", "client-id")
+    monkeypatch.setattr(get_settings(), "twitter_client_secret", "client-secret")
+
+
+def test_start_twitter_oauth_returns_503_when_unconfigured(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    response = client.post("/social-accounts/twitter/start", headers=headers)
+    assert response.status_code == 503
+
+
+def test_start_twitter_oauth_returns_state_bound_to_current_user_with_pkce_challenge(
+    client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _twitter_configured(monkeypatch)
+    headers = _auth_headers(client)
+    response = client.post("/social-accounts/twitter/start", headers=headers)
+    assert response.status_code == 200
+    url = response.json()["authorization_url"]
+    assert url.startswith("https://twitter.com/i/oauth2/authorize?")
+    query = parse_qs(urlparse(url).query)
+    assert query["code_challenge_method"] == ["S256"]
+    assert query["code_challenge"][0]
+    state = query["state"][0]
+    payload = jwt.decode(state, get_settings().jwt_secret, algorithms=["HS256"])
+    assert payload["sub"] == str(_user_id(db))
+    assert payload["cv"]  # the PKCE code_verifier rides inside the state JWT
+
+
+def test_start_twitter_oauth_requires_auth(client: TestClient) -> None:
+    assert client.post("/social-accounts/twitter/start").status_code == 401
+
+
+def test_connect_twitter_creates_social_account(client: TestClient, db: Session) -> None:
+    headers = _auth_headers(client)
+    state, code_challenge = create_twitter_oauth_state(_user_id(db))
+    _state_user_id, expected_code_verifier = decode_twitter_oauth_state(state)
+    captured: dict = {}
+
+    def fake_exchange(code, code_verifier, client_id, client_secret, redirect_uri, client=None):
+        captured["code_verifier"] = code_verifier
+        return {"access_token": "access", "refresh_token": "refresh", "expires_in": 7200}
+
+    with (
+        patch(
+            "app.routers.social_accounts.twitter.exchange_code_for_token",
+            side_effect=fake_exchange,
+        ),
+        patch(
+            "app.routers.social_accounts.twitter.get_me",
+            return_value={"id": "12345", "username": "ada"},
+        ),
+    ):
+        response = client.post(
+            "/social-accounts/twitter/connect",
+            json={"code": "auth-code", "state": state},
+            headers=headers,
+        )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["platform"] == "twitter"
+    assert body["external_account_id"] == "12345"
+    assert body["display_name"] == "ada"
+    # The PKCE code_verifier from /start's state JWT must reach the
+    # token exchange unchanged -- confirms create_twitter_oauth_state's
+    # verifier and decode_twitter_oauth_state's extraction actually
+    # round-trip through the OAuth redirect, not just independently.
+    assert captured["code_verifier"] == expected_code_verifier
+    assert code_challenge  # sanity: /start did produce a real challenge
+
+
+def test_connect_twitter_rejects_state_issued_for_a_different_user(
+    client: TestClient, db: Session
+) -> None:
+    headers = _auth_headers(client)
+    someone_elses_state, _code_challenge = create_twitter_oauth_state(uuid.uuid4())
+    response = client.post(
+        "/social-accounts/twitter/connect",
+        json={"code": "auth-code", "state": someone_elses_state},
+        headers=headers,
+    )
+    assert response.status_code == 400
+    assert "другим пользователем" in response.json()["detail"]
+
+
+def test_connect_twitter_requires_auth(client: TestClient) -> None:
+    response = client.post(
+        "/social-accounts/twitter/connect", json={"code": "auth-code", "state": "whatever"}
     )
     assert response.status_code == 401

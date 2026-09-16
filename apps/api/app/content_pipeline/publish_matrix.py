@@ -31,6 +31,15 @@ ALLOWED_CONTENT_TYPES: dict[SocialPlatform, frozenset[GenerationContentType]] = 
     # native upload would display. So image and video are both fully
     # supported here, just via `kind=link` instead of asset upload.
     SocialPlatform.reddit: frozenset({_TEXT, _IMAGE, _VIDEO}),
+    # Text-only, deliberately -- twitter.py never implements X's media
+    # upload at all (not even scoped down like LinkedIn's video, or
+    # substituted like Reddit's link posts). X's media upload lives on
+    # a separate legacy v1.1 endpoint with its own chunked INIT/APPEND/
+    # FINALIZE/STATUS protocol, and unlike Reddit there's no first-class
+    # "link post" equivalent that displays inline media without it --
+    # a URL in tweet text only ever renders as a link-preview card, not
+    # an attached image/video. See twitter.py's module docstring.
+    SocialPlatform.twitter: frozenset({_TEXT}),
 }
 
 # content_kind per platform+content_type. "story" only exists as a
@@ -65,6 +74,9 @@ ALLOWED_CONTENT_KINDS: dict[SocialPlatform, dict[GenerationContentType, frozense
         _TEXT: frozenset({"post", "video_script"}),
         _IMAGE: frozenset({"post"}),
         _VIDEO: frozenset({"post"}),
+    },
+    SocialPlatform.twitter: {
+        _TEXT: frozenset({"post", "video_script"}),
     },
 }
 

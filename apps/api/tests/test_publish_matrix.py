@@ -83,6 +83,20 @@ def test_reddit_and_linkedin_intersect_to_text_and_image() -> None:
     }
 
 
+def test_twitter_only_allows_text_posts() -> None:
+    assert allowed_content_types_for({SocialPlatform.twitter}) == {GenerationContentType.text}
+    assert allowed_content_kinds_for(
+        {SocialPlatform.twitter}, GenerationContentType.text
+    ) == {"post", "video_script"}
+
+
+def test_validate_twitter_image_raises() -> None:
+    with pytest.raises(InvalidGenerationTargetError):
+        validate_generation_target(
+            {SocialPlatform.twitter}, GenerationContentType.image, "post"
+        )
+
+
 def test_mixed_targets_intersect_to_media_only() -> None:
     result = allowed_content_types_for({SocialPlatform.instagram, SocialPlatform.telegram})
     assert result == {GenerationContentType.image, GenerationContentType.video}
