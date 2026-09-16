@@ -21,7 +21,11 @@ from app.models import (
     SubscriptionTier,
     User,
 )
-from app.security import create_meta_oauth_state, create_youtube_oauth_state
+from app.security import (
+    create_linkedin_oauth_state,
+    create_meta_oauth_state,
+    create_youtube_oauth_state,
+)
 from app.social_accounts import get_access_token, upsert_social_account
 from app.social_integrations.errors import PermanentPublishError
 from app.token_crypto import decrypt_token, encrypt_token
@@ -755,5 +759,82 @@ def test_connect_youtube_rejects_state_issued_for_a_different_user(
 def test_connect_youtube_requires_auth(client: TestClient) -> None:
     response = client.post(
         "/social-accounts/youtube/connect", json={"code": "auth-code", "state": "whatever"}
+    )
+    assert response.status_code == 401
+
+
+def _linkedin_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(get_settings(), "linkedin_client_id", "client-id")
+    monkeypatch.setattr(get_settings(), "linkedin_client_secret", "client-secret")
+
+
+def test_start_linkedin_oauth_returns_503_when_unconfigured(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    response = client.post("/social-accounts/linkedin/start", headers=headers)
+    assert response.status_code == 503
+
+
+def test_start_linkedin_oauth_returns_state_bound_to_current_user(
+    client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _linkedin_configured(monkeypatch)
+    headers = _auth_headers(client)
+    response = client.post("/social-accounts/linkedin/start", headers=headers)
+    assert response.status_code == 200
+    url = response.json()["authorization_url"]
+    assert url.startswith("https://www.linkedin.com/oauth/v2/authorization?")
+    state = parse_qs(urlparse(url).query)["state"][0]
+    assert jwt.decode(state, get_settings().jwt_secret, algorithms=["HS256"])["sub"] == str(
+        _user_id(db)
+    )
+
+
+def test_start_linkedin_oauth_requires_auth(client: TestClient) -> None:
+    assert client.post("/social-accounts/linkedin/start").status_code == 401
+
+
+def test_connect_linkedin_creates_social_account(client: TestClient, db: Session) -> None:
+    headers = _auth_headers(client)
+    state = create_linkedin_oauth_state(_user_id(db))
+    with (
+        patch(
+            "app.routers.social_accounts.linkedin.exchange_code_for_token",
+            return_value={"access_token": "access", "expires_in": 5184000},
+        ),
+        patch(
+            "app.routers.social_accounts.linkedin.get_member_info",
+            return_value={"sub": "abc123", "name": "Cindra Demo"},
+        ),
+    ):
+        response = client.post(
+            "/social-accounts/linkedin/connect",
+            json={"code": "auth-code", "state": state},
+            headers=headers,
+        )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["platform"] == "linkedin"
+    assert body["external_account_id"] == "abc123"
+    assert body["display_name"] == "Cindra Demo"
+
+
+def test_connect_linkedin_rejects_state_issued_for_a_different_user(
+    client: TestClient, db: Session
+) -> None:
+    headers = _auth_headers(client)
+    someone_elses_state = create_linkedin_oauth_state(uuid.uuid4())
+    response = client.post(
+        "/social-accounts/linkedin/connect",
+        json={"code": "auth-code", "state": someone_elses_state},
+        headers=headers,
+    )
+    assert response.status_code == 400
+    assert "другим пользователем" in response.json()["detail"]
+
+
+def test_connect_linkedin_requires_auth(client: TestClient) -> None:
+    response = client.post(
+        "/social-accounts/linkedin/connect", json={"code": "auth-code", "state": "whatever"}
     )
     assert response.status_code == 401

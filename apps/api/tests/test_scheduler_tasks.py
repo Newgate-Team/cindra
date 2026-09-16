@@ -8,7 +8,7 @@ from app.scheduler import registry
 from app.scheduler.registry import register_publisher
 from app.scheduler.tasks import enqueue_due_posts, publish_post
 from app.social_accounts import upsert_social_account
-from app.social_integrations import youtube
+from app.social_integrations import linkedin, youtube
 from app.social_integrations.errors import PermanentPublishError, TransientPublishError
 
 
@@ -124,6 +124,7 @@ def test_bootstrap_registers_a_publisher_for_every_platform() -> None:
     # at actual publish time (see test_unregistered_platform_fails_cleanly
     # for what that failure mode looks like).
     assert registry.get_publisher(SocialPlatform.youtube) is youtube.publish
+    assert registry.get_publisher(SocialPlatform.linkedin) is linkedin.publish
 
 
 def test_unknown_post_id_is_a_noop() -> None:

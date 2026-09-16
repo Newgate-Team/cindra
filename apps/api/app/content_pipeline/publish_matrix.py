@@ -14,6 +14,14 @@ ALLOWED_CONTENT_TYPES: dict[SocialPlatform, frozenset[GenerationContentType]] = 
     SocialPlatform.instagram: frozenset({_IMAGE, _VIDEO}),
     SocialPlatform.tiktok: frozenset({_VIDEO}),
     SocialPlatform.youtube: frozenset({_VIDEO}),
+    # Video deliberately excluded for now -- linkedin.py's publish()
+    # only implements text + image, LinkedIn's multi-part video
+    # finalize flow is a scoped-out follow-up (see that module's
+    # docstring). Not declaring it here means a generation targeting
+    # LinkedIn is rejected up front (CIN-style "check before spending
+    # budget") instead of generating a video that then fails at the
+    # very last step.
+    SocialPlatform.linkedin: frozenset({_TEXT, _IMAGE}),
 }
 
 # content_kind per platform+content_type. "story" only exists as a
@@ -39,6 +47,10 @@ ALLOWED_CONTENT_KINDS: dict[SocialPlatform, dict[GenerationContentType, frozense
     },
     SocialPlatform.youtube: {
         _VIDEO: frozenset({"post"}),
+    },
+    SocialPlatform.linkedin: {
+        _TEXT: frozenset({"post", "video_script"}),
+        _IMAGE: frozenset({"post"}),
     },
 }
 

@@ -9,6 +9,9 @@ const ALLOWED_CONTENT_TYPES: Record<SocialPlatform, GenerationContentType[]> = {
   instagram: ["image", "video"],
   tiktok: ["video"],
   youtube: ["video"],
+  // Video deliberately excluded -- see publish_matrix.py's comment on
+  // the same entry (scoped-out follow-up, not yet implemented).
+  linkedin: ["text", "image"],
 };
 
 const ALLOWED_CONTENT_KINDS: Record<SocialPlatform, Partial<Record<GenerationContentType, string[]>>> = {
@@ -17,6 +20,7 @@ const ALLOWED_CONTENT_KINDS: Record<SocialPlatform, Partial<Record<GenerationCon
   instagram: { image: ["post", "story"], video: ["post", "story"] },
   tiktok: { video: ["post"] },
   youtube: { video: ["post"] },
+  linkedin: { text: ["post", "video_script"], image: ["post"] },
 };
 
 export const CONTENT_KIND_LABELS: Record<string, string> = {

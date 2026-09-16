@@ -403,6 +403,15 @@ class YouTubeConnectRequest(BaseModel):
     state: str = Field(min_length=1)
 
 
+class LinkedInOAuthStartOut(BaseModel):
+    authorization_url: str
+
+
+class LinkedInConnectRequest(BaseModel):
+    code: str = Field(min_length=1)
+    state: str = Field(min_length=1)
+
+
 class SocialAccountOut(BaseModel):
     id: uuid.UUID
     platform: SocialPlatform

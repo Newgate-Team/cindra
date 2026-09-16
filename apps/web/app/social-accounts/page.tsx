@@ -20,6 +20,7 @@ const PLATFORM_LABELS: Record<string, string> = {
   facebook: "Facebook-страница",
   tiktok: "TikTok",
   youtube: "YouTube",
+  linkedin: "LinkedIn",
 };
 
 const PLATFORM_ICONS: Record<string, string> = {
@@ -28,6 +29,7 @@ const PLATFORM_ICONS: Record<string, string> = {
   facebook: "/facebook-icon.png",
   tiktok: "/tiktok-icon.svg",
   youtube: "/youtube-icon.svg",
+  linkedin: "/linkedin-icon.svg",
 };
 
 interface TelegramVerification {
@@ -51,6 +53,8 @@ function SocialAccountsManager() {
   const [connectingInstagram, setConnectingInstagram] = useState(false);
   const [youtubeError, setYouTubeError] = useState<string | null>(null);
   const [connectingYouTube, setConnectingYouTube] = useState(false);
+  const [linkedinError, setLinkedInError] = useState<string | null>(null);
+  const [connectingLinkedIn, setConnectingLinkedIn] = useState(false);
 
   function reload() {
     api.get<SocialAccount[]>("/social-accounts", token).then(setAccounts);
@@ -174,6 +178,22 @@ function SocialAccountsManager() {
     } catch (err) {
       setYouTubeError(err instanceof ApiError ? err.message : "Не удалось начать вход в YouTube");
       setConnectingYouTube(false);
+    }
+  }
+
+  async function handleConnectLinkedIn() {
+    setLinkedInError(null);
+    setConnectingLinkedIn(true);
+    try {
+      const result = await api.post<{ authorization_url: string }>(
+        "/social-accounts/linkedin/start",
+        {},
+        token
+      );
+      window.location.href = result.authorization_url;
+    } catch (err) {
+      setLinkedInError(err instanceof ApiError ? err.message : "Не удалось начать вход в LinkedIn");
+      setConnectingLinkedIn(false);
     }
   }
 
@@ -332,6 +352,18 @@ function SocialAccountsManager() {
         {youtubeError && <p className="error">{youtubeError}</p>}
         <button type="button" onClick={handleConnectYouTube} disabled={connectingYouTube}>
           {connectingYouTube ? "Открываем YouTube…" : "Войти через YouTube"}
+        </button>
+      </div>
+
+      <h2>Подключить LinkedIn</h2>
+      <div className="card">
+        <p className="muted">
+          Подключается через LinkedIn OAuth. Публикация — только текст и изображения (видео пока
+          не поддерживается).
+        </p>
+        {linkedinError && <p className="error">{linkedinError}</p>}
+        <button type="button" onClick={handleConnectLinkedIn} disabled={connectingLinkedIn}>
+          {connectingLinkedIn ? "Открываем LinkedIn…" : "Войти через LinkedIn"}
         </button>
       </div>
     </>
