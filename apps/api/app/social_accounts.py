@@ -7,12 +7,24 @@ from sqlalchemy.orm import Session
 
 from app.models import SocialAccount, SocialPlatform, Subscription, User
 from app.plans import PLAN_LIMITS, effective_tier
+from app.teams import visible_user_ids
 from app.token_crypto import decrypt_token, encrypt_token
 
 
 def _enforce_connected_account_limit(db: Session, user: User) -> None:
     """CIN-155: only free tier actually limits this (1 account; Pro/
     Business are unlimited) -- see plans.py.
+
+    Roadmap item 5: counted across the whole team (visible_user_ids),
+    not just this user -- a shared team quota is the entire point of
+    sharing accounts in the first place, and counting only the calling
+    user's own rows here would let each teammate independently connect
+    up to the free-tier limit, multiplying it by team size. The limit
+    itself still resolves off `user`'s own Subscription (billing quota
+    pooling -- whose subscription actually governs a team -- is its
+    own separate, not-yet-wired concern; this only fixes the counting
+    side, which is a real bypass if left alone once accounts are
+    shared).
 
     Facebook rows are excluded from both the count and the check
     itself: connect_instagram() always creates one alongside the
@@ -44,7 +56,7 @@ def _enforce_connected_account_limit(db: Session, user: User) -> None:
         select(func.count())
         .select_from(SocialAccount)
         .where(
-            SocialAccount.user_id == user.id,
+            SocialAccount.user_id.in_(visible_user_ids(db, user)),
             SocialAccount.platform != SocialPlatform.facebook,
         )
     )
@@ -87,10 +99,18 @@ def upsert_social_account(
 
     Called by each platform's OAuth callback (CIN-5/CIN-6) once it has
     exchanged an auth code for tokens -- this module only owns storage.
+
+    The existing-account lookup is team-wide (roadmap item 5): if a
+    teammate already connected this exact channel, reconnecting it
+    refreshes that same shared row instead of creating a second one
+    for the whole team to see. `account.user_id` itself doesn't move
+    to the new connector -- it stays "who originally connected this",
+    consistent with SocialAccount's own row never changing ownership
+    elsewhere either.
     """
     account = db.scalar(
         select(SocialAccount).where(
-            SocialAccount.user_id == user.id,
+            SocialAccount.user_id.in_(visible_user_ids(db, user)),
             SocialAccount.platform == platform,
             SocialAccount.external_account_id == external_account_id,
         )
@@ -123,6 +143,17 @@ def upsert_social_account(
             # already created (both calls carry a freshly-exchanged
             # token for the same real account, so "update whichever
             # commits last" is the correct resolution, not an error).
+            #
+            # `uq_social_account` is scoped to (user_id, platform,
+            # external_account_id), not team-wide -- two DIFFERENT
+            # teammates connecting the exact same channel within the
+            # same race window is a real but much rarer edge case this
+            # doesn't cover (each insert has a different user_id, so
+            # neither violates the constraint; you'd get two rows for
+            # one channel instead of one). Accepted the same way
+            # _enforce_connected_account_limit's own docstring accepts
+            # its race: not worth a schema change for this unlikely a
+            # collision on an already lowest-priority feature.
             db.rollback()
             account = db.scalar(
                 select(SocialAccount).where(
