@@ -35,6 +35,7 @@ from app.social_accounts import upsert_social_account
 from app.social_integrations import instagram, tiktok
 from app.social_integrations.errors import PermanentPublishError, TransientPublishError
 from app.social_integrations.telegram import get_chat, get_chat_member, get_me
+from app.teams import visible_user_ids
 
 router = APIRouter(prefix="/social-accounts", tags=["social-accounts"])
 
@@ -322,11 +323,11 @@ def connect_tiktok(
     return account
 
 
-def _owned_tiktok_account(db: Session, account_id: str, user: User) -> SocialAccount:
+def _visible_tiktok_account(db: Session, account_id: str, user: User) -> SocialAccount:
     account = db.get(SocialAccount, account_id)
     if (
         account is None
-        or account.user_id != user.id
+        or account.user_id not in visible_user_ids(db, user)
         or account.platform != SocialPlatform.tiktok
     ):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="TikTok аккаунт не найден")
@@ -339,7 +340,7 @@ def get_tiktok_creator_info(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> TikTokCreatorInfoOut:
-    account = _owned_tiktok_account(db, account_id, current_user)
+    account = _visible_tiktok_account(db, account_id, current_user)
     try:
         access_token = tiktok.ensure_fresh_access_token(account)
         creator = tiktok.query_creator_info(access_token)
@@ -360,7 +361,7 @@ def get_tiktok_publish_status(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> TikTokPublishStatusOut:
-    account = _owned_tiktok_account(db, account_id, current_user)
+    account = _visible_tiktok_account(db, account_id, current_user)
     try:
         access_token = tiktok.ensure_fresh_access_token(account)
         result = tiktok.fetch_publish_status(access_token, publish_id)
@@ -378,8 +379,14 @@ def get_tiktok_publish_status(
 def list_social_accounts(
     current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
 ) -> list[SocialAccount]:
+    # Roadmap item 5: team-visible, not just the caller's own rows --
+    # a shared channel list is the actual point of a team.
     return list(
-        db.scalars(select(SocialAccount).where(SocialAccount.user_id == current_user.id))
+        db.scalars(
+            select(SocialAccount).where(
+                SocialAccount.user_id.in_(visible_user_ids(db, current_user))
+            )
+        )
     )
 
 
@@ -389,9 +396,12 @@ def disconnect_social_account(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> None:
+    # Any team member can manage a shared account, not just whoever
+    # originally connected it -- same reasoning as the list above.
     result = db.execute(
         delete(SocialAccount).where(
-            SocialAccount.id == account_id, SocialAccount.user_id == current_user.id
+            SocialAccount.id == account_id,
+            SocialAccount.user_id.in_(visible_user_ids(db, current_user)),
         )
     )
     db.commit()
