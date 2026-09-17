@@ -2,7 +2,7 @@
 
 SaaS-платформа для AI-контента в соцсетях. Два раздела:
 
-- **Посты** — тема/бренд-гайд → сгенерированный текст или изображение → публикация по расписанию в подключённые каналы (Telegram, Instagram, Facebook, TikTok), в том числе сразу в несколько аккаунтов.
+- **Посты** — тема/бренд-гайд → сгенерированный текст или изображение → публикация по расписанию в подключённые каналы (Telegram, Instagram, Facebook, TikTok, YouTube, LinkedIn, Reddit, X/Twitter), в том числе сразу в несколько аккаунтов.
 - **Видео** — студия: сценарий → стиль → производственный бриф (что начитать, что снять или сгенерировать, как смонтировать) → готовый ролик, загруженный пользователем или сгенерированный целиком.
 
 Полная спецификация: [docs/spec.md](docs/spec.md).
@@ -17,7 +17,7 @@ apps/
   api/     # Backend — FastAPI + Python
            #   app/routers/             — HTTP-эндпоинты
            #   app/content_pipeline/    — промпты, генеративные модели, очередь, модерация
-           #   app/social_integrations/ — Telegram, Instagram, Facebook, TikTok
+           #   app/social_integrations/ — Telegram, Instagram, Facebook, TikTok, YouTube, LinkedIn, Reddit, X
            #   app/billing_integrations/— PayPal
            #   app/scheduler/           — публикация по расписанию (Celery)
            #   migrations/              — Alembic
