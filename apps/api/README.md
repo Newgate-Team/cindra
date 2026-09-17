@@ -48,7 +48,25 @@ VEO_MODEL
 TELEGRAM_BOT_TOKEN
 META_APP_ID
 META_APP_SECRET
-META_REDIRECT_URI           # https://<домен API>/oauth/instagram/callback
+META_REDIRECT_URI           # https://<домен фронтенда на Vercel>/oauth/instagram/callback -- страница-колбэк живёт в apps/web, не в API
+GOOGLE_CLIENT_ID             # вход через Google -- см. CIN-133; тот же ID отдельно нужен фронтенду как NEXT_PUBLIC_GOOGLE_CLIENT_ID (Vercel, не Railway)
+TIKTOK_CLIENT_KEY
+TIKTOK_CLIENT_SECRET
+TIKTOK_REDIRECT_URI          # https://<домен фронтенда на Vercel>/oauth/tiktok/callback
+YOUTUBE_CLIENT_ID            # отдельный OAuth-клиент от GOOGLE_CLIENT_ID -- см. .env.example
+YOUTUBE_CLIENT_SECRET
+YOUTUBE_REDIRECT_URI         # https://<домен фронтенда на Vercel>/oauth/youtube/callback
+LINKEDIN_CLIENT_ID
+LINKEDIN_CLIENT_SECRET
+LINKEDIN_REDIRECT_URI        # https://<домен фронтенда на Vercel>/oauth/linkedin/callback
+LINKEDIN_API_VERSION         # YYYYMM, сверить с актуальной документацией LinkedIn перед деплоем
+REDDIT_CLIENT_ID
+REDDIT_CLIENT_SECRET
+REDDIT_REDIRECT_URI          # https://<домен фронтенда на Vercel>/oauth/reddit/callback
+REDDIT_USER_AGENT            # обязателен описательный формат, иначе Reddit режет по rate limit
+TWITTER_CLIENT_ID
+TWITTER_CLIENT_SECRET
+TWITTER_REDIRECT_URI         # https://<домен фронтенда на Vercel>/oauth/twitter/callback -- уточнить, что тариф X API включает write-доступ
 R2_ACCOUNT_ID
 R2_ACCESS_KEY_ID
 R2_SECRET_ACCESS_KEY
@@ -62,6 +80,8 @@ PAYPAL_PRO_PLAN_ID
 PAYPAL_BUSINESS_PLAN_ID
 PAYPAL_WEBHOOK_ID             # регистрируется после первого деплоя, когда есть реальный URL
 ```
+
+Redirect URI каждой соцсети должен быть зарегистрирован в её же Developer Portal буквально таким же значением -- расхождение (например http vs https, конечный слэш) роняет OAuth-обмен кода на токен с ошибкой на стороне платформы, не Cindra.
 
 ## Бэкапы
 
