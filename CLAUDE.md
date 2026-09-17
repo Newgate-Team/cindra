@@ -10,7 +10,7 @@ SaaS для AI-контента в соцсетях, два раздела пр�
 - **Видео** (`/video`) — студия с проектным циклом: сценарий → выбор стиля → производственный бриф из трёх файлов → готовый ролик (загруженный пользователем или сгенерированный Veo/Seedance) → публикация тем же fan-out.
 - **Шаблоны** (`/templates`) — карточки, которые собирает код, а не модель: пользователь выбирает макет и заполняет поля, текст встаёт ровно как введён. Появился потому, что модели ненадёжно рисуют текст на изображении (CIN-125) и каждый раз верстают по-разному.
 
-Платформы публикации: Telegram, Instagram, Facebook, TikTok (только видео).
+Платформы публикации: Telegram, Instagram, Facebook, TikTok (только видео), YouTube (только видео), LinkedIn (текст + изображение), Reddit (текст + изображение + видео, публикация через `kind=link` на собственный R2-URL, не нативная загрузка Reddit), X/Twitter (только текст, единственный OAuth-флоу в приложении с PKCE). Последние четыре написаны и протестированы, но ждут реальных OAuth-кредов владельца аккаунтов (см. «Гейты» ниже) — до этого отдают 503 на `/social-accounts/{platform}/start`.
 
 ## Стек и раскладка
 
@@ -67,11 +67,16 @@ cd apps/web && npm run lint && npm run build
 |---|---|
 | Вход через Google | OAuth Web Client ID в Google Cloud Console → `GOOGLE_CLIENT_ID` + `NEXT_PUBLIC_GOOGLE_CLIENT_ID` |
 | TikTok | `TIKTOK_CLIENT_KEY` / `TIKTOK_CLIENT_SECRET` из TikTok Developer Portal |
+| YouTube | `YOUTUBE_CLIENT_ID` / `YOUTUBE_CLIENT_SECRET` — отдельный OAuth-клиент от `GOOGLE_CLIENT_ID` (тот только вход, без refresh-токена) |
+| LinkedIn | `LINKEDIN_CLIENT_ID` / `LINKEDIN_CLIENT_SECRET` из LinkedIn Developer Portal |
+| Reddit | `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` (тип «web app») из reddit.com/prefs/apps |
+| X (Twitter) | `TWITTER_CLIENT_ID` / `TWITTER_CLIENT_SECRET` — confidential-клиент; уточнить, что тариф X API включает write-доступ (с 2023 бесплатный не включает) |
 | Оплата | реальные ключи и планы PayPal |
 | Генерация | `GEMINI_API_KEY` (учтите: API проверяет геолокацию запроса) |
 | Длинные ролики | `FAL_KEY` (fal.ai) — без него «Полное авто» в студии генерирует через Veo, а не Seedance (CIN-144) |
 | Хранилище медиа | Cloudflare R2 (`R2_*`) — без него генерация изображений/видео не сможет отдать публичный URL, а рендер карточек отдаёт 503 |
 | Примеры AI-шаблонов | нужен `GEMINI_API_KEY`: превью генерируются один раз командой через `POST /content/image-templates/previews` (только админ), до этого каталог отдаёт `preview_url: null` (CIN-150) |
+| Резервные копии БД | `BACKUP_ENCRYPTION_KEY` (Fernet, отдельный от `SOCIAL_TOKEN_ENCRYPTION_KEY`) — без него ежедневный бэкап (`app.scheduler.tasks.backup_database`) падает явно, а не грузит дамп в открытом виде |
 
 Секреты передаются вне репозитория, в `.env` (он в `.gitignore`). Не коммитить.
 
