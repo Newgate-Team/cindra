@@ -15,6 +15,7 @@ problem from CIN-111 doesn't apply here).
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -34,6 +35,10 @@ class HeyGenTransientError(HeyGenError):
     """Rate limit, 5xx, or a network failure -- worth retrying."""
 
 
+class HeyGenInsufficientCreditError(HeyGenError):
+    """HeyGen's 402 `insufficient_credit` -- the user's wallet is empty."""
+
+
 def _error_message(response: httpx.Response) -> str:
     try:
         body = response.json()
@@ -47,6 +52,14 @@ def _error_message(response: httpx.Response) -> str:
     return response.text[:300]
 
 
+def _error_code(response: httpx.Response) -> str | None:
+    try:
+        error = response.json().get("error")
+    except (ValueError, AttributeError):
+        return None
+    return error.get("code") if isinstance(error, dict) else None
+
+
 def _request(
     method: str,
     path: str,
@@ -54,13 +67,14 @@ def _request(
     client: httpx.Client | None = None,
     params: dict[str, Any] | None = None,
     json: dict[str, Any] | None = None,
+    extra_headers: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     send = client.request if client is not None else httpx.request
     try:
         response = send(
             method,
             f"{_BASE_URL}{path}",
-            headers={"X-Api-Key": api_key},
+            headers={"X-Api-Key": api_key, **(extra_headers or {})},
             params={k: v for k, v in (params or {}).items() if v is not None},
             json=json,
             timeout=30.0,
@@ -70,6 +84,12 @@ def _request(
 
     if response.status_code in (401, 403):
         raise HeyGenAuthError(_error_message(response))
+    if response.status_code == 402:
+        raise HeyGenInsufficientCreditError(_error_message(response))
+    if response.status_code == 409 and _error_code(response) == "request_in_progress":
+        # Our own earlier attempt with the same Idempotency-Key is still
+        # being processed -- wait and retry, it'll replay that result.
+        raise HeyGenTransientError(f"HeyGen: {_error_message(response)}")
     if response.status_code in _RETRYABLE_STATUS_CODES:
         raise HeyGenTransientError(f"HeyGen {response.status_code}: {_error_message(response)}")
     if response.status_code >= 400:
@@ -130,6 +150,50 @@ def list_avatar_looks(
         if isinstance(look, dict) and look.get("id")
     ]
     return {"items": items, "next_token": body.get("next_token") if body.get("has_more") else None}
+
+
+def create_avatar_video(
+    api_key: str,
+    *,
+    avatar_id: str,
+    voice_id: str,
+    script: str,
+    aspect_ratio: str,
+    idempotency_key: str,
+    title: str | None = None,
+    client: httpx.Client | None = None,
+) -> str:
+    """Starts a render and returns its video_id.
+
+    `idempotency_key` is what makes a Celery retry safe for the user's
+    wallet: HeyGen replays the original response for the same key for
+    24h instead of starting (and billing) a second render, per its
+    error-codes docs.
+    """
+    body = _request(
+        "POST",
+        "/v3/videos",
+        api_key,
+        client,
+        json={
+            "type": "avatar",
+            "avatar_id": avatar_id,
+            "voice_id": voice_id,
+            "script": script,
+            "aspect_ratio": aspect_ratio,
+            "title": title,
+        },
+        extra_headers={"Idempotency-Key": idempotency_key},
+    )
+    video_id = (body.get("data") or {}).get("video_id")
+    if not video_id:
+        raise HeyGenError("HeyGen не вернул video_id")
+    return video_id
+
+
+def get_video(api_key: str, video_id: str, client: httpx.Client | None = None) -> dict[str, Any]:
+    path = f"/v3/videos/{quote(video_id, safe='')}"
+    return _request("GET", path, api_key, client).get("data") or {}
 
 
 def list_voices(

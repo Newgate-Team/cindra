@@ -26,6 +26,11 @@ class PlanLimits:
     # CIN-148: laid-out renders are free to produce (no model call), so
     # this bounds storage abuse rather than cost -- generous on purpose.
     max_layout_renders_per_month: int | None = 30
+    # Avatar videos on the user's own HeyGen key cost Cindra no AI
+    # money (HeyGen bills the user), but each one holds a worker for
+    # the whole render (minutes of polling) and leaves a copy in R2 --
+    # this bounds that, not spend, so it's generous like layout renders.
+    max_byo_avatar_videos_per_month: int | None = 5
 
 
 # Values fixed in CIN-59, derived from real per-generation AI cost
@@ -51,6 +56,7 @@ PLAN_LIMITS: dict[SubscriptionTier, PlanLimits] = {
         max_publications_per_month=10,
         max_connected_accounts=1,
         max_layout_renders_per_month=30,
+        max_byo_avatar_videos_per_month=5,
     ),
     SubscriptionTier.pro: PlanLimits(
         max_generations_per_format={
@@ -62,6 +68,7 @@ PLAN_LIMITS: dict[SubscriptionTier, PlanLimits] = {
         max_connected_accounts=None,
         max_long_videos_per_month=0,
         max_layout_renders_per_month=500,
+        max_byo_avatar_videos_per_month=100,
     ),
     SubscriptionTier.business: PlanLimits(
         max_generations_per_format={
@@ -73,6 +80,7 @@ PLAN_LIMITS: dict[SubscriptionTier, PlanLimits] = {
         max_connected_accounts=None,
         max_long_videos_per_month=3,
         max_layout_renders_per_month=None,
+        max_byo_avatar_videos_per_month=300,
     ),
 }
 
@@ -115,4 +123,6 @@ def limit_for(
         return limits.max_long_videos_per_month
     if event_type is UsageEventType.layout_render:
         return limits.max_layout_renders_per_month
+    if event_type is UsageEventType.byo_avatar_video:
+        return limits.max_byo_avatar_videos_per_month
     return limits.max_publications_per_month

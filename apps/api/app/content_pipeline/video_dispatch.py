@@ -4,6 +4,7 @@ from typing import Any
 
 import httpx
 
+from app.content_pipeline.heygen_generator import heygen_video_generator
 from app.content_pipeline.seedance_generator import seedance_video_generator
 from app.content_pipeline.video_generator import veo_video_generator
 
@@ -24,4 +25,6 @@ def dispatch_video_generator(
     """
     if payload.get("provider") == "seedance":
         return seedance_video_generator(payload, client=client, sleep=sleep)
+    if payload.get("provider") == "heygen":
+        return heygen_video_generator(payload, client=client, sleep=sleep)
     return veo_video_generator(payload, client=client, sleep=sleep)

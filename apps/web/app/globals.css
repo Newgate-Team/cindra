@@ -395,6 +395,35 @@ main {
   white-space: nowrap;
 }
 
+button.avatar-tile {
+  cursor: pointer;
+}
+
+.avatar-tile.selected {
+  border-color: var(--ember);
+  box-shadow: 0 0 0 2px var(--ember);
+}
+
+.variant-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.variant-grid video {
+  display: block;
+  width: 100%;
+  max-height: 420px;
+  border-radius: calc(var(--radius) - 4px);
+  background: #000;
+}
+
+.tab-row {
+  display: flex;
+  gap: 8px;
+  margin: 8px 0;
+}
+
 /* Telegram ownership verification code (CIN-128) -- selectable/
    copyable monospace box the user pastes into their channel's
    description to prove they can actually edit it. */

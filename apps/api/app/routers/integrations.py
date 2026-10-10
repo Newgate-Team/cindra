@@ -1,21 +1,40 @@
+import uuid
 from collections.abc import Callable
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.content_pipeline.errors import ContentModeratedError
+from app.content_pipeline.moderation import check_content
+from app.content_pipeline.tasks import run_generation_job
 from app.db import get_db
 from app.deps import get_current_user
 from app.integrations import find_integration, get_secret, upsert_integration
-from app.models import Integration, IntegrationProvider, User
+from app.models import (
+    GenerationContentType,
+    GenerationJob,
+    GenerationStatus,
+    Integration,
+    IntegrationProvider,
+    UsageEvent,
+    UsageEventType,
+    User,
+)
+from app.pagination import DEFAULT_LIMIT, MAX_LIMIT, Page, paginate
 from app.schemas import (
     HeyGenAccountOut,
     HeyGenAvatarPage,
     HeyGenConnectRequest,
+    HeyGenVideoJobOut,
+    HeyGenVideoRequest,
     HeyGenVoicePage,
     IntegrationOut,
 )
+from app.teams import visible_user_ids
 from app.tool_integrations import heygen
+from app.usage import check_usage_limit
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
 
@@ -131,6 +150,112 @@ def heygen_avatars(
         lambda: heygen.list_avatar_looks(api_key, token=token, ownership=ownership)
     )
     return HeyGenAvatarPage.model_validate(page)
+
+
+def _video_out(job: GenerationJob) -> HeyGenVideoJobOut:
+    payload = job.input_payload or {}
+    return HeyGenVideoJobOut(
+        id=job.id,
+        batch_id=payload.get("heygen_batch_id", ""),
+        avatar_id=payload.get("avatar_id", ""),
+        voice_id=payload.get("voice_id", ""),
+        script=payload.get("script", ""),
+        aspect_ratio=payload.get("aspect_ratio", ""),
+        status=job.status,
+        video_url=(job.output_payload or {}).get("video_url"),
+        error_message=job.error_message,
+        created_at=job.created_at,
+        completed_at=job.completed_at,
+    )
+
+
+@router.post(
+    "/heygen/videos",
+    response_model=list[HeyGenVideoJobOut],
+    status_code=status.HTTP_201_CREATED,
+)
+def create_heygen_videos(
+    payload: HeyGenVideoRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[HeyGenVideoJobOut]:
+    """One render per variant, each its own GenerationJob, so the
+    existing video pipeline (worker, R2 copy, ReviewAndPublish, team
+    visibility) carries them with no special-casing."""
+    integration = find_integration(db, current_user, IntegrationProvider.heygen)
+    if integration is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="HeyGen не подключён")
+
+    # Moderated up front, not on the worker's output like /content: by
+    # the time a worker could flag it, the user's HeyGen wallet has
+    # already paid for every render.
+    try:
+        check_content(payload.script)
+    except ContentModeratedError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    count = len(payload.variants)
+    # Check, record and create in one short transaction (lock held only
+    # for local DB work, CIN-158) -- the usage rows and jobs commit
+    # together, so a failure can't leave quota spent with no jobs.
+    check_usage_limit(
+        db, current_user, UsageEventType.byo_avatar_video, count=count, for_update=True
+    )
+    batch_id = uuid.uuid4().hex
+    jobs = [
+        GenerationJob(
+            user_id=current_user.id,
+            content_type=GenerationContentType.video,
+            status=GenerationStatus.queued,
+            input_payload={
+                "provider": "heygen",
+                "heygen_integration_id": str(integration.id),
+                "heygen_batch_id": batch_id,
+                # Becomes HeyGen's Idempotency-Key -- one per render,
+                # stable across Celery retries of that render.
+                "heygen_request_id": uuid.uuid4().hex,
+                "avatar_id": variant.avatar_id,
+                "voice_id": variant.voice_id,
+                "script": payload.script,
+                "aspect_ratio": payload.aspect_ratio,
+                "title": payload.title,
+            },
+        )
+        for variant in payload.variants
+    ]
+    db.add_all(jobs)
+    db.add_all(
+        UsageEvent(user_id=current_user.id, event_type=UsageEventType.byo_avatar_video)
+        for _ in range(count)
+    )
+    db.commit()
+
+    for job in jobs:
+        run_generation_job.delay(str(job.id))
+    for job in jobs:
+        db.refresh(job)
+    return [_video_out(job) for job in jobs]
+
+
+@router.get("/heygen/videos", response_model=Page[HeyGenVideoJobOut])
+def list_heygen_videos(
+    limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
+    offset: int = Query(default=0, ge=0),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Page[HeyGenVideoJobOut]:
+    query = (
+        select(GenerationJob)
+        .where(
+            GenerationJob.user_id.in_(visible_user_ids(db, current_user)),
+            GenerationJob.input_payload["provider"].astext == "heygen",
+        )
+        .order_by(GenerationJob.created_at.desc())
+    )
+    rows, total = paginate(db, query, limit, offset)
+    return Page[HeyGenVideoJobOut](
+        items=[_video_out(job) for (job,) in rows], total=total, limit=limit, offset=offset
+    )
 
 
 @router.get("/heygen/voices", response_model=HeyGenVoicePage)

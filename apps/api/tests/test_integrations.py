@@ -1,11 +1,21 @@
+import json
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.integrations import get_secret
-from app.models import Integration, IntegrationProvider, User
+from app.models import (
+    GenerationContentType,
+    GenerationJob,
+    GenerationStatus,
+    Integration,
+    IntegrationProvider,
+    UsageEvent,
+    UsageEventType,
+    User,
+)
 from app.tool_integrations import heygen
 
 _HEYGEN_USER = {
@@ -253,3 +263,178 @@ def test_outsider_cannot_see_or_use_another_teams_connection(
     assert client.delete("/integrations/heygen", headers=outsider_headers).status_code == 404
     assert len(_rows(db)) == 1
     assert _rows(db)[0].provider == IntegrationProvider.heygen
+
+
+_VARIANTS = [
+    {"avatar_id": "lk_1", "voice_id": "voice-1"},
+    {"avatar_id": "lk_2", "voice_id": "voice-2"},
+]
+
+
+def _create_videos(client: TestClient, headers: dict[str, str], **overrides):
+    body = {"script": "Привет! Это тестовый ролик.", "aspect_ratio": "9:16", "variants": _VARIANTS}
+    body.update(overrides)
+    with patch("app.routers.integrations.run_generation_job.delay") as delay:
+        response = client.post("/integrations/heygen/videos", json=body, headers=headers)
+    return response, delay
+
+
+def _jobs(db: Session) -> list[GenerationJob]:
+    db.expire_all()
+    return list(db.scalars(select(GenerationJob)))
+
+
+def _usage(db: Session) -> int:
+    db.expire_all()
+    return db.scalar(
+        select(func.count())
+        .select_from(UsageEvent)
+        .where(UsageEvent.event_type == UsageEventType.byo_avatar_video)
+    )
+
+
+def test_create_videos_requires_a_connection(client: TestClient, db: Session) -> None:
+    headers = _register_and_login(client, "owner@cindra.dev")
+    response, delay = _create_videos(client, headers)
+    assert response.status_code == 404
+    delay.assert_not_called()
+    assert _jobs(db) == []
+
+
+def test_create_videos_makes_one_job_per_variant(client: TestClient, db: Session) -> None:
+    headers = _register_and_login(client, "owner@cindra.dev")
+    _connect(client, headers, api_key="hg-secret-key")
+
+    response, delay = _create_videos(client, headers)
+
+    assert response.status_code == 201
+    body = response.json()
+    assert [item["avatar_id"] for item in body] == ["lk_1", "lk_2"]
+    assert len({item["batch_id"] for item in body}) == 1
+    assert all(item["status"] == "queued" for item in body)
+    assert delay.call_count == 2
+    assert _usage(db) == 2
+
+    jobs = _jobs(db)
+    assert {job.input_payload["provider"] for job in jobs} == {"heygen"}
+    # One Idempotency-Key per render, never shared between variants.
+    assert len({job.input_payload["heygen_request_id"] for job in jobs}) == 2
+    # The key itself is looked up by the worker, never copied into jobs.
+    assert all("hg-secret-key" not in json.dumps(job.input_payload) for job in jobs)
+
+
+def test_flagged_script_is_rejected_before_anything_is_spent(
+    client: TestClient, db: Session
+) -> None:
+    headers = _register_and_login(client, "owner@cindra.dev")
+    _connect(client, headers)
+
+    response, delay = _create_videos(client, headers, script="ну ты и сука")
+
+    assert response.status_code == 400
+    delay.assert_not_called()
+    assert _jobs(db) == []
+    assert _usage(db) == 0
+
+
+def test_more_than_four_variants_is_rejected(client: TestClient, db: Session) -> None:
+    headers = _register_and_login(client, "owner@cindra.dev")
+    _connect(client, headers)
+    response, _delay = _create_videos(
+        client, headers, variants=[{"avatar_id": f"lk_{i}", "voice_id": "v"} for i in range(5)]
+    )
+    assert response.status_code == 422
+    assert _jobs(db) == []
+
+
+def test_monthly_quota_is_checked_for_the_whole_batch(client: TestClient, db: Session) -> None:
+    headers = _register_and_login(client, "owner@cindra.dev")
+    _connect(client, headers)
+    four = [{"avatar_id": f"lk_{i}", "voice_id": "v"} for i in range(4)]
+
+    assert _create_videos(client, headers, variants=four)[0].status_code == 201
+    # Free tier allows 5: a 2-variant batch must be refused whole, not
+    # half-rendered.
+    response, delay = _create_videos(client, headers)
+
+    assert response.status_code == 402
+    assert "аватар-видео HeyGen" in response.json()["detail"]
+    delay.assert_not_called()
+    assert len(_jobs(db)) == 4
+    assert _usage(db) == 4
+
+
+def test_list_videos_shows_only_heygen_jobs_visible_to_the_user(
+    client: TestClient, db: Session
+) -> None:
+    owner_headers, member_headers = _make_team(client, db)
+    _connect(client, owner_headers)
+    _create_videos(client, owner_headers)
+    owner = db.scalar(select(User).where(User.email == "owner@cindra.dev"))
+    db.add(
+        GenerationJob(
+            user_id=owner.id,
+            content_type=GenerationContentType.video,
+            input_payload={"topic": "обычное видео"},
+        )
+    )
+    db.commit()
+
+    page = client.get("/integrations/heygen/videos", headers=member_headers).json()
+    assert page["total"] == 2
+    assert {item["avatar_id"] for item in page["items"]} == {"lk_1", "lk_2"}
+
+    outsider = _register_and_login(client, "outsider@cindra.dev")
+    assert client.get("/integrations/heygen/videos", headers=outsider).json()["total"] == 0
+
+
+def test_content_generate_cannot_route_a_job_to_someones_heygen_key(
+    client: TestClient, db: Session
+) -> None:
+    """The worker trusts input_payload["heygen_integration_id"] to pick
+    whose wallet pays -- only /integrations/heygen/videos may set it.
+    /content/generate's request model must keep dropping unknown keys."""
+    headers = _register_and_login(client, "owner@cindra.dev")
+    _connect(client, headers)
+    integration_id = str(_rows(db)[0].id)
+
+    with patch("app.routers.content.run_generation_job.delay"):
+        response = client.post(
+            "/content/generate",
+            json={
+                "topic": "тема",
+                "content_type": "text",
+                "provider": "heygen",
+                "heygen_integration_id": integration_id,
+            },
+            headers=headers,
+        )
+
+    assert response.status_code in (200, 201, 202)
+    (job,) = _jobs(db)
+    assert "provider" not in job.input_payload
+    assert "heygen_integration_id" not in job.input_payload
+
+
+def test_avatar_videos_never_appear_in_the_shared_feed(client: TestClient, db: Session) -> None:
+    viewer = _register_and_login(client, "viewer@cindra.dev")
+    _register_and_login(client, "solo@cindra.dev", role="solo")
+    solo = db.scalar(select(User).where(User.email == "solo@cindra.dev"))
+    assert solo.share_generations_to_feed is True
+    for payload in (
+        {"topic": "обычное видео"},
+        {"provider": "heygen", "script": "моё лицо"},
+    ):
+        db.add(
+            GenerationJob(
+                user_id=solo.id,
+                content_type=GenerationContentType.video,
+                status=GenerationStatus.completed,
+                input_payload=payload,
+                output_payload={"video_url": "https://media.cindra.test/v.mp4"},
+            )
+        )
+    db.commit()
+
+    items = client.get("/feed", headers=viewer).json()["items"]
+    assert [item["caption"] for item in items] == ["обычное видео"]

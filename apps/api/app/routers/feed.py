@@ -34,6 +34,12 @@ def list_feed(
             GenerationJob.status == GenerationStatus.completed,
             GenerationJob.content_type.in_([GenerationContentType.image, GenerationContentType.video]),
             User.share_generations_to_feed.is_(True),
+            # HeyGen avatar videos are usually the user's own face (a
+            # digital twin) -- never part of a feed strangers see, even
+            # for someone who opted into sharing their AI generations.
+            # IS DISTINCT FROM, not !=: ordinary jobs have no "provider"
+            # key, and NULL != 'heygen' is NULL, which would drop them all.
+            GenerationJob.input_payload["provider"].astext.is_distinct_from("heygen"),
         )
         .order_by(GenerationJob.created_at.desc())
     )

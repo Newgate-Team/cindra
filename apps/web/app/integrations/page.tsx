@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 
 import { ApiError, api } from "@/lib/api";
@@ -100,6 +101,9 @@ function HeyGenConnected({ integration, onChanged }: { integration: Integration;
     <>
       <p>
         Подключён: <strong>{integration.account_label ?? "аккаунт HeyGen"}</strong>
+      </p>
+      <p>
+        <Link href="/video/avatar">Создать аватар-видео →</Link>
       </p>
       {!integration.is_own && (
         <p className="muted">

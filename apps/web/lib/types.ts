@@ -100,6 +100,20 @@ export interface HeyGenVoice {
   preview_audio_url: string | null;
 }
 
+export interface HeyGenVideoJob {
+  id: string;
+  batch_id: string;
+  avatar_id: string;
+  voice_id: string;
+  script: string;
+  aspect_ratio: string;
+  status: GenerationStatus;
+  video_url: string | null;
+  error_message: string | null;
+  created_at: string;
+  completed_at: string | null;
+}
+
 export interface TokenPage<T> {
   items: T[];
   next_token: string | null;
