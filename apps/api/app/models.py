@@ -82,6 +82,10 @@ class UsageEventType(str, enum.Enum):
     # only CPU and a file in R2. Capped separately (generously) so it
     # can't be looped to fill the bucket, not because it's expensive.
     layout_render = "layout_render"
+    # An avatar video rendered on the user's own HeyGen key: HeyGen
+    # bills their wallet, so this isn't our AI spend -- it bounds the
+    # worker time spent polling the render and the copy kept in R2.
+    byo_avatar_video = "byo_avatar_video"
 
 
 class GenerationContentType(str, enum.Enum):

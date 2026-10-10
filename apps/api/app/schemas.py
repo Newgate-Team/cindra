@@ -1,7 +1,7 @@
 import re
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
@@ -495,6 +495,34 @@ class HeyGenVoiceOut(BaseModel):
 class HeyGenVoicePage(BaseModel):
     items: list[HeyGenVoiceOut]
     next_token: str | None
+
+
+class HeyGenVariant(BaseModel):
+    avatar_id: str = Field(min_length=1, max_length=128)
+    voice_id: str = Field(min_length=1, max_length=128)
+
+
+class HeyGenVideoRequest(BaseModel):
+    script: str = Field(min_length=1, max_length=5000)
+    aspect_ratio: Literal["9:16", "16:9", "1:1"] = "9:16"
+    title: str | None = Field(default=None, max_length=200)
+    # Each variant is a separate render billed to the user's HeyGen
+    # wallet -- capped so one click can't fan out into a big bill.
+    variants: list[HeyGenVariant] = Field(min_length=1, max_length=4)
+
+
+class HeyGenVideoJobOut(BaseModel):
+    id: uuid.UUID
+    batch_id: str
+    avatar_id: str
+    voice_id: str
+    script: str
+    aspect_ratio: str
+    status: GenerationStatus
+    video_url: str | None
+    error_message: str | None
+    created_at: datetime
+    completed_at: datetime | None
 
 
 class ConfirmSubscriptionRequest(BaseModel):

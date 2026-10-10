@@ -1,3 +1,5 @@
+import json
+
 import httpx
 import pytest
 
@@ -173,3 +175,89 @@ def test_list_voices_normalizes_and_filters() -> None:
         }
     ]
     assert page["next_token"] is None
+
+
+def test_create_avatar_video_sends_idempotency_key_and_body() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert request.url.path == "/v3/videos"
+        assert request.headers["idempotency-key"] == "req-1"
+        assert request.headers["x-api-key"] == "hg-key"
+        assert json.loads(request.content) == {
+            "type": "avatar",
+            "avatar_id": "lk_1",
+            "voice_id": "voice-1",
+            "script": "Привет!",
+            "aspect_ratio": "9:16",
+            "title": "Ролик",
+        }
+        return httpx.Response(200, json={"data": {"video_id": "v_1", "status": "waiting"}})
+
+    with _client(handler) as client:
+        video_id = heygen.create_avatar_video(
+            "hg-key",
+            avatar_id="lk_1",
+            voice_id="voice-1",
+            script="Привет!",
+            aspect_ratio="9:16",
+            idempotency_key="req-1",
+            title="Ролик",
+            client=client,
+        )
+    assert video_id == "v_1"
+
+
+def test_create_avatar_video_without_id_is_an_error() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": {}})
+
+    with _client(handler) as client, pytest.raises(heygen.HeyGenError, match="video_id"):
+        heygen.create_avatar_video(
+            "hg-key",
+            avatar_id="lk_1",
+            voice_id="v",
+            script="s",
+            aspect_ratio="9:16",
+            idempotency_key="k",
+            client=client,
+        )
+
+
+def test_insufficient_credit_has_its_own_error() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            402, json={"error": {"code": "insufficient_credit", "message": "not enough credits"}}
+        )
+
+    with _client(handler) as client, pytest.raises(heygen.HeyGenInsufficientCreditError):
+        heygen.get_current_user("hg-key", client)
+
+
+def test_idempotent_request_still_in_progress_is_transient() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            409, json={"error": {"code": "request_in_progress", "message": "still running"}}
+        )
+
+    with _client(handler) as client, pytest.raises(heygen.HeyGenTransientError):
+        heygen.get_current_user("hg-key", client)
+
+
+def test_other_409_is_permanent() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            409, json={"error": {"code": "resource_not_ready", "message": "avatar processing"}}
+        )
+
+    with _client(handler) as client, pytest.raises(heygen.HeyGenError) as caught:
+        heygen.get_current_user("hg-key", client)
+    assert not isinstance(caught.value, heygen.HeyGenTransientError)
+
+
+def test_get_video_escapes_the_id_in_the_path() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.raw_path == b"/v3/videos/..%2Fusers%2Fme"
+        return httpx.Response(200, json={"data": {"status": "processing"}})
+
+    with _client(handler) as client:
+        assert heygen.get_video("hg-key", "../users/me", client)["status"] == "processing"
