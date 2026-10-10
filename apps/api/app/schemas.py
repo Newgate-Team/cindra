@@ -14,6 +14,7 @@ from app.image_templates import IMAGE_TEMPLATES
 from app.models import (
     GenerationContentType,
     GenerationStatus,
+    IntegrationProvider,
     PostStatus,
     SocialPlatform,
     SubscriptionStatus,
@@ -439,6 +440,61 @@ class SocialAccountOut(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class IntegrationOut(BaseModel):
+    provider: IntegrationProvider
+    account_label: str | None
+    created_at: datetime
+    # False when the connection visible to this user is a teammate's --
+    # the UI says whose account generations will be billed to.
+    is_own: bool
+
+
+class HeyGenConnectRequest(BaseModel):
+    api_key: str = Field(min_length=8, max_length=512)
+
+    @field_validator("api_key")
+    @classmethod
+    def _strip(cls, value: str) -> str:
+        # Keys get pasted with a trailing newline/space often enough
+        # that rejecting them as "invalid" would just be confusing.
+        return value.strip()
+
+
+class HeyGenAccountOut(BaseModel):
+    account_label: str | None
+    billing_type: str | None
+    remaining_balance: float | None
+    currency: str | None
+
+
+class HeyGenAvatarOut(BaseModel):
+    id: str
+    name: str
+    avatar_type: str | None
+    gender: str | None
+    preview_image_url: str | None
+    preview_video_url: str | None
+    default_voice_id: str | None
+
+
+class HeyGenAvatarPage(BaseModel):
+    items: list[HeyGenAvatarOut]
+    next_token: str | None
+
+
+class HeyGenVoiceOut(BaseModel):
+    voice_id: str
+    name: str
+    language: str | None
+    gender: str | None
+    preview_audio_url: str | None
+
+
+class HeyGenVoicePage(BaseModel):
+    items: list[HeyGenVoiceOut]
+    next_token: str | None
 
 
 class ConfirmSubscriptionRequest(BaseModel):

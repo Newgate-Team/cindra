@@ -65,6 +65,46 @@ export interface SocialAccount {
   created_at: string;
 }
 
+export type IntegrationProvider = "heygen";
+
+export interface Integration {
+  provider: IntegrationProvider;
+  account_label: string | null;
+  created_at: string;
+  // false = a teammate's connection; generations bill their account.
+  is_own: boolean;
+}
+
+export interface HeyGenAccount {
+  account_label: string | null;
+  billing_type: string | null;
+  remaining_balance: number | null;
+  currency: string | null;
+}
+
+export interface HeyGenAvatar {
+  id: string;
+  name: string;
+  avatar_type: string | null;
+  gender: string | null;
+  preview_image_url: string | null;
+  preview_video_url: string | null;
+  default_voice_id: string | null;
+}
+
+export interface HeyGenVoice {
+  voice_id: string;
+  name: string;
+  language: string | null;
+  gender: string | null;
+  preview_audio_url: string | null;
+}
+
+export interface TokenPage<T> {
+  items: T[];
+  next_token: string | null;
+}
+
 export interface TikTokCreatorInfo {
   creator_username: string;
   creator_nickname: string;
