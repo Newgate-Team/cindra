@@ -60,6 +60,16 @@ export function ShareIcon({ size = 20 }: IconProps) {
   );
 }
 
+export function PlugIcon({ size = 20 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" {...common}>
+      <path d="M9 3v5M15 3v5" />
+      <path d="M6 8h12v3a6 6 0 0 1-12 0V8z" />
+      <path d="M12 17v4" />
+    </svg>
+  );
+}
+
 export function CardIcon({ size = 20 }: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" {...common}>

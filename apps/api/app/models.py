@@ -34,6 +34,10 @@ class SocialPlatform(str, enum.Enum):
     twitter = "twitter"
 
 
+class IntegrationProvider(str, enum.Enum):
+    heygen = "heygen"
+
+
 class SubscriptionTier(str, enum.Enum):
     free = "free"
     pro = "pro"
@@ -522,6 +526,38 @@ class SocialAccount(Base):
         DateTime(timezone=True), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+
+
+class Integration(Base):
+    """A third-party tool the user plugged in with their own credentials
+    (e.g. a HeyGen API key) -- unlike SocialAccount, it's not somewhere
+    we publish *to*, it's something we generate *with*, billed to the
+    user's own account with that provider rather than to Cindra."""
+
+    __tablename__ = "integrations"
+    __table_args__ = (
+        UniqueConstraint("user_id", "provider", name="uq_integration_user_provider"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    provider: Mapped[IntegrationProvider] = mapped_column(
+        Enum(IntegrationProvider, name="integration_provider"), nullable=False
+    )
+    # Fernet-encrypted at rest, same as SocialAccount's tokens -- never
+    # returned to the client, not even masked.
+    encrypted_secret: Mapped[str] = mapped_column(String(2048), nullable=False)
+    account_label: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
 
