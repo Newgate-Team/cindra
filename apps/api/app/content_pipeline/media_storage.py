@@ -1,4 +1,5 @@
 import uuid
+from pathlib import Path
 
 import boto3
 
@@ -32,6 +33,12 @@ def upload_bytes(data: bytes, content_type: str, extension: str) -> str:
     """
     settings = get_settings()
     key = f"{uuid.uuid4()}.{extension}"
+    if settings.media_local_dir:
+        # Dev-only stand-in for R2 -- see Settings.media_local_dir.
+        directory = Path(settings.media_local_dir)
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / key).write_bytes(data)
+        return f"{settings.r2_public_url_base.rstrip('/')}/{key}"
     _client().put_object(
         Bucket=settings.r2_bucket_name,
         Key=key,

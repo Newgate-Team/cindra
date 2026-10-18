@@ -158,7 +158,7 @@ def _video_out(job: GenerationJob) -> HeyGenVideoJobOut:
         id=job.id,
         batch_id=payload.get("heygen_batch_id", ""),
         avatar_id=payload.get("avatar_id", ""),
-        voice_id=payload.get("voice_id", ""),
+        voice_id=payload.get("voice_id"),
         script=payload.get("script", ""),
         aspect_ratio=payload.get("aspect_ratio", ""),
         status=job.status,
@@ -263,11 +263,14 @@ def heygen_voices(
     token: str | None = Query(default=None, max_length=512),
     language: str | None = Query(default=None, max_length=64),
     gender: Literal["male", "female"] | None = None,
+    voice_type: Literal["public", "private"] | None = Query(default=None, alias="type"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> HeyGenVoicePage:
     api_key = _heygen_key(db, current_user)
     page = _call_heygen(
-        lambda: heygen.list_voices(api_key, token=token, language=language, gender=gender)
+        lambda: heygen.list_voices(
+            api_key, token=token, language=language, gender=gender, voice_type=voice_type
+        )
     )
     return HeyGenVoicePage.model_validate(page)

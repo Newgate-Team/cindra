@@ -154,7 +154,10 @@ def test_avatars_are_fetched_with_the_stored_key(client: TestClient) -> None:
         )
 
     assert response.status_code == 200
-    assert response.json() == page
+    assert response.json() == {
+        "items": [{**page["items"][0], "status": None}],
+        "next_token": "next",
+    }
     list_looks.assert_called_once_with("hg-secret-key", token="abc", ownership="private")
 
 
@@ -171,8 +174,22 @@ def test_voices_are_fetched_with_filters(client: TestClient) -> None:
 
     assert response.status_code == 200
     list_voices.assert_called_once_with(
-        "hg-secret-key", token=None, language="Russian", gender="female"
+        "hg-secret-key", token=None, language="Russian", gender="female", voice_type=None
     )
+
+
+def test_own_cloned_voices_are_requested_with_type_private(client: TestClient) -> None:
+    headers = _register_and_login(client, "owner@cindra.dev")
+    _connect(client, headers, api_key="hg-secret-key")
+    with patch(
+        "app.routers.integrations.heygen.list_voices",
+        return_value={"items": [], "next_token": None},
+    ) as list_voices:
+        response = client.get("/integrations/heygen/voices?type=private", headers=headers)
+
+    assert response.status_code == 200
+    assert list_voices.call_args.kwargs["voice_type"] == "private"
+    assert client.get("/integrations/heygen/voices?type=mine", headers=headers).status_code == 422
 
 
 def test_account_reports_wallet_balance(client: TestClient) -> None:

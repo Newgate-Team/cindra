@@ -368,6 +368,9 @@ main {
 .avatar-tile {
   display: flex;
   flex-direction: column;
+  /* Grid items default to min-width: auto, so a long nowrap name would
+     widen the whole column instead of ellipsizing. */
+  min-width: 0;
   gap: 6px;
   padding: 0;
   border: 1px solid var(--border);

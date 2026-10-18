@@ -26,6 +26,7 @@ dependencies = [
 dev = [
     "pytest>=8.3",
     "ruff>=0.8",
+    "jsonschema>=4.23",
 ]
 
 [tool.setuptools.packages.find]
@@ -36,3 +37,14 @@ extend-exclude = ["migrations/versions"]
 
 [tool.ruff.lint]
 extend-ignore = ["B008"]
+
+[tool.pytest.ini_options]
+# devtools/ (the HeyGen simulator) isn't part of the installed `app`
+# package but is imported by the contract tests.
+pythonpath = ["."]
+filterwarnings = [
+    # The contract tests hand heygen.py a Starlette TestClient (pointed
+    # at devtools/heygen_simulator) as its httpx client; TestClient just
+    # ignores timeout=, which real httpx honours in production.
+    "ignore:You should not use the 'timeout' argument with the TestClient",
+]

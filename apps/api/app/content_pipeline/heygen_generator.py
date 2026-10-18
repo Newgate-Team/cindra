@@ -22,15 +22,20 @@ _DOWNLOAD_CHUNK = 1024 * 1024
 
 # Same SSRF shape seedance_generator closes for fal.ai: the finished
 # file's URL comes from the provider's response, so only HeyGen's own
-# file hosts are fetched (docs examples: files.heygen.com,
-# resource.heygen.ai), and a redirect away from them isn't followed.
-# Not yet observed on a real render -- if HeyGen ever serves from
-# another CDN, the failure names the host so this list is a one-line fix.
+# file hosts are fetched (its OpenAPI examples: files.heygen.ai,
+# files.heygen.com, resource.heygen.ai), and a redirect away from them
+# isn't followed. Not yet observed on a real render -- if HeyGen ever
+# serves from another CDN, the failure names the host, a one-line fix.
 _ALLOWED_RESULT_HOSTS = ("heygen.com", "heygen.ai")
 
 
 def _is_allowed_result_url(url: str) -> bool:
     parts = urlsplit(url)
+    configured = urlsplit(heygen.base_url())
+    # The operator-configured API host (the local simulator) serves its
+    # own files; production leaves this at api.heygen.com, already covered.
+    if (parts.scheme, parts.netloc) == (configured.scheme, configured.netloc):
+        return True
     if parts.scheme != "https" or not parts.hostname:
         return False
     return any(
@@ -86,7 +91,7 @@ def _render(
     video_id = heygen.create_avatar_video(
         api_key,
         avatar_id=payload["avatar_id"],
-        voice_id=payload["voice_id"],
+        voice_id=payload.get("voice_id"),
         script=payload["script"],
         aspect_ratio=payload.get("aspect_ratio", "9:16"),
         idempotency_key=payload["heygen_request_id"],

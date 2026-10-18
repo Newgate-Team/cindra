@@ -477,6 +477,8 @@ class HeyGenAvatarOut(BaseModel):
     preview_image_url: str | None
     preview_video_url: str | None
     default_voice_id: str | None
+    # Private looks only: anything but "completed" can't render yet.
+    status: str | None = None
 
 
 class HeyGenAvatarPage(BaseModel):
@@ -499,7 +501,8 @@ class HeyGenVoicePage(BaseModel):
 
 class HeyGenVariant(BaseModel):
     avatar_id: str = Field(min_length=1, max_length=128)
-    voice_id: str = Field(min_length=1, max_length=128)
+    # None = the avatar's own default voice (HeyGen's documented fallback).
+    voice_id: str | None = Field(default=None, min_length=1, max_length=128)
 
 
 class HeyGenVideoRequest(BaseModel):
@@ -515,7 +518,7 @@ class HeyGenVideoJobOut(BaseModel):
     id: uuid.UUID
     batch_id: str
     avatar_id: str
-    voice_id: str
+    voice_id: str | None
     script: str
     aspect_ratio: str
     status: GenerationStatus

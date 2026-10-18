@@ -114,6 +114,10 @@ class Settings(BaseSettings):
     twitter_client_id: str = ""
     twitter_client_secret: str = ""
     twitter_redirect_uri: str = "https://cindra-chi.vercel.app/oauth/twitter/callback"
+    # Only ever changed for local runs against devtools/heygen_simulator.py
+    # -- with no paid HeyGen key, that's the only way to drive the whole
+    # avatar-video flow end to end.
+    heygen_api_base_url: str = "https://api.heygen.com"
     # Comma-separated. Without CORS the browser blocks every request
     # from the web app (blocked at the OPTIONS preflight, not
     # something curl-based manual testing ever exercises) -- found
@@ -134,6 +138,13 @@ class Settings(BaseSettings):
     # domain) -- uploaded keys are appended to this to build the URL
     # returned to callers.
     r2_public_url_base: str = ""
+    # LOCAL DEVELOPMENT ONLY: when set, upload_bytes writes files to this
+    # directory instead of R2 and the API serves them at /dev-media
+    # (pair with R2_PUBLIC_URL_BASE=http://localhost:8000/dev-media).
+    # Lets every generation flow run end to end on a laptop without R2
+    # credentials. Never set it in production -- Railway's disk is
+    # ephemeral, so files would vanish on the next deploy.
+    media_local_dir: str = ""
     # CIN-160: separate Fernet key for scheduler/backup.py, deliberately
     # not social_token_encryption_key -- different security domain.
     # Postgres dumps go into this same R2 bucket (see CIN-91), which has
