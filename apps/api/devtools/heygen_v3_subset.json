@@ -1,0 +1,4201 @@
+{
+ "components": {
+  "parameters": {
+   "IdempotencyKey": {
+    "description": "Optional client-supplied key for safely retrying mutations. Subsequent calls within 24 hours that share this key replay the original response — even if the request body differs slightly (a warning is logged). A retry that arrives while the original is still in flight gets a 409 `request_in_progress`. Keys must be 1–255 characters from `[A-Za-z0-9_:.-]`; a UUID is a safe default. Scope is per-endpoint and per-resource: the same key on a different route or path parameter is independent.",
+    "example": "550e8400-e29b-41d4-a716-446655440000",
+    "in": "header",
+    "name": "Idempotency-Key",
+    "required": false,
+    "schema": {
+     "maxLength": 255,
+     "minLength": 1,
+     "pattern": "^[A-Za-z0-9_\\-:.]{1,255}$",
+     "type": "string"
+    }
+   }
+  },
+  "schemas": {
+   "AssetBase64": {
+    "additionalProperties": false,
+    "description": "Asset input via base64-encoded content.",
+    "properties": {
+     "data": {
+      "description": "Base64-encoded file content",
+      "title": "Data",
+      "type": "string"
+     },
+     "media_type": {
+      "description": "MIME type of the encoded content (e.g. \"image/png\")",
+      "title": "Media Type",
+      "type": "string"
+     },
+     "type": {
+      "const": "base64",
+      "description": "Input type discriminator",
+      "title": "Type",
+      "type": "string"
+     }
+    },
+    "required": [
+     "type",
+     "media_type",
+     "data"
+    ],
+    "title": "AssetBase64",
+    "type": "object",
+    "x-mcp-visible": false
+   },
+   "AssetId": {
+    "additionalProperties": false,
+    "description": "Asset input via HeyGen asset ID from the asset upload endpoint.",
+    "properties": {
+     "asset_id": {
+      "description": "HeyGen asset ID from the asset upload endpoint",
+      "title": "Asset Id",
+      "type": "string"
+     },
+     "type": {
+      "const": "asset_id",
+      "description": "Input type discriminator",
+      "title": "Type",
+      "type": "string"
+     }
+    },
+    "required": [
+     "type",
+     "asset_id"
+    ],
+    "title": "AssetId",
+    "type": "object"
+   },
+   "AssetUrl": {
+    "additionalProperties": false,
+    "description": "Asset input via publicly accessible HTTPS URL.",
+    "properties": {
+     "type": {
+      "const": "url",
+      "description": "Input type discriminator",
+      "title": "Type",
+      "type": "string"
+     },
+     "url": {
+      "description": "Publicly accessible HTTPS URL for the asset",
+      "title": "Url",
+      "type": "string"
+     }
+    },
+    "required": [
+     "type",
+     "url"
+    ],
+    "title": "AssetUrl",
+    "type": "object"
+   },
+   "AudioVoiceType": {
+    "enum": [
+     "public",
+     "private"
+    ],
+    "title": "AudioVoiceType",
+    "type": "string"
+   },
+   "AutoReloadInfo": {
+    "properties": {
+     "amount_usd": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "examples": [
+       50.0
+      ],
+      "title": "Amount Usd"
+     },
+     "enabled": {
+      "examples": [
+       true
+      ],
+      "title": "Enabled",
+      "type": "boolean"
+     },
+     "threshold_usd": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "examples": [
+       10.0
+      ],
+      "title": "Threshold Usd"
+     }
+    },
+    "required": [
+     "enabled"
+    ],
+    "title": "AutoReloadInfo",
+    "type": "object"
+   },
+   "AvatarError": {
+    "description": "Error details for a failed avatar creation.",
+    "properties": {
+     "code": {
+      "description": "Machine-readable error code.",
+      "examples": [
+       "training_failed"
+      ],
+      "title": "Code",
+      "type": "string"
+     },
+     "message": {
+      "description": "Human-readable error description.",
+      "examples": [
+       "Footage duration must be between 15s and 600s"
+      ],
+      "title": "Message",
+      "type": "string"
+     }
+    },
+    "required": [
+     "code",
+     "message"
+    ],
+    "title": "AvatarError",
+    "type": "object"
+   },
+   "AvatarFit": {
+    "description": "How the avatar is scaled to the output canvas.",
+    "enum": [
+     "contain",
+     "cover"
+    ],
+    "title": "AvatarFit",
+    "type": "string"
+   },
+   "AvatarIIIEngineConfig": {
+    "additionalProperties": false,
+    "description": "Avatar III engine configuration.\n\nA single engine value that resolves to the right product by the avatar's\nlook type (mirrors how ``avatar_iv`` already serves both photo and video\navatars):\n\n- video avatar looks (``digital_twin``, ``studio_avatar``) -> Digital Twin\n  (supports 4K)\n- ``photo_avatar`` look -> Photo Avatar (no 4K output)\n\nNot supported for raw image input (``type: \"image\"``).\n``motion_prompt`` and ``expressiveness`` are not supported with this engine.",
+    "properties": {
+     "type": {
+      "const": "avatar_iii",
+      "description": "Engine type discriminator. Must be 'avatar_iii'. Resolves to Digital Twin for video avatar looks (digital_twin, studio_avatar) and Photo Avatar for photo_avatar looks; not supported for raw image input. Check supported_api_engines on the avatar look to confirm eligibility.",
+      "title": "Type",
+      "type": "string"
+     }
+    },
+    "required": [
+     "type"
+    ],
+    "title": "AvatarIIIEngineConfig",
+    "type": "object"
+   },
+   "AvatarIVEngineConfig": {
+    "additionalProperties": false,
+    "description": "Avatar IV engine configuration (default behavior).",
+    "properties": {
+     "type": {
+      "const": "avatar_iv",
+      "description": "Engine type discriminator. Must be 'avatar_iv'.",
+      "title": "Type",
+      "type": "string"
+     }
+    },
+    "required": [
+     "type"
+    ],
+    "title": "AvatarIVEngineConfig",
+    "type": "object"
+   },
+   "AvatarLookItem": {
+    "description": "A single avatar look in the list response.\n\nThe ``id`` field is the look-level identifier to pass as ``avatar_id``\nto POST /v3/videos.",
+    "properties": {
+     "avatar_type": {
+      "$ref": "#/components/schemas/AvatarLookType",
+      "description": "Avatar type — determines engine and parameter compatibility.",
+      "examples": [
+       "photo_avatar"
+      ]
+     },
+     "default_voice_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Default voice ID for this look.",
+      "examples": [
+       "1bd001e7e50f421d891986aad5c8bbd2"
+      ],
+      "title": "Default Voice Id"
+     },
+     "error": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/AvatarError"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Error details. Only present when status is 'failed'."
+     },
+     "gender": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Gender of the avatar.",
+      "examples": [
+       "female"
+      ],
+      "title": "Gender"
+     },
+     "group_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "ID of the avatar group this look belongs to.",
+      "examples": [
+       "ag_abc123"
+      ],
+      "title": "Group Id"
+     },
+     "id": {
+      "description": "Unique look identifier. Pass this as avatar_id to POST /v3/videos.",
+      "examples": [
+       "lk_abc123"
+      ],
+      "title": "Id",
+      "type": "string"
+     },
+     "image_height": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Native height of the look in pixels.",
+      "examples": [
+       1080
+      ],
+      "title": "Image Height"
+     },
+     "image_width": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Native width of the look in pixels.",
+      "examples": [
+       1920
+      ],
+      "title": "Image Width"
+     },
+     "name": {
+      "description": "Display name of the look.",
+      "examples": [
+       "Business Suit"
+      ],
+      "title": "Name",
+      "type": "string"
+     },
+     "preferred_orientation": {
+      "anyOf": [
+       {
+        "enum": [
+         "portrait",
+         "landscape",
+         "square"
+        ],
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Preferred orientation of the look: 'portrait', 'landscape', or 'square'.",
+      "title": "Preferred Orientation"
+     },
+     "preview_image_url": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "URL to the look preview image.",
+      "examples": [
+       "https://files.heygen.ai/look/business_preview.jpg"
+      ],
+      "title": "Preview Image Url"
+     },
+     "preview_video_url": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "URL to the look preview video.",
+      "examples": [
+       "https://files.heygen.ai/look/business_preview.mp4"
+      ],
+      "title": "Preview Video Url"
+     },
+     "status": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/AvatarStatus"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Training status of the avatar look: 'processing', 'completed', or 'failed'. Only present for private avatars.",
+      "examples": [
+       "completed"
+      ]
+     },
+     "supported_api_engines": {
+      "description": "Engine values this look supports for POST /v3/videos. Possible values: 'avatar_v', 'avatar_iv', 'avatar_iii'.",
+      "examples": [
+       [
+        "avatar_v",
+        "avatar_iv",
+        "avatar_iii"
+       ]
+      ],
+      "items": {
+       "type": "string"
+      },
+      "title": "Supported Api Engines",
+      "type": "array"
+     },
+     "tags": {
+      "description": "Tags associated with the look.",
+      "examples": [
+       [
+        "business",
+        "formal"
+       ]
+      ],
+      "items": {
+       "type": "string"
+      },
+      "title": "Tags",
+      "type": "array"
+     }
+    },
+    "required": [
+     "id",
+     "name",
+     "avatar_type"
+    ],
+    "title": "AvatarLookItem",
+    "type": "object"
+   },
+   "AvatarLookType": {
+    "description": "Avatar look type — determines engine compatibility with POST /v3/videos.",
+    "enum": [
+     "studio_avatar",
+     "digital_twin",
+     "photo_avatar"
+    ],
+    "title": "AvatarLookType",
+    "type": "string"
+   },
+   "AvatarStatus": {
+    "description": "Training/creation status of an avatar group or look.",
+    "enum": [
+     "processing",
+     "pending_consent",
+     "failed",
+     "completed"
+    ],
+    "title": "AvatarStatus",
+    "type": "string"
+   },
+   "AvatarVEngineConfig": {
+    "additionalProperties": false,
+    "description": "Avatar V engine configuration with cross-reference-driven animation.",
+    "properties": {
+     "reference_look_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Optional look to use as the animation reference. When provided, it must be a `digital_twin` look accessible to your workspace and in the same avatar group as `avatar_id` (`studio_avatar` and `photo_avatar` looks are rejected). When omitted, video avatars self-reference and photo avatars select from their group's eligible candidates, preferring digital twins (ready first, then processing / upgrading), then curated public studio looks. A photo avatar whose group has no eligible reference renders directly from its image without one; motion_prompt is rejected in that case. A non-public `digital_twin` reference, whether provided or selected automatically, must also satisfy its group's consent requirements.",
+      "title": "Reference Look Id"
+     },
+     "type": {
+      "const": "avatar_v",
+      "description": "Engine type discriminator. Must be 'avatar_v'. Check supported_api_engines on the avatar look to confirm eligibility.",
+      "title": "Type",
+      "type": "string"
+     }
+    },
+    "required": [
+     "type"
+    ],
+    "title": "AvatarVEngineConfig",
+    "type": "object"
+   },
+   "AvatarVideoScene": {
+    "additionalProperties": false,
+    "description": "A whole-frame speaking scene backed by an avatar.",
+    "properties": {
+     "input": {
+      "$ref": "#/components/schemas/StudioAvatarInput",
+      "description": "Scene source ('type': 'avatar'): an avatar_id plus one audio source. The avatar_id accepts any avatar look — video avatars and photo avatars alike (pass a photo avatar's look id to get a talking photo). The scene duration is derived server-side from the audio."
+     },
+     "type": {
+      "const": "avatar_video",
+      "description": "Must be 'avatar_video' for an avatar speaking scene.",
+      "title": "Type",
+      "type": "string"
+     }
+    },
+    "required": [
+     "type",
+     "input"
+    ],
+    "title": "AvatarVideoScene",
+    "type": "object"
+   },
+   "BackgroundSetting": {
+    "description": "Background configuration for the generated video.",
+    "properties": {
+     "asset_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "HeyGen asset ID of the background image. Used when type is 'image'. Mutually exclusive with url.",
+      "title": "Asset Id"
+     },
+     "type": {
+      "description": "Background type. 'color' uses a solid hex color; 'image' uses an image from url or asset_id.",
+      "enum": [
+       "color",
+       "image"
+      ],
+      "title": "Type",
+      "type": "string"
+     },
+     "url": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "URL of the background image. Used when type is 'image'. Mutually exclusive with asset_id.",
+      "title": "Url"
+     },
+     "value": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Hex color code (e.g. '#ff0000'). Required when type is 'color'.",
+      "title": "Value"
+     }
+    },
+    "required": [
+     "type"
+    ],
+    "title": "BackgroundSetting",
+    "type": "object"
+   },
+   "BillingType": {
+    "description": "Discriminator for billing fields.  Exactly one of wallet / subscription /\nusage_based is populated depending on this value.\n- wallet: prepaid balance in USD (or credits for Enterprise), API key auth\n- subscription: per-pool credit balances, OAuth integration apps\n- usage_based: metered billing with optional spending cap",
+    "enum": [
+     "wallet",
+     "subscription",
+     "usage_based"
+    ],
+    "title": "BillingType",
+    "type": "string"
+   },
+   "CaptionFileFormat": {
+    "description": "Supported caption file output formats.",
+    "enum": [
+     "srt"
+    ],
+    "title": "CaptionFileFormat",
+    "type": "string"
+   },
+   "CaptionSetting": {
+    "description": "Caption generation settings for video creation.\n\nA sidecar subtitle file is always generated and returned via ``subtitle_url``\nin the chosen ``file_format``. When ``style`` is also set, captions are\nadditionally burned into the rendered video — the sidecar is still delivered.",
+    "properties": {
+     "file_format": {
+      "$ref": "#/components/schemas/CaptionFileFormat",
+      "default": "srt",
+      "description": "Output format for the sidecar caption file."
+     },
+     "style": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/CaptionStyle"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Visual style for burning captions into the rendered video. Omit for sidecar-only captions."
+     }
+    },
+    "title": "CaptionSetting",
+    "type": "object"
+   },
+   "CaptionStyle": {
+    "description": "Visual style applied when burning captions into the rendered video.",
+    "enum": [
+     "default"
+    ],
+    "title": "CaptionStyle",
+    "type": "string"
+   },
+   "CreateAvatarVideoResponse": {
+    "properties": {
+     "output_format": {
+      "$ref": "#/components/schemas/VideoOutputFormat",
+      "default": "mp4",
+      "description": "Resolved output format for the video."
+     },
+     "status": {
+      "description": "Initial video status (e.g. 'waiting').",
+      "examples": [
+       "waiting"
+      ],
+      "title": "Status",
+      "type": "string"
+     },
+     "video_id": {
+      "description": "Unique identifier for the created video.",
+      "examples": [
+       "v_abc123def456"
+      ],
+      "title": "Video Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "video_id",
+     "status"
+    ],
+    "title": "CreateAvatarVideoResponse",
+    "type": "object"
+   },
+   "CreateVideoFromAvatar": {
+    "additionalProperties": false,
+    "description": "Create a video from a HeyGen avatar (video or photo avatar).\n\nProvide an avatar_id to use a previously created avatar. Supports all\navatar types: studio_avatar, digital_twin, and photo_avatar. Optionally\nset ``engine`` to select Avatar V for eligible avatars; when omitted, the\nserver defaults to Avatar IV.",
+    "properties": {
+     "aspect_ratio": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/VideoAspectRatio"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": "16:9",
+      "description": "Output video aspect ratio. Supported values: '16:9', '9:16', '4:5', '5:4', '1:1', 'auto'. Defaults to '16:9'. 'auto' preserves the source's aspect ratio (avatar source frames or uploaded image), short-edge anchored to the requested resolution and capped at the tier's long edge. Falls back to '16:9' when source dimensions can't be read.",
+      "x-cli-default": "auto",
+      "x-mcp-default": "auto"
+     },
+     "audio_asset_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "HeyGen asset ID of an uploaded audio file. Mutually exclusive with script.",
+      "title": "Audio Asset Id"
+     },
+     "audio_url": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Public URL of an audio file to lip-sync. Mutually exclusive with script.",
+      "title": "Audio Url"
+     },
+     "avatar_id": {
+      "description": "HeyGen avatar ID (video avatar or photo avatar look ID).",
+      "title": "Avatar Id",
+      "type": "string"
+     },
+     "background": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/BackgroundSetting"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Background settings for the video."
+     },
+     "brand_glossary_id": {
+      "anyOf": [
+       {
+        "minLength": 1,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Brand glossary ID controlling how custom terms are pronounced in generated speech (for example, saying 'HeyGen' as 'hey-jen'). Applies when the audio is synthesized from `script`; a caller-supplied `audio_url` or `audio_asset_id` is unaffected. Pronunciation is applied to the synthesized audio only, so caption and subtitle text still show the original script wording. Discover IDs via GET /v3/brand-glossaries.",
+      "title": "Brand Glossary Id"
+     },
+     "callback_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Caller-defined identifier echoed back in the webhook payload.",
+      "title": "Callback Id"
+     },
+     "callback_url": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Webhook URL to receive a POST notification when the video is ready.",
+      "title": "Callback Url"
+     },
+     "caption": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/CaptionSetting"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Caption generation settings. A sidecar subtitle file is always returned via subtitle_url; set 'style' to additionally burn captions into the rendered video."
+     },
+     "engine": {
+      "anyOf": [
+       {
+        "discriminator": {
+         "mapping": {
+          "avatar_iii": "#/components/schemas/AvatarIIIEngineConfig",
+          "avatar_iv": "#/components/schemas/AvatarIVEngineConfig",
+          "avatar_v": "#/components/schemas/AvatarVEngineConfig"
+         },
+         "propertyName": "type"
+        },
+        "oneOf": [
+         {
+          "$ref": "#/components/schemas/AvatarVEngineConfig"
+         },
+         {
+          "$ref": "#/components/schemas/AvatarIVEngineConfig"
+         },
+         {
+          "$ref": "#/components/schemas/AvatarIIIEngineConfig"
+         }
+        ]
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Engine configuration for video generation. Pass {\"type\": \"avatar_v\"} to enable cross-reference-driven animation for higher quality. Check supported_api_engines on the avatar look to confirm eligibility. Defaults to Avatar IV when omitted.",
+      "title": "Engine"
+     },
+     "expressiveness": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/Expressiveness"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Avatar expressiveness level. Photo avatars only. Defaults to 'low' when omitted. Avatar IV only; rejected when engine.type is 'avatar_v'."
+     },
+     "fit": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/AvatarFit"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "How the subject is fitted to the output canvas. 'cover' scales to fill the frame (may crop edges). 'contain' scales to fit entirely within the frame (may show background). When omitted, the server picks the best option based on the source and canvas orientations."
+     },
+     "folder_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Destination folder ID in the caller's workspace, for example one returned by POST /v3/folders. Omit, pass null, or pass an empty string to place the result at the workspace root. The id must name a folder that is not in the trash and that the caller can write to. Assets library folders are accepted, but the HeyGen app files only assets in them, so a result placed there may not appear in the Assets library view. An unknown id, a folder in another workspace, a project of another kind such as a brand kit, or a trashed folder is rejected with 404 before anything is created. Supported only for single-video creation; batch video items cannot set their own destination folder.",
+      "title": "Folder Id"
+     },
+     "motion_prompt": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Natural-language prompt controlling avatar body motion and hand gestures. Supported for photo avatars on either engine, and for video avatars when engine.type is 'avatar_v'. Rejected for video avatars on the default Avatar IV engine, and for photo avatars on 'avatar_v' when the avatar's group has no animation reference (no digital twin or curated reference look).",
+      "title": "Motion Prompt"
+     },
+     "output_format": {
+      "$ref": "#/components/schemas/VideoOutputFormat",
+      "default": "mp4",
+      "description": "Output container. 'webm' returns a video with a transparent background (alpha channel); 'mp4' (default) returns a standard video. 'webm' requires an avatar that supports matting. When 'webm' is selected, any 'background' value is rejected and background removal is applied automatically — the caller does not need to set 'remove_background'."
+     },
+     "remove_background": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Remove the avatar background. Video avatars must be trained with matting enabled.",
+      "title": "Remove Background"
+     },
+     "resolution": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/VideoResolution"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Output video resolution. `4k` is available for Avatar III digital twins and studio avatars."
+     },
+     "script": {
+      "anyOf": [
+       {
+        "minLength": 1,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Text script for the avatar to speak. Pair with voice_id, or omit voice_id when using avatar_id to use the avatar's default voice. Mutually exclusive with audio_url/audio_asset_id.",
+      "title": "Script"
+     },
+     "title": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Display title for the video in the HeyGen dashboard.",
+      "title": "Title"
+     },
+     "type": {
+      "const": "avatar",
+      "description": "Must be 'avatar' for avatar-based video creation.",
+      "title": "Type",
+      "type": "string"
+     },
+     "voice_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Voice ID for text-to-speech. Required when script is provided, unless avatar_id is set (the avatar's default voice is used as fallback).",
+      "title": "Voice Id"
+     },
+     "voice_settings": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/VoiceSettingsInput"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Voice tuning parameters (speed, pitch, locale)."
+     },
+     "watermark": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/WatermarkInput"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Custom watermark image to overlay on the video (PNG or JPEG). Available as a premium option for select Enterprise customers. To request access, please contact our support team.",
+      "x-cli-visible": false,
+      "x-mcp-visible": false
+     }
+    },
+    "required": [
+     "type",
+     "avatar_id"
+    ],
+    "title": "CreateVideoFromAvatar",
+    "type": "object"
+   },
+   "CreateVideoFromCinematicAvatar": {
+    "additionalProperties": false,
+    "description": "Create a video from a text prompt plus avatar and asset references (Cinematic Avatar).\n\nCinematic Avatar generates a video from a natural-language ``prompt`` guided by\nreference content: one to three avatar looks and optional reference assets\n(images / videos / audio). Unlike the ``avatar`` and ``image`` modes there is\nno script or voice — motion and speech are driven entirely by the prompt and\nthe supplied references. Backed by the Seedance generation pipeline.",
+    "properties": {
+     "aspect_ratio": {
+      "default": "16:9",
+      "description": "Output aspect ratio. Supported for cinematic_avatar: '16:9', '9:16', '1:1'. Defaults to '16:9'.",
+      "enum": [
+       "16:9",
+       "9:16",
+       "1:1"
+      ],
+      "title": "Aspect Ratio",
+      "type": "string"
+     },
+     "auto_duration": {
+      "default": false,
+      "description": "Let the model choose the video length. When true, omit duration.",
+      "title": "Auto Duration",
+      "type": "boolean"
+     },
+     "avatar_id": {
+      "description": "Avatar look ID(s) used as visual references. Provide 1 to 3 look IDs.",
+      "items": {
+       "type": "string"
+      },
+      "title": "Avatar Id",
+      "type": "array"
+     },
+     "duration": {
+      "anyOf": [
+       {
+        "maximum": 15,
+        "minimum": 4,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Video length in seconds (4–15). Defaults to 10. Omit when auto_duration is true.",
+      "title": "Duration"
+     },
+     "enhance_prompt": {
+      "default": false,
+      "description": "Enable server-side prompt enhancement.",
+      "title": "Enhance Prompt",
+      "type": "boolean"
+     },
+     "folder_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Destination folder ID in the caller's workspace, for example one returned by POST /v3/folders. Omit, pass null, or pass an empty string to place the result at the workspace root. The id must name a folder that is not in the trash and that the caller can write to. Assets library folders are accepted, but the HeyGen app files only assets in them, so a result placed there may not appear in the Assets library view. An unknown id, a folder in another workspace, a project of another kind such as a brand kit, or a trashed folder is rejected with 404 before anything is created. Supported only for single-video creation; batch video items cannot set their own destination folder.",
+      "title": "Folder Id"
+     },
+     "prompt": {
+      "description": "Natural-language prompt describing the video to generate.",
+      "maxLength": 10000,
+      "minLength": 1,
+      "title": "Prompt",
+      "type": "string"
+     },
+     "references": {
+      "anyOf": [
+       {
+        "items": {
+         "discriminator": {
+          "mapping": {
+           "asset_id": "#/components/schemas/AssetId",
+           "base64": "#/components/schemas/AssetBase64",
+           "url": "#/components/schemas/AssetUrl"
+          },
+          "propertyName": "type"
+         },
+         "oneOf": [
+          {
+           "$ref": "#/components/schemas/AssetUrl"
+          },
+          {
+           "$ref": "#/components/schemas/AssetId"
+          },
+          {
+           "$ref": "#/components/schemas/AssetBase64"
+          }
+         ]
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Reference assets (images, videos, or audio) guiding the generation. Each accepts a URL, an asset_id, or inline base64. Combined limits: at most 3 videos and 9 images across avatars and references.",
+      "title": "References"
+     },
+     "resolution": {
+      "default": "720p",
+      "description": "Output resolution. Supported for cinematic_avatar: '720p', '1080p'. Defaults to '720p'.",
+      "enum": [
+       "720p",
+       "1080p"
+      ],
+      "title": "Resolution",
+      "type": "string"
+     },
+     "title": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Display title for the video in the HeyGen dashboard.",
+      "title": "Title"
+     },
+     "type": {
+      "const": "cinematic_avatar",
+      "description": "Must be 'cinematic_avatar' for prompt-and-reference video creation.",
+      "title": "Type",
+      "type": "string"
+     }
+    },
+    "required": [
+     "type",
+     "prompt",
+     "avatar_id"
+    ],
+    "title": "CreateVideoFromCinematicAvatar",
+    "type": "object"
+   },
+   "CreateVideoFromImage": {
+    "additionalProperties": false,
+    "description": "Create a lip-synced video from an image of a person.\n\nThe image must show a clearly visible, human-like face: a photo, or a realistic\nillustration of a person. Images without a detectable face are rejected with 400.\nFor non-human or stylized characters (mascots, animals, objects), use the\nimage_to_video or reference_to_video mode of POST /v3/models/videos instead.\n\nProvide an image via URL, asset ID, or inline base64. The image will be\nanimated with lip-sync to the provided audio or generated speech.",
+    "properties": {
+     "aspect_ratio": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/VideoAspectRatio"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": "16:9",
+      "description": "Output video aspect ratio. Supported values: '16:9', '9:16', '4:5', '5:4', '1:1', 'auto'. Defaults to '16:9'. 'auto' preserves the source's aspect ratio (avatar source frames or uploaded image), short-edge anchored to the requested resolution and capped at the tier's long edge. Falls back to '16:9' when source dimensions can't be read.",
+      "x-cli-default": "auto",
+      "x-mcp-default": "auto"
+     },
+     "audio_asset_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "HeyGen asset ID of an uploaded audio file. Mutually exclusive with script.",
+      "title": "Audio Asset Id"
+     },
+     "audio_url": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Public URL of an audio file to lip-sync. Mutually exclusive with script.",
+      "title": "Audio Url"
+     },
+     "background": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/BackgroundSetting"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Background settings for the video."
+     },
+     "brand_glossary_id": {
+      "anyOf": [
+       {
+        "minLength": 1,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Brand glossary ID controlling how custom terms are pronounced in generated speech (for example, saying 'HeyGen' as 'hey-jen'). Applies when the audio is synthesized from `script`; a caller-supplied `audio_url` or `audio_asset_id` is unaffected. Pronunciation is applied to the synthesized audio only, so caption and subtitle text still show the original script wording. Discover IDs via GET /v3/brand-glossaries.",
+      "title": "Brand Glossary Id"
+     },
+     "callback_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Caller-defined identifier echoed back in the webhook payload.",
+      "title": "Callback Id"
+     },
+     "callback_url": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Webhook URL to receive a POST notification when the video is ready.",
+      "title": "Callback Url"
+     },
+     "caption": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/CaptionSetting"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Caption generation settings. A sidecar subtitle file is always returned via subtitle_url; set 'style' to additionally burn captions into the rendered video."
+     },
+     "expressiveness": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/Expressiveness"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Avatar expressiveness level. Photo avatars only. Defaults to 'low' when omitted."
+     },
+     "fit": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/AvatarFit"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "How the subject is fitted to the output canvas. 'cover' scales to fill the frame (may crop edges). 'contain' scales to fit entirely within the frame (may show background). When omitted, the server picks the best option based on the source and canvas orientations."
+     },
+     "folder_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Destination folder ID in the caller's workspace, for example one returned by POST /v3/folders. Omit, pass null, or pass an empty string to place the result at the workspace root. The id must name a folder that is not in the trash and that the caller can write to. Assets library folders are accepted, but the HeyGen app files only assets in them, so a result placed there may not appear in the Assets library view. An unknown id, a folder in another workspace, a project of another kind such as a brand kit, or a trashed folder is rejected with 404 before anything is created. Supported only for single-video creation; batch video items cannot set their own destination folder.",
+      "title": "Folder Id"
+     },
+     "image": {
+      "description": "Image to animate. Accepts URL, asset ID, or base64-encoded data.",
+      "discriminator": {
+       "mapping": {
+        "asset_id": "#/components/schemas/AssetId",
+        "base64": "#/components/schemas/AssetBase64",
+        "url": "#/components/schemas/AssetUrl"
+       },
+       "propertyName": "type"
+      },
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/AssetUrl"
+       },
+       {
+        "$ref": "#/components/schemas/AssetId"
+       },
+       {
+        "$ref": "#/components/schemas/AssetBase64"
+       }
+      ],
+      "title": "Image"
+     },
+     "motion_prompt": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Natural-language prompt controlling avatar body motion. Photo avatars only.",
+      "title": "Motion Prompt"
+     },
+     "output_format": {
+      "$ref": "#/components/schemas/VideoOutputFormat",
+      "default": "mp4",
+      "description": "Output container. 'webm' returns a video with a transparent background (alpha channel); 'mp4' (default) returns a standard video. 'webm' requires an avatar that supports matting. When 'webm' is selected, any 'background' value is rejected and background removal is applied automatically — the caller does not need to set 'remove_background'."
+     },
+     "remove_background": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Remove the avatar background. Video avatars must be trained with matting enabled.",
+      "title": "Remove Background"
+     },
+     "resolution": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/VideoResolution"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Output video resolution. `4k` is available for Avatar III digital twins and studio avatars."
+     },
+     "script": {
+      "anyOf": [
+       {
+        "minLength": 1,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Text script for the avatar to speak. Pair with voice_id, or omit voice_id when using avatar_id to use the avatar's default voice. Mutually exclusive with audio_url/audio_asset_id.",
+      "title": "Script"
+     },
+     "title": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Display title for the video in the HeyGen dashboard.",
+      "title": "Title"
+     },
+     "type": {
+      "const": "image",
+      "description": "Must be 'image' for image-based video creation.",
+      "title": "Type",
+      "type": "string"
+     },
+     "voice_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Voice ID for text-to-speech. Required when script is provided, unless avatar_id is set (the avatar's default voice is used as fallback).",
+      "title": "Voice Id"
+     },
+     "voice_settings": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/VoiceSettingsInput"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Voice tuning parameters (speed, pitch, locale)."
+     },
+     "watermark": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/WatermarkInput"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Custom watermark image to overlay on the video (PNG or JPEG). Available as a premium option for select Enterprise customers. To request access, please contact our support team.",
+      "x-cli-visible": false,
+      "x-mcp-visible": false
+     }
+    },
+    "required": [
+     "type",
+     "image"
+    ],
+    "title": "CreateVideoFromImage",
+    "type": "object"
+   },
+   "CreateVideoFromStudio": {
+    "additionalProperties": false,
+    "description": "Create a single video by composing an ordered list of whole-frame scenes.\n\nThe server owns layout and center-crops each scene to the global output\ncanvas. Output settings are global (one per request); a single video_id is\nreturned and rendering is all-or-nothing. MP4 only in v1 — the output\ncontainer is fixed and ``output_format`` is not exposed.",
+    "properties": {
+     "aspect_ratio": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/VideoAspectRatio"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": "16:9",
+      "description": "Global output aspect ratio. Supported values: '16:9', '9:16', '4:5', '5:4', '1:1', 'auto'. Defaults to '16:9'. Each scene is center-cropped to this canvas.",
+      "x-cli-default": "auto",
+      "x-mcp-default": "auto"
+     },
+     "brand_glossary_id": {
+      "anyOf": [
+       {
+        "minLength": 1,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Brand glossary ID controlling how custom terms are pronounced in generated speech (for example, saying 'HeyGen' as 'hey-jen'). Applies to every scene whose audio is synthesized from a script; scenes that supply their own audio URL or audio asset are unaffected. Pronunciation is applied to the synthesized audio only, so caption and subtitle text still show the original script wording. Discover IDs via GET /v3/brand-glossaries.",
+      "title": "Brand Glossary Id"
+     },
+     "callback_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Caller-defined identifier echoed back in the webhook payload.",
+      "title": "Callback Id"
+     },
+     "callback_url": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Webhook URL to receive a POST notification when the video is ready.",
+      "title": "Callback Url"
+     },
+     "caption": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/CaptionSetting"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Caption generation settings. A sidecar subtitle file is always returned via subtitle_url; set 'style' to additionally burn captions into the rendered video."
+     },
+     "folder_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Destination folder ID in the caller's workspace, for example one returned by POST /v3/folders. Omit, pass null, or pass an empty string to place the result at the workspace root. The id must name a folder that is not in the trash and that the caller can write to. Assets library folders are accepted, but the HeyGen app files only assets in them, so a result placed there may not appear in the Assets library view. An unknown id, a folder in another workspace, a project of another kind such as a brand kit, or a trashed folder is rejected with 404 before anything is created. Supported only for single-video creation; batch video items cannot set their own destination folder.",
+      "title": "Folder Id"
+     },
+     "resolution": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/VideoResolution"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Global output video resolution. `4k` is available for Avatar III digital twins and studio avatars."
+     },
+     "scenes": {
+      "description": "Ordered list of whole-frame scenes to concatenate. Each scene is one of 'avatar_video', 'image', or 'video'. Must contain 1 to 50 scenes.",
+      "items": {
+       "discriminator": {
+        "mapping": {
+         "avatar_video": "#/components/schemas/AvatarVideoScene",
+         "image": "#/components/schemas/ImageScene",
+         "video": "#/components/schemas/VideoScene"
+        },
+        "propertyName": "type"
+       },
+       "oneOf": [
+        {
+         "$ref": "#/components/schemas/AvatarVideoScene"
+        },
+        {
+         "$ref": "#/components/schemas/ImageScene"
+        },
+        {
+         "$ref": "#/components/schemas/VideoScene"
+        }
+       ]
+      },
+      "title": "Scenes",
+      "type": "array"
+     },
+     "title": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Display title for the video in the HeyGen dashboard.",
+      "title": "Title"
+     },
+     "type": {
+      "const": "studio",
+      "description": "Must be 'studio' for scene-composition video creation.",
+      "title": "Type",
+      "type": "string"
+     },
+     "watermark": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/WatermarkInput"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Custom watermark image to overlay on the video (PNG or JPEG). Available as a premium option for select Enterprise customers. To request access, please contact our support team.",
+      "x-cli-visible": false,
+      "x-mcp-visible": false
+     }
+    },
+    "required": [
+     "type",
+     "scenes"
+    ],
+    "title": "CreateVideoFromStudio",
+    "type": "object"
+   },
+   "CreateVideoV3RequestBody": {
+    "description": "Discriminated union for POST /v3/videos request body.",
+    "discriminator": {
+     "mapping": {
+      "avatar": "#/components/schemas/CreateVideoFromAvatar",
+      "cinematic_avatar": "#/components/schemas/CreateVideoFromCinematicAvatar",
+      "image": "#/components/schemas/CreateVideoFromImage",
+      "studio": "#/components/schemas/CreateVideoFromStudio"
+     },
+     "propertyName": "type"
+    },
+    "oneOf": [
+     {
+      "$ref": "#/components/schemas/CreateVideoFromAvatar"
+     },
+     {
+      "$ref": "#/components/schemas/CreateVideoFromImage"
+     },
+     {
+      "$ref": "#/components/schemas/CreateVideoFromCinematicAvatar"
+     },
+     {
+      "$ref": "#/components/schemas/CreateVideoFromStudio"
+     }
+    ],
+    "title": "CreateVideoV3RequestBody"
+   },
+   "CreditPool": {
+    "properties": {
+     "remaining": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "examples": [
+       500
+      ],
+      "title": "Remaining"
+     },
+     "resets_at": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "examples": [
+       "2024-05-01T00:00:00Z"
+      ],
+      "title": "Resets At"
+     }
+    },
+    "title": "CreditPool",
+    "type": "object"
+   },
+   "ElevenLabsEngineSettings": {
+    "description": "Engine-specific voice settings for ElevenLabs-backed voices.\n\nSupports model, stability, similarity_boost, style, and use_speaker_boost.\nWhen using eleven_v3 or eleven_v4, stability may be any value in [0.0, 1.0].",
+    "properties": {
+     "engine_type": {
+      "const": "elevenlabs",
+      "description": "Engine type discriminator. Must be 'elevenlabs' for ElevenLabs-backed voices.",
+      "title": "Engine Type",
+      "type": "string"
+     },
+     "model": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/ElevenLabsModel"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "The model ID to use for ElevenLabs."
+     },
+     "similarity_boost": {
+      "anyOf": [
+       {
+        "maximum": 1.0,
+        "minimum": 0.0,
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "The similarity boost parameter for ElevenLabs.",
+      "title": "Similarity Boost"
+     },
+     "stability": {
+      "anyOf": [
+       {
+        "maximum": 1.0,
+        "minimum": 0.0,
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "The stability parameter for ElevenLabs.",
+      "title": "Stability"
+     },
+     "style": {
+      "anyOf": [
+       {
+        "maximum": 1.0,
+        "minimum": 0.0,
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "The style parameter for ElevenLabs.",
+      "title": "Style"
+     },
+     "use_speaker_boost": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Whether to use speaker boost for ElevenLabs.",
+      "title": "Use Speaker Boost"
+     }
+    },
+    "required": [
+     "engine_type"
+    ],
+    "title": "ElevenLabsEngineSettings",
+    "type": "object"
+   },
+   "ElevenLabsModel": {
+    "description": "ElevenLabs model IDs exposed on the public API.\n\nOnly current models are included — deprecated models (monolingual_v1, multilingual_v1,\nturbo_v2) are not accepted.",
+    "enum": [
+     "eleven_multilingual_v2",
+     "eleven_turbo_v2_5",
+     "eleven_flash_v2_5",
+     "eleven_v3",
+     "eleven_v4"
+    ],
+    "title": "ElevenLabsModel",
+    "type": "string"
+   },
+   "Expressiveness": {
+    "description": "Avatar expressiveness level for photo avatars.",
+    "enum": [
+     "high",
+     "medium",
+     "low"
+    ],
+    "title": "Expressiveness",
+    "type": "string"
+   },
+   "FishEngineSettings": {
+    "description": "Engine-specific voice settings for Fish Audio-backed voices.\n\nInherits Fish's tuning fields (model, stability, similarity).",
+    "properties": {
+     "engine_type": {
+      "const": "fish",
+      "description": "Engine type discriminator. Must be 'fish' for Fish Audio-backed voices.",
+      "title": "Engine Type",
+      "type": "string"
+     },
+     "model": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/FishModel"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Fish Audio model version (default 's1')."
+     },
+     "similarity": {
+      "anyOf": [
+       {
+        "maximum": 1.0,
+        "minimum": 0.0,
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Similarity parameter; how closely to match the source voice.",
+      "title": "Similarity"
+     },
+     "stability": {
+      "anyOf": [
+       {
+        "maximum": 1.0,
+        "minimum": 0.0,
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Stability parameter; higher is more consistent.",
+      "title": "Stability"
+     }
+    },
+    "required": [
+     "engine_type"
+    ],
+    "title": "FishEngineSettings",
+    "type": "object"
+   },
+   "FishModel": {
+    "description": "Fish Audio model version.",
+    "enum": [
+     "s1",
+     "s2-pro"
+    ],
+    "title": "FishModel",
+    "type": "string"
+   },
+   "ImageScene": {
+    "additionalProperties": false,
+    "description": "A whole-frame still-image scene: either silent (held for ``duration``) or narrated.\n\nExactly one mode must be chosen:\n- silent: set ``duration`` (seconds) and no audio source.\n- narrated: set exactly one audio source (script + voice_id, audio_url, or\n  audio_asset_id) and omit ``duration`` — the scene length follows the audio.",
+    "properties": {
+     "audio_asset_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Narrated mode: HeyGen asset ID of an uploaded audio file. Mutually exclusive with duration/script.",
+      "title": "Audio Asset Id"
+     },
+     "audio_url": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Narrated mode: public URL of an audio file to play over the image. Mutually exclusive with duration/script.",
+      "title": "Audio Url"
+     },
+     "duration": {
+      "anyOf": [
+       {
+        "exclusiveMinimum": 0.0,
+        "maximum": 300.0,
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Silent mode: hold the still image for this many seconds. Mutually exclusive with any audio source. Must be > 0 and <= 300.",
+      "title": "Duration"
+     },
+     "script": {
+      "anyOf": [
+       {
+        "minLength": 1,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Narrated mode: text to speak over the image. Pair with voice_id. Mutually exclusive with duration/audio_url/audio_asset_id.",
+      "title": "Script"
+     },
+     "source": {
+      "description": "Still image to display. Accepts URL, asset ID, or base64-encoded data.",
+      "discriminator": {
+       "mapping": {
+        "asset_id": "#/components/schemas/AssetId",
+        "base64": "#/components/schemas/AssetBase64",
+        "url": "#/components/schemas/AssetUrl"
+       },
+       "propertyName": "type"
+      },
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/AssetUrl"
+       },
+       {
+        "$ref": "#/components/schemas/AssetId"
+       },
+       {
+        "$ref": "#/components/schemas/AssetBase64"
+       }
+      ],
+      "title": "Source"
+     },
+     "type": {
+      "const": "image",
+      "description": "Must be 'image' for a still-image scene.",
+      "title": "Type",
+      "type": "string"
+     },
+     "voice_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Voice ID for text-to-speech. Required when script is provided.",
+      "title": "Voice Id"
+     },
+     "voice_settings": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/VoiceSettingsInput"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Voice tuning parameters (speed, pitch, locale)."
+     }
+    },
+    "required": [
+     "type",
+     "source"
+    ],
+    "title": "ImageScene",
+    "type": "object"
+   },
+   "PlaybackInput": {
+    "additionalProperties": false,
+    "description": "Playback and audio capability for a video-clip scene.\n\n``mode`` controls how a narrated clip is reconciled to the voiceover-driven\nscene duration. ``volume`` must be between 0.0 and 1.0.",
+    "properties": {
+     "mode": {
+      "anyOf": [
+       {
+        "enum": [
+         "freeze",
+         "loop",
+         "fit_to_scene"
+        ],
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "How a narrated clip aligns to the voiceover-driven scene duration. 'freeze' plays once and holds the last frame; 'loop' repeats the clip; 'fit_to_scene' adjusts playback speed to exactly match the scene. Defaults to 'freeze' when omitted. Requires a video-scene voiceover.",
+      "title": "Mode"
+     },
+     "mute": {
+      "default": false,
+      "description": "If True, force the clip silent regardless of 'volume'.",
+      "title": "Mute",
+      "type": "boolean"
+     },
+     "volume": {
+      "default": 1.0,
+      "description": "Clip audio volume. 1.0 = source level (default), 0.0 = silent.",
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Volume",
+      "type": "number"
+     }
+    },
+    "title": "PlaybackInput",
+    "type": "object"
+   },
+   "SpeechEngine": {
+    "enum": [
+     "starfish",
+     "orca",
+     "elevenlabs",
+     "elevenlabs_v3"
+    ],
+    "title": "SpeechEngine",
+    "type": "string"
+   },
+   "StandardAPIError": {
+    "properties": {
+     "code": {
+      "description": "Machine-readable error code",
+      "example": "invalid_parameter",
+      "type": "string"
+     },
+     "doc_url": {
+      "description": "Link to error documentation",
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "errors": {
+      "description": "Per-item error details for batch/multi-node failures (e.g. graph compilation errors by node).",
+      "items": {
+       "$ref": "#/components/schemas/StandardAPIErrorDetail"
+      },
+      "type": "array"
+     },
+     "message": {
+      "description": "Human-readable error message",
+      "example": "Video not found",
+      "type": "string"
+     },
+     "param": {
+      "description": "Which request field caused the error",
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "request_id": {
+      "description": "Request identifier, also returned in the X-HeyGen-Request-Id response header. Include it when contacting support.",
+      "example": "8c4f0b9e1d2a4f6b9e3c7a1d5f2b8e40",
+      "type": "string"
+     }
+    },
+    "required": [
+     "code",
+     "message"
+    ],
+    "type": "object"
+   },
+   "StandardAPIErrorDetail": {
+    "properties": {
+     "code": {
+      "description": "Machine-readable error code",
+      "example": "unknown_node_type",
+      "type": "string"
+     },
+     "message": {
+      "description": "Human-readable error message",
+      "example": "Unknown node type",
+      "type": "string"
+     },
+     "node_id": {
+      "description": "Graph node id this error pertains to, if applicable",
+      "type": "string"
+     },
+     "path": {
+      "description": "Field path within the item this error pertains to, if applicable",
+      "type": "string"
+     },
+     "port": {
+      "description": "Port name on the node this error pertains to, if applicable",
+      "type": "string"
+     }
+    },
+    "required": [
+     "code",
+     "message"
+    ],
+    "type": "object"
+   },
+   "StarfishEngineSettings": {
+    "description": "Engine-selection for Starfish-backed voices.\n\nStarfish has no user-tunable settings today; set ``engine_type='starfish'`` to force\nStarfish routing on voices that support multiple engines.",
+    "properties": {
+     "engine_type": {
+      "const": "starfish",
+      "description": "Engine type discriminator. Must be 'starfish' for Starfish-backed voices.",
+      "title": "Engine Type",
+      "type": "string"
+     }
+    },
+    "required": [
+     "engine_type"
+    ],
+    "title": "StarfishEngineSettings",
+    "type": "object"
+   },
+   "StudioAvatarInput": {
+    "additionalProperties": false,
+    "description": "Avatar-driven source for an ``avatar_video`` studio scene.\n\nMirrors the standalone ``avatar`` creation mode (``CreateVideoFromAvatar``)\nminus the output settings, which are global on the studio request. An audio\nsource is required: exactly one of (script + voice_id), audio_url, or\naudio_asset_id.",
+    "properties": {
+     "audio_asset_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "HeyGen asset ID of an uploaded audio file. Mutually exclusive with script.",
+      "title": "Audio Asset Id"
+     },
+     "audio_url": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Public URL of an audio file to lip-sync. Mutually exclusive with script.",
+      "title": "Audio Url"
+     },
+     "avatar_id": {
+      "description": "HeyGen avatar ID (video avatar or photo avatar look ID).",
+      "title": "Avatar Id",
+      "type": "string"
+     },
+     "background": {
+      "anyOf": [
+       {
+        "discriminator": {
+         "mapping": {
+          "color": "#/components/schemas/StudioColorBackgroundInput",
+          "image": "#/components/schemas/StudioImageBackgroundInput",
+          "video": "#/components/schemas/StudioVideoBackgroundInput"
+         },
+         "propertyName": "type"
+        },
+        "oneOf": [
+         {
+          "$ref": "#/components/schemas/StudioColorBackgroundInput"
+         },
+         {
+          "$ref": "#/components/schemas/StudioImageBackgroundInput"
+         },
+         {
+          "$ref": "#/components/schemas/StudioVideoBackgroundInput"
+         }
+        ]
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Optional scene background composited behind the avatar. Pass {\"type\": \"color\", \"color\": \"#RRGGBB\"} for a solid color, or {\"type\": \"image\", \"source\": {...}} or {\"type\": \"video\", \"source\": {...}} with the same asset input image and video scenes take. Image and video backgrounds cover the frame; a video background is muted and loops for the whole scene.",
+      "title": "Background"
+     },
+     "engine": {
+      "anyOf": [
+       {
+        "discriminator": {
+         "mapping": {
+          "avatar_iii": "#/components/schemas/AvatarIIIEngineConfig",
+          "avatar_iv": "#/components/schemas/AvatarIVEngineConfig",
+          "avatar_v": "#/components/schemas/AvatarVEngineConfig"
+         },
+         "propertyName": "type"
+        },
+        "oneOf": [
+         {
+          "$ref": "#/components/schemas/AvatarVEngineConfig"
+         },
+         {
+          "$ref": "#/components/schemas/AvatarIVEngineConfig"
+         },
+         {
+          "$ref": "#/components/schemas/AvatarIIIEngineConfig"
+         }
+        ]
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Engine configuration for video generation. Pass {\"type\": \"avatar_v\"} to enable cross-reference-driven animation for higher quality. Check supported_api_engines on the avatar look to confirm eligibility. Defaults to Avatar IV when omitted.",
+      "title": "Engine"
+     },
+     "expressiveness": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/Expressiveness"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Avatar expressiveness level. Photo avatars only. Defaults to 'low' when omitted. Avatar IV only; rejected when engine.type is 'avatar_v'."
+     },
+     "motion_prompt": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Natural-language prompt controlling avatar body motion and hand gestures. Supported for photo avatars on either engine, and for video avatars when engine.type is 'avatar_v'. Rejected for video avatars on the default Avatar IV engine, and for photo avatars on 'avatar_v' when the avatar's group has no animation reference (no digital twin or curated reference look).",
+      "title": "Motion Prompt"
+     },
+     "remove_background": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Remove the avatar background. Video avatars must be trained with matting enabled.",
+      "title": "Remove Background"
+     },
+     "script": {
+      "anyOf": [
+       {
+        "minLength": 1,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Text script for the avatar to speak. Pair with voice_id, or omit voice_id when using avatar_id to use the avatar's default voice. Mutually exclusive with audio_url/audio_asset_id.",
+      "title": "Script"
+     },
+     "type": {
+      "const": "avatar",
+      "description": "Must be 'avatar' for an avatar-driven scene source.",
+      "title": "Type",
+      "type": "string"
+     },
+     "voice_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Voice ID for text-to-speech. Required when script is provided, unless avatar_id is set (the avatar's default voice is used as fallback).",
+      "title": "Voice Id"
+     },
+     "voice_settings": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/VoiceSettingsInput"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Voice tuning parameters (speed, pitch, locale)."
+     }
+    },
+    "required": [
+     "type",
+     "avatar_id"
+    ],
+    "title": "StudioAvatarInput",
+    "type": "object"
+   },
+   "StudioColorBackgroundInput": {
+    "additionalProperties": false,
+    "description": "Solid-color background for an ``avatar_video`` studio scene.",
+    "properties": {
+     "color": {
+      "description": "Background color as a 6-digit hex string, e.g. '#1a2b3c'.",
+      "pattern": "^#[0-9a-fA-F]{6}$",
+      "title": "Color",
+      "type": "string"
+     },
+     "type": {
+      "const": "color",
+      "description": "Background type discriminator. Must be 'color'.",
+      "title": "Type",
+      "type": "string"
+     }
+    },
+    "required": [
+     "type",
+     "color"
+    ],
+    "title": "StudioColorBackgroundInput",
+    "type": "object"
+   },
+   "StudioImageBackgroundInput": {
+    "additionalProperties": false,
+    "description": "Image background for an ``avatar_video`` studio scene, scaled to cover the frame.\n\n``source`` is the same asset input an ``image`` scene takes, resolved the same way.",
+    "properties": {
+     "source": {
+      "description": "Background image, scaled to cover the frame. Accepts a URL or an asset ID; inline base64 is not supported for studio scenes.",
+      "discriminator": {
+       "mapping": {
+        "asset_id": "#/components/schemas/AssetId",
+        "base64": "#/components/schemas/AssetBase64",
+        "url": "#/components/schemas/AssetUrl"
+       },
+       "propertyName": "type"
+      },
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/AssetUrl"
+       },
+       {
+        "$ref": "#/components/schemas/AssetId"
+       },
+       {
+        "$ref": "#/components/schemas/AssetBase64"
+       }
+      ],
+      "title": "Source"
+     },
+     "type": {
+      "const": "image",
+      "description": "Background type discriminator. Must be 'image'.",
+      "title": "Type",
+      "type": "string"
+     }
+    },
+    "required": [
+     "type",
+     "source"
+    ],
+    "title": "StudioImageBackgroundInput",
+    "type": "object"
+   },
+   "StudioVideoBackgroundInput": {
+    "additionalProperties": false,
+    "description": "Video background for an ``avatar_video`` studio scene, scaled to cover the frame.\n\n``source`` is the same asset input a ``video`` scene takes, resolved the same way. The clip\nis muted so it never competes with the avatar's voice, and loops for the whole scene.",
+    "properties": {
+     "source": {
+      "description": "Background video, scaled to cover the frame, muted, and looped for the length of the scene. Accepts a URL or an asset ID; inline base64 is not supported for studio scenes.",
+      "discriminator": {
+       "mapping": {
+        "asset_id": "#/components/schemas/AssetId",
+        "base64": "#/components/schemas/AssetBase64",
+        "url": "#/components/schemas/AssetUrl"
+       },
+       "propertyName": "type"
+      },
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/AssetUrl"
+       },
+       {
+        "$ref": "#/components/schemas/AssetId"
+       },
+       {
+        "$ref": "#/components/schemas/AssetBase64"
+       }
+      ],
+      "title": "Source"
+     },
+     "type": {
+      "const": "video",
+      "description": "Background type discriminator. Must be 'video'.",
+      "title": "Type",
+      "type": "string"
+     }
+    },
+    "required": [
+     "type",
+     "source"
+    ],
+    "title": "StudioVideoBackgroundInput",
+    "type": "object"
+   },
+   "SubscriptionCredits": {
+    "properties": {
+     "add_on_credits": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/CreditPool"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "premium_credits": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/CreditPool"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     }
+    },
+    "title": "SubscriptionCredits",
+    "type": "object"
+   },
+   "SubscriptionInfo": {
+    "properties": {
+     "credits": {
+      "$ref": "#/components/schemas/SubscriptionCredits"
+     },
+     "plan": {
+      "$ref": "#/components/schemas/SubscriptionTier",
+      "examples": [
+       "team"
+      ]
+     }
+    },
+    "required": [
+     "plan",
+     "credits"
+    ],
+    "title": "SubscriptionInfo",
+    "type": "object"
+   },
+   "SubscriptionTier": {
+    "enum": [
+     "free",
+     "starter",
+     "creator",
+     "pro",
+     "team",
+     "enterprise",
+     "business_plus"
+    ],
+    "title": "SubscriptionTier",
+    "type": "string"
+   },
+   "UsageBasedInfo": {
+    "properties": {
+     "included_credits": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "examples": [
+       4444.0
+      ],
+      "title": "Included Credits"
+     },
+     "remaining_credits": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "examples": [
+       4426.9
+      ],
+      "title": "Remaining Credits"
+     },
+     "spending_cap_usd": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "examples": [
+       100.0
+      ],
+      "title": "Spending Cap Usd"
+     },
+     "spending_current_usd": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "examples": [
+       42.5
+      ],
+      "title": "Spending Current Usd"
+     }
+    },
+    "title": "UsageBasedInfo",
+    "type": "object"
+   },
+   "UserInfoResponse": {
+    "properties": {
+     "billing_type": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/BillingType"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "examples": [
+       "wallet"
+      ]
+     },
+     "email": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "examples": [
+       "user@example.com"
+      ],
+      "title": "Email"
+     },
+     "first_name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "examples": [
+       "Jane"
+      ],
+      "title": "First Name"
+     },
+     "last_name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "examples": [
+       "Doe"
+      ],
+      "title": "Last Name"
+     },
+     "subscription": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/SubscriptionInfo"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "usage_based": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/UsageBasedInfo"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "username": {
+      "examples": [
+       "user_abc123"
+      ],
+      "title": "Username",
+      "type": "string"
+     },
+     "wallet": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/WalletInfo"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     }
+    },
+    "required": [
+     "username",
+     "email",
+     "first_name",
+     "last_name"
+    ],
+    "title": "UserInfoResponse",
+    "type": "object"
+   },
+   "VideoAspectRatio": {
+    "description": "Output video aspect ratio.\n\n- ``16:9`` / ``9:16``: classic landscape / portrait.\n- ``4:5`` / ``5:4`` / ``1:1``: social-media-friendly ratios. Output is short-edge anchored to\n  the requested resolution (e.g. ``1080p`` 1:1 → 1080x1080, ``1080p`` 4:5 → 1080x1350).\n- ``auto``: preserve the source's aspect ratio. The dimensions are derived from the avatar's\n  source frames (``avatar_id``) or the uploaded image (``image_url`` / ``image_asset_id``),\n  short-edge anchored to the requested resolution and capped at the tier's long edge.\n  Falls back to ``16:9`` when source dimensions can't be read.",
+    "enum": [
+     "16:9",
+     "9:16",
+     "4:5",
+     "5:4",
+     "1:1",
+     "auto"
+    ],
+    "title": "VideoAspectRatio",
+    "type": "string"
+   },
+   "VideoDetail": {
+    "description": "Video resource returned by list and detail endpoints.\n\nIf ``output_language`` is present the video is a translated video;\notherwise it is a generated video.",
+    "properties": {
+     "captioned_video_url": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Presigned URL to download the video file with captions burned in",
+      "examples": [
+       "https://files.heygen.ai/video/abc123_captioned.mp4"
+      ],
+      "title": "Captioned Video Url"
+     },
+     "completed_at": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Unix timestamp when video generation finished",
+      "examples": [
+       1711930200
+      ],
+      "title": "Completed At"
+     },
+     "created_at": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Unix timestamp of creation",
+      "examples": [
+       1711929600
+      ],
+      "title": "Created At"
+     },
+     "duration": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Video duration in seconds",
+      "examples": [
+       30.5
+      ],
+      "title": "Duration"
+     },
+     "failure_code": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Machine-readable failure reason. Only present when status is failed.",
+      "examples": [
+       "rendering_failed"
+      ],
+      "title": "Failure Code"
+     },
+     "failure_message": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Human-readable failure description. Only present when status is failed.",
+      "examples": [
+       "Avatar rendering timed out"
+      ],
+      "title": "Failure Message"
+     },
+     "folder_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "ID of containing folder",
+      "examples": [
+       "folder_abc123"
+      ],
+      "title": "Folder Id"
+     },
+     "gif_url": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "URL to animated GIF preview",
+      "examples": [
+       "https://files.heygen.ai/gif/abc123.gif"
+      ],
+      "title": "Gif Url"
+     },
+     "id": {
+      "description": "Unique video identifier",
+      "examples": [
+       "v_abc123def456"
+      ],
+      "title": "Id",
+      "type": "string"
+     },
+     "output_language": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "BCP-47 output language code. Present only for translated videos.",
+      "examples": [
+       "en-US"
+      ],
+      "title": "Output Language"
+     },
+     "status": {
+      "$ref": "#/components/schemas/VideoStatus",
+      "description": "Current video status",
+      "examples": [
+       "completed"
+      ]
+     },
+     "subtitle_url": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Presigned URL to download the SRT subtitle file",
+      "examples": [
+       "https://files.heygen.ai/srt/abc123.srt"
+      ],
+      "title": "Subtitle Url"
+     },
+     "thumbnail_url": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "URL to video thumbnail image",
+      "examples": [
+       "https://files.heygen.ai/thumb/abc123.jpg"
+      ],
+      "title": "Thumbnail Url"
+     },
+     "title": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Video title",
+      "examples": [
+       "My Generated Video"
+      ],
+      "title": "Title"
+     },
+     "video_page_url": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "URL to the video page in the HeyGen app",
+      "examples": [
+       "https://app.heygen.com/video/abc123"
+      ],
+      "title": "Video Page Url"
+     },
+     "video_url": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Presigned URL to download the video file",
+      "examples": [
+       "https://files.heygen.ai/video/abc123.mp4"
+      ],
+      "title": "Video Url"
+     }
+    },
+    "required": [
+     "id",
+     "status"
+    ],
+    "title": "VideoDetail",
+    "type": "object"
+   },
+   "VideoOutputFormat": {
+    "description": "Output container for the generated video.",
+    "enum": [
+     "mp4",
+     "webm"
+    ],
+    "title": "VideoOutputFormat",
+    "type": "string"
+   },
+   "VideoResolution": {
+    "description": "Output video resolution.\n\n`4k` is available for Avatar III digital twins and studio avatars.",
+    "enum": [
+     "4k",
+     "1080p",
+     "720p"
+    ],
+    "title": "VideoResolution",
+    "type": "string"
+   },
+   "VideoScene": {
+    "additionalProperties": false,
+    "description": "A whole-frame scene backed by an existing video clip.\n\nOptional ``playback`` exposes the audio volume / mute capability; when\nomitted the clip plays at its source volume.\n\nFor optional voiceover / narration, supply at most one audio source\n(``script`` + ``voice_id``, ``audio_url``, or ``audio_asset_id``) — the *same*\naudio inputs a narrated ``image`` scene accepts. When present, the narration\ndrives the scene length and ``playback.mode`` controls whether the clip\nfreezes, loops, or changes speed to fit that duration. When omitted the clip\nplays full-length as before. The clip's own audio level is still governed by\n``playback`` (the two compose).",
+    "properties": {
+     "audio_asset_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Optional voiceover: HeyGen asset ID of an uploaded audio file. Mutually exclusive with script/audio_url.",
+      "title": "Audio Asset Id"
+     },
+     "audio_url": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Optional voiceover: public URL of an audio file to play over the clip. Mutually exclusive with script/audio_asset_id.",
+      "title": "Audio Url"
+     },
+     "playback": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/PlaybackInput"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Optional playback capability: narrated-clip alignment 'mode', audio 'volume' (0.0–1.0), and 'mute'. Omit to use freeze alignment and keep the clip's source volume."
+     },
+     "script": {
+      "anyOf": [
+       {
+        "minLength": 1,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Optional voiceover: text to speak over the clip. Pair with voice_id. Mutually exclusive with audio_url/audio_asset_id.",
+      "title": "Script"
+     },
+     "source": {
+      "description": "Video clip to include. Accepts URL, asset ID, or base64-encoded data.",
+      "discriminator": {
+       "mapping": {
+        "asset_id": "#/components/schemas/AssetId",
+        "base64": "#/components/schemas/AssetBase64",
+        "url": "#/components/schemas/AssetUrl"
+       },
+       "propertyName": "type"
+      },
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/AssetUrl"
+       },
+       {
+        "$ref": "#/components/schemas/AssetId"
+       },
+       {
+        "$ref": "#/components/schemas/AssetBase64"
+       }
+      ],
+      "title": "Source"
+     },
+     "type": {
+      "const": "video",
+      "description": "Must be 'video' for a video-clip scene.",
+      "title": "Type",
+      "type": "string"
+     },
+     "voice_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Voice ID for text-to-speech. Required when script is provided.",
+      "title": "Voice Id"
+     },
+     "voice_settings": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/VoiceSettingsInput"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Voice tuning parameters (speed, pitch, locale) for a script voiceover."
+     }
+    },
+    "required": [
+     "type",
+     "source"
+    ],
+    "title": "VideoScene",
+    "type": "object"
+   },
+   "VideoStatus": {
+    "enum": [
+     "pending",
+     "processing",
+     "completed",
+     "failed"
+    ],
+    "title": "VideoStatus",
+    "type": "string"
+   },
+   "VoiceSettingsInput": {
+    "description": "Voice tuning parameters for text-to-speech.\n\nApplies only when 'script' + 'voice_id' are provided — not when audio_url/audio_asset_id\nis used (uploaded audio bypasses TTS).",
+    "properties": {
+     "engine_settings": {
+      "anyOf": [
+       {
+        "discriminator": {
+         "mapping": {
+          "elevenlabs": "#/components/schemas/ElevenLabsEngineSettings",
+          "fish": "#/components/schemas/FishEngineSettings",
+          "starfish": "#/components/schemas/StarfishEngineSettings"
+         },
+         "propertyName": "engine_type"
+        },
+        "oneOf": [
+         {
+          "$ref": "#/components/schemas/ElevenLabsEngineSettings"
+         },
+         {
+          "$ref": "#/components/schemas/FishEngineSettings"
+         },
+         {
+          "$ref": "#/components/schemas/StarfishEngineSettings"
+         }
+        ]
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Engine-specific voice tuning, discriminated by 'engine_type'. Use the variant matching the engine backing the chosen voice (e.g. engine_type='elevenlabs' for ElevenLabs-backed voices). The request is rejected if the voice_id is not compatible with the selected engine.",
+      "title": "Engine Settings"
+     },
+     "locale": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Locale/accent hint for multi-lingual voices (e.g. 'en-US').",
+      "title": "Locale"
+     },
+     "pitch": {
+      "default": 0.0,
+      "description": "Pitch adjustment in semitones. -50 to +50.",
+      "maximum": 50.0,
+      "minimum": -50.0,
+      "title": "Pitch",
+      "type": "number"
+     },
+     "speed": {
+      "default": 1.0,
+      "description": "Playback speed multiplier. 0.5 (half speed) to 1.5 (1.5x speed).",
+      "maximum": 1.5,
+      "minimum": 0.5,
+      "title": "Speed",
+      "type": "number"
+     },
+     "volume": {
+      "default": 1.0,
+      "description": "Voice audio volume. 1.0 = full, 0.0 = silent. Useful when mixing spoken voice with background audio.",
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Volume",
+      "type": "number"
+     }
+    },
+    "title": "VoiceSettingsInput",
+    "type": "object"
+   },
+   "VoiceV3Item": {
+    "properties": {
+     "available_engines": {
+      "description": "Engines this voice can use for speech generation after workspace plan and vendor restrictions. Language restrictions still apply.",
+      "items": {
+       "$ref": "#/components/schemas/SpeechEngine"
+      },
+      "title": "Available Engines",
+      "type": "array"
+     },
+     "default_engine": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/SpeechEngine"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Saved speech engine, including your preference. Starfish if no concrete default is saved; null if the default is unavailable for speech."
+     },
+     "gender": {
+      "description": "Gender of the voice.",
+      "examples": [
+       "female"
+      ],
+      "title": "Gender",
+      "type": "string"
+     },
+     "language": {
+      "description": "Primary language of the voice.",
+      "examples": [
+       "English"
+      ],
+      "title": "Language",
+      "type": "string"
+     },
+     "name": {
+      "description": "Display name of the voice.",
+      "examples": [
+       "Sara"
+      ],
+      "title": "Name",
+      "type": "string"
+     },
+     "preview_audio_url": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "URL to a short audio preview of the voice.",
+      "examples": [
+       "https://files.heygen.ai/voice/preview_sara.mp3"
+      ],
+      "title": "Preview Audio Url"
+     },
+     "support_locale": {
+      "description": "Whether the voice supports locale variants.",
+      "examples": [
+       true
+      ],
+      "title": "Support Locale",
+      "type": "boolean"
+     },
+     "support_pause": {
+      "description": "Whether the voice supports SSML pause/break tags.",
+      "examples": [
+       true
+      ],
+      "title": "Support Pause",
+      "type": "boolean"
+     },
+     "type": {
+      "$ref": "#/components/schemas/AudioVoiceType",
+      "description": "Whether this is a public or private voice.",
+      "examples": [
+       "public"
+      ]
+     },
+     "voice_id": {
+      "description": "Unique voice identifier.",
+      "examples": [
+       "1bd001e7e50f421d891986aad5c8bbd2"
+      ],
+      "title": "Voice Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "voice_id",
+     "name",
+     "language",
+     "gender",
+     "support_pause",
+     "support_locale",
+     "type"
+    ],
+    "title": "VoiceV3Item",
+    "type": "object"
+   },
+   "WalletCurrency": {
+    "enum": [
+     "usd",
+     "credits"
+    ],
+    "title": "WalletCurrency",
+    "type": "string"
+   },
+   "WalletInfo": {
+    "properties": {
+     "auto_reload": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/AutoReloadInfo"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "currency": {
+      "$ref": "#/components/schemas/WalletCurrency",
+      "examples": [
+       "usd"
+      ]
+     },
+     "remaining_balance": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "examples": [
+       125.5
+      ],
+      "title": "Remaining Balance"
+     }
+    },
+    "required": [
+     "currency"
+    ],
+    "title": "WalletInfo",
+    "type": "object"
+   },
+   "WatermarkInput": {
+    "additionalProperties": false,
+    "description": "Watermark configuration for video creation.",
+    "properties": {
+     "image": {
+      "description": "Image asset to use as the watermark overlay (PNG or JPEG).",
+      "discriminator": {
+       "mapping": {
+        "asset_id": "#/components/schemas/AssetId",
+        "base64": "#/components/schemas/AssetBase64",
+        "url": "#/components/schemas/AssetUrl"
+       },
+       "propertyName": "type"
+      },
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/AssetUrl"
+       },
+       {
+        "$ref": "#/components/schemas/AssetId"
+       },
+       {
+        "$ref": "#/components/schemas/AssetBase64"
+       }
+      ],
+      "title": "Image"
+     },
+     "opacity": {
+      "default": 1.0,
+      "description": "Watermark opacity. 0.0 is fully transparent, 1.0 is fully opaque.",
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Opacity",
+      "type": "number"
+     },
+     "placement": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/WatermarkPlacement"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Watermark placement. Defaults to bottom-right with standard margins when omitted."
+     },
+     "scale": {
+      "default": 1.0,
+      "description": "Scale multiplier for the watermark image. 1.0 renders at native size.",
+      "exclusiveMinimum": 0.0,
+      "maximum": 2.0,
+      "title": "Scale",
+      "type": "number"
+     }
+    },
+    "required": [
+     "image"
+    ],
+    "title": "WatermarkInput",
+    "type": "object"
+   },
+   "WatermarkPlacement": {
+    "additionalProperties": false,
+    "description": "Watermark placement configuration.",
+    "properties": {
+     "offset_x": {
+      "anyOf": [
+       {
+        "maximum": 1.0,
+        "minimum": -1.0,
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Fine-tune horizontal position. Fraction of frame width; 0.05 shifts 5% rightward, -0.05 shifts 5% leftward.",
+      "title": "Offset X"
+     },
+     "offset_y": {
+      "anyOf": [
+       {
+        "maximum": 1.0,
+        "minimum": -1.0,
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Fine-tune vertical position. Fraction of frame height; 0.05 shifts 5% downward, -0.05 shifts 5% upward.",
+      "title": "Offset Y"
+     },
+     "position": {
+      "$ref": "#/components/schemas/WatermarkPosition",
+      "default": "bottom_right",
+      "description": "Anchor corner for the watermark."
+     }
+    },
+    "title": "WatermarkPlacement",
+    "type": "object"
+   },
+   "WatermarkPosition": {
+    "description": "Anchor corner for a custom watermark overlay.",
+    "enum": [
+     "top_left",
+     "top_right",
+     "bottom_left",
+     "bottom_right"
+    ],
+    "title": "WatermarkPosition",
+    "type": "string"
+   }
+  },
+  "securitySchemes": {
+   "ApiKeyAuth": {
+    "description": "HeyGen API key. Obtain from your HeyGen dashboard.",
+    "in": "header",
+    "name": "x-api-key",
+    "type": "apiKey"
+   },
+   "BearerAuth": {
+    "description": "OAuth2 bearer token.",
+    "scheme": "bearer",
+    "type": "http"
+   }
+  }
+ },
+ "info": {
+  "contact": {
+   "name": "HeyGen Product Infra",
+   "url": "https://heygen.com"
+  },
+  "description": "HeyGen's external API for programmatic AI video creation. See https://docs.heygen.com for full documentation.",
+  "title": "HeyGen External API",
+  "version": "1.0.0",
+  "x-cindra-fetched": "2026-10-19",
+  "x-cindra-note": "Subset: only the endpoints Cindra calls, plus every component they reference. Regenerate with devtools/heygen_simulator.py's docstring recipe when HeyGen changes the API.",
+  "x-cindra-source": "https://developers.heygen.com/openapi/external-api.json"
+ },
+ "openapi": "3.1.0",
+ "paths": {
+  "/v3/avatars/looks": {
+   "get": {
+    "description": "Returns a paginated list of avatar looks (outfits, poses, styles). Filterable by group_id, avatar_type, and ownership. The look id is the avatar_id to pass when creating a video.",
+    "operationId": "listAvatarLooks",
+    "parameters": [
+     {
+      "description": "Filter looks to a specific avatar group. Returns only looks belonging to this group.",
+      "in": "query",
+      "name": "group_id",
+      "required": false,
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "description": "Filter by avatar type: 'studio_avatar', 'digital_twin', or 'photo_avatar'.",
+      "in": "query",
+      "name": "avatar_type",
+      "required": false,
+      "schema": {
+       "enum": [
+        "studio_avatar",
+        "digital_twin",
+        "photo_avatar"
+       ],
+       "type": "string"
+      }
+     },
+     {
+      "description": "Filter by ownership: 'public' for preset avatars, or 'private' for your own. Omit for all.",
+      "in": "query",
+      "name": "ownership",
+      "required": false,
+      "schema": {
+       "enum": [
+        "public",
+        "private"
+       ],
+       "type": "string"
+      }
+     },
+     {
+      "description": "Maximum number of items to return per page (1-50).",
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 20,
+       "maximum": 50,
+       "minimum": 1,
+       "type": "integer"
+      }
+     },
+     {
+      "description": "Opaque cursor token for the next page.",
+      "in": "query",
+      "name": "token",
+      "required": false,
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "data": {
+           "items": {
+            "$ref": "#/components/schemas/AvatarLookItem"
+           },
+           "type": "array"
+          },
+          "has_more": {
+           "description": "Whether more pages are available",
+           "type": "boolean"
+          },
+          "next_token": {
+           "description": "Opaque cursor for the next page",
+           "type": [
+            "string",
+            "null"
+           ]
+          }
+         },
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful response"
+     },
+     "400": {
+      "content": {
+       "application/json": {
+        "example": {
+         "error": {
+          "code": "invalid_parameter",
+          "doc_url": null,
+          "message": "'limit' must be between 1 and 50.",
+          "param": "limit"
+         }
+        },
+        "schema": {
+         "properties": {
+          "error": {
+           "$ref": "#/components/schemas/StandardAPIError"
+          }
+         },
+         "type": "object"
+        }
+       }
+      },
+      "description": "Invalid request parameters"
+     },
+     "401": {
+      "content": {
+       "application/json": {
+        "example": {
+         "error": {
+          "code": "unauthorized",
+          "doc_url": null,
+          "message": "Invalid or expired API key. Verify your x-api-key header.",
+          "param": null
+         }
+        },
+        "schema": {
+         "properties": {
+          "error": {
+           "$ref": "#/components/schemas/StandardAPIError"
+          }
+         },
+         "type": "object"
+        }
+       }
+      },
+      "description": "Authentication failed"
+     },
+     "429": {
+      "content": {
+       "application/json": {
+        "example": {
+         "error": {
+          "code": "rate_limit_exceeded",
+          "doc_url": null,
+          "message": "Too many requests. Retry after the duration specified in the Retry-After header.",
+          "param": null
+         }
+        },
+        "schema": {
+         "properties": {
+          "error": {
+           "$ref": "#/components/schemas/StandardAPIError"
+          }
+         },
+         "type": "object"
+        }
+       }
+      },
+      "description": "Rate limit exceeded",
+      "headers": {
+       "Retry-After": {
+        "description": "Seconds to wait before retrying",
+        "schema": {
+         "type": "integer"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "ApiKeyAuth": []
+     },
+     {
+      "BearerAuth": []
+     }
+    ],
+    "summary": "List Avatar Looks",
+    "tags": [
+     "Avatars"
+    ],
+    "x-heygen-required-scopes": [
+     "avatars:read"
+    ],
+    "x-mint": {
+     "href": "/reference/list-avatar-looks"
+    }
+   }
+  },
+  "/v3/users/me": {
+   "get": {
+    "description": "Returns the authenticated user's profile, remaining credits or balance, and billing details.",
+    "operationId": "getCurrentUserV3",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "data": {
+           "$ref": "#/components/schemas/UserInfoResponse"
+          }
+         },
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful response"
+     },
+     "400": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "error": {
+           "$ref": "#/components/schemas/StandardAPIError"
+          }
+         },
+         "type": "object"
+        }
+       }
+      },
+      "description": "Invalid request parameters"
+     },
+     "401": {
+      "content": {
+       "application/json": {
+        "example": {
+         "error": {
+          "code": "unauthorized",
+          "doc_url": null,
+          "message": "Invalid or expired API key. Verify your x-api-key header.",
+          "param": null
+         }
+        },
+        "schema": {
+         "properties": {
+          "error": {
+           "$ref": "#/components/schemas/StandardAPIError"
+          }
+         },
+         "type": "object"
+        }
+       }
+      },
+      "description": "Authentication failed"
+     },
+     "429": {
+      "content": {
+       "application/json": {
+        "example": {
+         "error": {
+          "code": "rate_limit_exceeded",
+          "doc_url": null,
+          "message": "Too many requests. Retry after the duration specified in the Retry-After header.",
+          "param": null
+         }
+        },
+        "schema": {
+         "properties": {
+          "error": {
+           "$ref": "#/components/schemas/StandardAPIError"
+          }
+         },
+         "type": "object"
+        }
+       }
+      },
+      "description": "Rate limit exceeded",
+      "headers": {
+       "Retry-After": {
+        "description": "Seconds to wait before retrying",
+        "schema": {
+         "type": "integer"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "ApiKeyAuth": []
+     },
+     {
+      "BearerAuth": []
+     }
+    ],
+    "summary": "Get Current User",
+    "tags": [
+     "User"
+    ],
+    "x-heygen-required-scopes": [
+     "account:read"
+    ],
+    "x-mint": {
+     "href": "/reference/get-current-user"
+    }
+   }
+  },
+  "/v3/videos": {
+   "post": {
+    "description": "Creates an avatar video: a HeyGen avatar or an image speaks your script or audio with lip-sync. Choose Avatar III, IV or V with `engine` (Avatar IV by default). To generate a whole scene from a prompt instead, use POST /v3/models/videos.",
+    "operationId": "createVideo",
+    "parameters": [
+     {
+      "$ref": "#/components/parameters/IdempotencyKey"
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/CreateVideoV3RequestBody"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "data": {
+           "$ref": "#/components/schemas/CreateAvatarVideoResponse"
+          }
+         },
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful response"
+     },
+     "400": {
+      "content": {
+       "application/json": {
+        "examples": {
+         "avatar_not_usable": {
+          "summary": "Avatar cannot be used",
+          "value": {
+           "error": {
+            "code": "avatar_not_usable",
+            "doc_url": null,
+            "message": "This avatar cannot be used because it did not pass content moderation.",
+            "param": null
+           }
+          }
+         },
+         "invalid_parameter": {
+          "summary": "Invalid visual source",
+          "value": {
+           "error": {
+            "code": "invalid_parameter",
+            "doc_url": null,
+            "message": "Exactly one visual source required: avatar_id, image_url, or image_asset_id.",
+            "param": "avatar_id"
+           }
+          }
+         }
+        },
+        "schema": {
+         "properties": {
+          "error": {
+           "$ref": "#/components/schemas/StandardAPIError"
+          }
+         },
+         "type": "object"
+        }
+       }
+      },
+      "description": "Invalid request parameters"
+     },
+     "401": {
+      "content": {
+       "application/json": {
+        "example": {
+         "error": {
+          "code": "unauthorized",
+          "doc_url": null,
+          "message": "Invalid or expired API key. Verify your x-api-key header.",
+          "param": null
+         }
+        },
+        "schema": {
+         "properties": {
+          "error": {
+           "$ref": "#/components/schemas/StandardAPIError"
+          }
+         },
+         "type": "object"
+        }
+       }
+      },
+      "description": "Authentication failed"
+     },
+     "409": {
+      "content": {
+       "application/json": {
+        "examples": {
+         "request_in_progress": {
+          "summary": "Concurrent retry with same Idempotency-Key",
+          "value": {
+           "error": {
+            "code": "request_in_progress",
+            "doc_url": null,
+            "message": "A request with this Idempotency-Key is already in progress. Retry shortly.",
+            "param": null
+           }
+          }
+         },
+         "resource_not_ready": {
+          "summary": "Avatar is still processing",
+          "value": {
+           "error": {
+            "code": "resource_not_ready",
+            "doc_url": null,
+            "message": "This avatar is still processing. Wait for avatar creation to complete, then try again.",
+            "param": null
+           }
+          }
+         }
+        },
+        "schema": {
+         "properties": {
+          "error": {
+           "$ref": "#/components/schemas/StandardAPIError"
+          }
+         },
+         "type": "object"
+        }
+       }
+      },
+      "description": "Conflict — `error.code` is one of: `resource_not_ready`, `request_in_progress`."
+     },
+     "429": {
+      "content": {
+       "application/json": {
+        "example": {
+         "error": {
+          "code": "rate_limit_exceeded",
+          "doc_url": null,
+          "message": "Too many requests. Retry after the duration specified in the Retry-After header.",
+          "param": null
+         }
+        },
+        "schema": {
+         "properties": {
+          "error": {
+           "$ref": "#/components/schemas/StandardAPIError"
+          }
+         },
+         "type": "object"
+        }
+       }
+      },
+      "description": "Rate limit exceeded",
+      "headers": {
+       "Retry-After": {
+        "description": "Seconds to wait before retrying",
+        "schema": {
+         "type": "integer"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "ApiKeyAuth": []
+     },
+     {
+      "BearerAuth": []
+     }
+    ],
+    "summary": "Create Video",
+    "tags": [
+     "Videos"
+    ],
+    "x-heygen-required-scopes": [
+     "videos:write"
+    ],
+    "x-mint": {
+     "href": "/reference/create-video"
+    }
+   }
+  },
+  "/v3/videos/{video_id}": {
+   "get": {
+    "description": "Returns details for a video including status, video_url, thumbnail_url, duration, and failure info if applicable.",
+    "operationId": "getVideoV3",
+    "parameters": [
+     {
+      "description": "Unique video identifier",
+      "in": "path",
+      "name": "video_id",
+      "required": true,
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "data": {
+           "$ref": "#/components/schemas/VideoDetail"
+          }
+         },
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful response"
+     },
+     "400": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "error": {
+           "$ref": "#/components/schemas/StandardAPIError"
+          }
+         },
+         "type": "object"
+        }
+       }
+      },
+      "description": "Invalid request parameters"
+     },
+     "401": {
+      "content": {
+       "application/json": {
+        "example": {
+         "error": {
+          "code": "unauthorized",
+          "doc_url": null,
+          "message": "Invalid or expired API key. Verify your x-api-key header.",
+          "param": null
+         }
+        },
+        "schema": {
+         "properties": {
+          "error": {
+           "$ref": "#/components/schemas/StandardAPIError"
+          }
+         },
+         "type": "object"
+        }
+       }
+      },
+      "description": "Authentication failed"
+     },
+     "404": {
+      "content": {
+       "application/json": {
+        "example": {
+         "error": {
+          "code": "not_found",
+          "doc_url": null,
+          "message": "Video not found.",
+          "param": null
+         }
+        },
+        "schema": {
+         "properties": {
+          "error": {
+           "$ref": "#/components/schemas/StandardAPIError"
+          }
+         },
+         "type": "object"
+        }
+       }
+      },
+      "description": "Resource not found"
+     },
+     "429": {
+      "content": {
+       "application/json": {
+        "example": {
+         "error": {
+          "code": "rate_limit_exceeded",
+          "doc_url": null,
+          "message": "Too many requests. Retry after the duration specified in the Retry-After header.",
+          "param": null
+         }
+        },
+        "schema": {
+         "properties": {
+          "error": {
+           "$ref": "#/components/schemas/StandardAPIError"
+          }
+         },
+         "type": "object"
+        }
+       }
+      },
+      "description": "Rate limit exceeded",
+      "headers": {
+       "Retry-After": {
+        "description": "Seconds to wait before retrying",
+        "schema": {
+         "type": "integer"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "ApiKeyAuth": []
+     },
+     {
+      "BearerAuth": []
+     }
+    ],
+    "summary": "Get Video",
+    "tags": [
+     "Videos"
+    ],
+    "x-heygen-required-scopes": [
+     "videos:read"
+    ],
+    "x-mint": {
+     "href": "/reference/get-video"
+    }
+   }
+  },
+  "/v3/voices": {
+   "get": {
+    "description": "Returns a paginated list of voices, filterable by type, engine, language, and gender. Speech generation supports Starfish, HeyGen Voice, and ElevenLabs. Each voice includes its speech default and available speech engines.",
+    "operationId": "listVoicesV3",
+    "parameters": [
+     {
+      "description": "Voice type: 'public' for the shared library or 'private' for your cloned voices.",
+      "in": "query",
+      "name": "type",
+      "required": false,
+      "schema": {
+       "default": "public",
+       "enum": [
+        "public",
+        "private"
+       ],
+       "type": "string"
+      }
+     },
+     {
+      "description": "Filter by stored engine mapping. Use 'heygen_voice' for HeyGen Voice; 'orca' remains accepted as its legacy alias. Also accepts 'starfish', 'elevenlabs' or internal engine names. Response engine values retain 'orca' for compatibility. The deprecated elevenlabs_v3 input alias is also accepted. Available engines may also include engines prepared on first use.",
+      "in": "query",
+      "name": "engine",
+      "required": false,
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "description": "Filter by language (e.g. 'English').",
+      "in": "query",
+      "name": "language",
+      "required": false,
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "description": "Filter by gender ('male' or 'female').",
+      "in": "query",
+      "name": "gender",
+      "required": false,
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "description": "Results per page (1-100).",
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 20,
+       "maximum": 100,
+       "minimum": 1,
+       "type": "integer"
+      }
+     },
+     {
+      "description": "Opaque cursor token for the next page.",
+      "in": "query",
+      "name": "token",
+      "required": false,
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "data": {
+           "items": {
+            "$ref": "#/components/schemas/VoiceV3Item"
+           },
+           "type": "array"
+          },
+          "has_more": {
+           "description": "Whether more pages are available",
+           "type": "boolean"
+          },
+          "next_token": {
+           "description": "Opaque cursor for the next page",
+           "type": [
+            "string",
+            "null"
+           ]
+          }
+         },
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful response"
+     },
+     "400": {
+      "content": {
+       "application/json": {
+        "example": {
+         "error": {
+          "code": "invalid_parameter",
+          "doc_url": null,
+          "message": "'limit' must be between 1 and 100.",
+          "param": "limit"
+         }
+        },
+        "schema": {
+         "properties": {
+          "error": {
+           "$ref": "#/components/schemas/StandardAPIError"
+          }
+         },
+         "type": "object"
+        }
+       }
+      },
+      "description": "Invalid request parameters"
+     },
+     "401": {
+      "content": {
+       "application/json": {
+        "example": {
+         "error": {
+          "code": "unauthorized",
+          "doc_url": null,
+          "message": "Invalid or expired API key. Verify your x-api-key header.",
+          "param": null
+         }
+        },
+        "schema": {
+         "properties": {
+          "error": {
+           "$ref": "#/components/schemas/StandardAPIError"
+          }
+         },
+         "type": "object"
+        }
+       }
+      },
+      "description": "Authentication failed"
+     },
+     "429": {
+      "content": {
+       "application/json": {
+        "example": {
+         "error": {
+          "code": "rate_limit_exceeded",
+          "doc_url": null,
+          "message": "Too many requests. Retry after the duration specified in the Retry-After header.",
+          "param": null
+         }
+        },
+        "schema": {
+         "properties": {
+          "error": {
+           "$ref": "#/components/schemas/StandardAPIError"
+          }
+         },
+         "type": "object"
+        }
+       }
+      },
+      "description": "Rate limit exceeded",
+      "headers": {
+       "Retry-After": {
+        "description": "Seconds to wait before retrying",
+        "schema": {
+         "type": "integer"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "ApiKeyAuth": []
+     },
+     {
+      "BearerAuth": []
+     }
+    ],
+    "summary": "List Voices",
+    "tags": [
+     "Voices"
+    ],
+    "x-heygen-required-scopes": [
+     "voices:read"
+    ],
+    "x-mint": {
+     "href": "/reference/list-voices"
+    }
+   }
+  }
+ },
+ "servers": [
+  {
+   "description": "Production",
+   "url": "https://api.heygen.com"
+  }
+ ]
+}

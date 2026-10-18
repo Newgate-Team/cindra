@@ -1,11 +1,10 @@
 """HeyGen API v3 client, called with the *user's own* API key.
 
-Endpoints and response shapes checked against developers.heygen.com
-(v3 reference: /v3/users/me, /v3/avatars/looks, /v3/voices) on
-2026-10-10. HeyGen also offers OAuth for third-party apps, but only
-after an approved integration-intake application -- a bring-your-own
-API key works for every customer today, so that's what this starts
-with; OAuth can be added beside it once HeyGen approves Cindra.
+Every request and every field read here is checked against HeyGen's
+own OpenAPI schemas by tests/test_heygen_contract.py (via
+devtools/heygen_contract.py) -- not just against the prose docs.
+Bring-your-own API key rather than HeyGen's OAuth: OAuth needs an
+approved integration application, a key works for every customer.
 
 The key travels in the X-Api-Key header, never the URL, so an error
 message built from the response can't leak it (the Gemini ?key=
@@ -19,8 +18,15 @@ from urllib.parse import quote
 
 import httpx
 
-_BASE_URL = "https://api.heygen.com"
+from app.config import get_settings
+
 _RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
+
+
+def base_url() -> str:
+    """https://api.heygen.com unless overridden -- the override exists
+    so the whole flow can run against devtools/heygen_simulator.py."""
+    return get_settings().heygen_api_base_url.rstrip("/")
 
 
 class HeyGenError(Exception):
@@ -73,7 +79,7 @@ def _request(
     try:
         response = send(
             method,
-            f"{_BASE_URL}{path}",
+            f"{base_url()}{path}",
             headers={"X-Api-Key": api_key, **(extra_headers or {})},
             params={k: v for k, v in (params or {}).items() if v is not None},
             json=json,
@@ -145,6 +151,10 @@ def list_avatar_looks(
             "preview_image_url": look.get("preview_image_url"),
             "preview_video_url": look.get("preview_video_url"),
             "default_voice_id": look.get("default_voice_id"),
+            # Only private looks carry it: "processing" (still
+            # training), "pending_consent" or "failed" can't render yet
+            # -- HeyGen answers 409 resource_not_ready.
+            "status": look.get("status"),
         }
         for look in body.get("data") or []
         if isinstance(look, dict) and look.get("id")
@@ -156,7 +166,7 @@ def create_avatar_video(
     api_key: str,
     *,
     avatar_id: str,
-    voice_id: str,
+    voice_id: str | None,
     script: str,
     aspect_ratio: str,
     idempotency_key: str,
@@ -169,20 +179,26 @@ def create_avatar_video(
     wallet: HeyGen replays the original response for the same key for
     24h instead of starting (and billing) a second render, per its
     error-codes docs.
+
+    `voice_id=None` is left out of the body on purpose: with an
+    avatar_id, HeyGen then speaks in that avatar's own default voice
+    (CreateVideoFromAvatar.voice_id in its schema).
     """
+    payload: dict[str, Any] = {
+        "type": "avatar",
+        "avatar_id": avatar_id,
+        "script": script,
+        "aspect_ratio": aspect_ratio,
+        "title": title,
+    }
+    if voice_id:
+        payload["voice_id"] = voice_id
     body = _request(
         "POST",
         "/v3/videos",
         api_key,
         client,
-        json={
-            "type": "avatar",
-            "avatar_id": avatar_id,
-            "voice_id": voice_id,
-            "script": script,
-            "aspect_ratio": aspect_ratio,
-            "title": title,
-        },
+        json=payload,
         extra_headers={"Idempotency-Key": idempotency_key},
     )
     video_id = (body.get("data") or {}).get("video_id")
@@ -201,15 +217,25 @@ def list_voices(
     token: str | None = None,
     language: str | None = None,
     gender: str | None = None,
+    voice_type: str | None = None,
     limit: int = 100,
     client: httpx.Client | None = None,
 ) -> dict[str, Any]:
+    """`voice_type="private"` lists the user's own cloned voices --
+    HeyGen's default is "public" only, so without it a user's own voice
+    never shows up."""
     body = _request(
         "GET",
         "/v3/voices",
         api_key,
         client,
-        params={"token": token, "language": language, "gender": gender, "limit": limit},
+        params={
+            "token": token,
+            "language": language,
+            "gender": gender,
+            "type": voice_type,
+            "limit": limit,
+        },
     )
     items = [
         {

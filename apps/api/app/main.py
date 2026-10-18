@@ -1,5 +1,8 @@
+from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.bootstrap import bootstrap
 from app.config import get_settings
@@ -40,6 +43,15 @@ app.include_router(analytics.router)
 app.include_router(ab_tests.router)
 app.include_router(team.router)
 app.include_router(integrations.router)
+
+if get_settings().media_local_dir:
+    # Dev-only counterpart of media_storage's local-dir mode.
+    Path(get_settings().media_local_dir).mkdir(parents=True, exist_ok=True)
+    app.mount(
+        "/dev-media",
+        StaticFiles(directory=get_settings().media_local_dir),
+        name="dev-media",
+    )
 
 
 @app.get("/health")

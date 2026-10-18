@@ -39,6 +39,18 @@ const STATUS_LABELS: Record<HeyGenVideoJob["status"], string> = {
 
 type Ownership = "private" | "public";
 
+// HeyGen look training states (private avatars only) that can't
+// render yet -- HeyGen would answer 409 resource_not_ready.
+const UNUSABLE_STATUS_LABELS: Record<string, string> = {
+  processing: "обучается",
+  pending_consent: "ждёт согласия",
+  failed: "ошибка обучения",
+};
+
+function isUsable(avatar: HeyGenAvatar): boolean {
+  return avatar.status === null || avatar.status === "completed";
+}
+
 function AvatarPicker({
   selected,
   onToggle,
@@ -111,17 +123,23 @@ function AvatarPicker({
       <div className="avatar-grid">
         {avatars.map((avatar) => {
           const isSelected = selected.includes(avatar.id);
+          const usable = isUsable(avatar);
           return (
             <button
               key={avatar.id}
               type="button"
               className={`avatar-tile${isSelected ? " selected" : ""}`}
               aria-pressed={isSelected}
+              disabled={!usable}
+              title={usable ? avatar.name : `${avatar.name} — ${UNUSABLE_STATUS_LABELS[avatar.status ?? ""] ?? avatar.status}`}
               onClick={() => onToggle(avatar)}
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={avatar.preview_image_url ?? ""} alt="" />
-              <span title={avatar.name}>{avatar.name}</span>
+              <span>
+                {avatar.name}
+                {!usable && ` · ${UNUSABLE_STATUS_LABELS[avatar.status ?? ""] ?? avatar.status}`}
+              </span>
             </button>
           );
         })}
@@ -137,30 +155,50 @@ function AvatarPicker({
 
 function VoicePicker({ value, onChange }: { value: string; onChange: (voiceId: string) => void }) {
   const { token } = useAuth();
+  // HeyGen lists only public voices unless asked for "private" -- a
+  // user's own cloned voice lives there.
+  const [voiceType, setVoiceType] = useState<Ownership>("private");
   const [language, setLanguage] = useState(VOICE_LANGUAGES[0]);
   const [voices, setVoices] = useState<HeyGenVoice[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     setError(null);
+    const params = new URLSearchParams({ type: voiceType });
+    if (voiceType === "public") params.set("language", language);
     api
-      .get<TokenPage<HeyGenVoice>>(`/integrations/heygen/voices?language=${language}`, token)
+      .get<TokenPage<HeyGenVoice>>(`/integrations/heygen/voices?${params}`, token)
       .then((page) => setVoices(page.items))
       .catch((err) => setError(err instanceof ApiError ? err.message : "Не удалось загрузить голоса"));
-  }, [language, token]);
+  }, [voiceType, language, token]);
 
   return (
     <>
       <label>
-        Язык голоса
-        <select value={language} onChange={(e) => setLanguage(e.target.value)}>
-          {VOICE_LANGUAGES.map((lang) => (
-            <option key={lang} value={lang}>
-              {lang === "Russian" ? "Русский" : "Английский"}
-            </option>
-          ))}
+        Голоса
+        <select
+          value={voiceType}
+          onChange={(e) => {
+            setVoiceType(e.target.value as Ownership);
+            onChange("");
+          }}
+        >
+          <option value="private">Мои голоса (клоны в HeyGen)</option>
+          <option value="public">Публичные голоса HeyGen</option>
         </select>
       </label>
+      {voiceType === "public" && (
+        <label>
+          Язык голоса
+          <select value={language} onChange={(e) => setLanguage(e.target.value)}>
+            {VOICE_LANGUAGES.map((lang) => (
+              <option key={lang} value={lang}>
+                {lang === "Russian" ? "Русский" : "Английский"}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
       <label>
         Голос
         <select value={value} onChange={(e) => onChange(e.target.value)}>
@@ -265,8 +303,6 @@ function AvatarVideoStudio({ integration }: { integration: Integration }) {
     });
   }
 
-  const missingVoice = !voiceOverride && selected.some((avatar) => !avatar.default_voice_id);
-
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     setError(null);
@@ -277,9 +313,10 @@ function AvatarVideoStudio({ integration }: { integration: Integration }) {
         {
           script,
           aspect_ratio: aspectRatio,
+          // No voice_id = HeyGen speaks in the avatar's own default voice.
           variants: selected.map((avatar) => ({
             avatar_id: avatar.id,
-            voice_id: voiceOverride || avatar.default_voice_id,
+            ...(voiceOverride ? { voice_id: voiceOverride } : {}),
           })),
         },
         token
@@ -347,16 +384,11 @@ function AvatarVideoStudio({ integration }: { integration: Integration }) {
         />
         <VoicePicker value={voiceOverride} onChange={setVoiceOverride} />
 
-        {missingVoice && (
-          <p className="error">
-            У части выбранных аватаров нет голоса по умолчанию — выберите голос выше.
-          </p>
-        )}
         <p className="muted">
           Каждый вариант — отдельный рендер, оплачивается с кошелька HeyGen API.
         </p>
         {error && <p className="error">{error}</p>}
-        <button type="submit" disabled={submitting || selected.length === 0 || missingVoice || !script.trim()}>
+        <button type="submit" disabled={submitting || selected.length === 0 || !script.trim()}>
           {submitting
             ? "Запускаем…"
             : selected.length > 1

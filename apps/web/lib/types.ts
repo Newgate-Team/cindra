@@ -90,6 +90,8 @@ export interface HeyGenAvatar {
   preview_image_url: string | null;
   preview_video_url: string | null;
   default_voice_id: string | null;
+  // Private looks only; anything but "completed" can't render yet.
+  status: string | null;
 }
 
 export interface HeyGenVoice {
@@ -104,7 +106,7 @@ export interface HeyGenVideoJob {
   id: string;
   batch_id: string;
   avatar_id: string;
-  voice_id: string;
+  voice_id: string | null;
   script: string;
   aspect_ratio: string;
   status: GenerationStatus;

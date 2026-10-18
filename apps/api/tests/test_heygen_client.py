@@ -103,6 +103,7 @@ def test_list_avatar_looks_normalizes_and_paginates() -> None:
                         "preview_video_url": "https://files.heygen.ai/look/1.mp4",
                         "default_voice_id": "voice-1",
                         "tags": ["ignored"],
+                        "status": "processing",
                     },
                     {"name": "no id -- skipped"},
                 ],
@@ -124,6 +125,7 @@ def test_list_avatar_looks_normalizes_and_paginates() -> None:
             "preview_image_url": "https://files.heygen.ai/look/1.jpg",
             "preview_video_url": "https://files.heygen.ai/look/1.mp4",
             "default_voice_id": "voice-1",
+            "status": "processing",
         }
     ]
 
