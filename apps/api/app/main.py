@@ -15,6 +15,7 @@ from app.routers import (
     feed,
     integrations,
     metrics,
+    montage,
     posts,
     social_accounts,
     team,
@@ -43,6 +44,7 @@ app.include_router(analytics.router)
 app.include_router(ab_tests.router)
 app.include_router(team.router)
 app.include_router(integrations.router)
+app.include_router(montage.router)
 
 if get_settings().media_local_dir:
     # Dev-only counterpart of media_storage's local-dir mode.

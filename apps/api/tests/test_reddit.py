@@ -133,7 +133,7 @@ def test_publish_with_image_uses_link_kind_without_downloading() -> None:
             json={"json": {"errors": [], "data": {"id": "img1", "name": "t3_img1"}}},
         )
 
-    settings_media = SimpleNamespace(r2_public_url_base="https://media.cindra.test")
+    settings_media = SimpleNamespace(media_local_dir="", r2_public_url_base="https://media.cindra.test")
     settings_reddit = _reddit_settings()
     with (
         _client(handler) as client,
@@ -151,7 +151,7 @@ def test_publish_rejects_media_url_outside_r2_bucket() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         raise AssertionError("must not submit an off-bucket URL")
 
-    settings_media = SimpleNamespace(r2_public_url_base="https://media.cindra.test")
+    settings_media = SimpleNamespace(media_local_dir="", r2_public_url_base="https://media.cindra.test")
     with (
         _client(handler) as client,
         patch("app.social_integrations.media_validation.get_settings", return_value=settings_media),

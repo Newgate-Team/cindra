@@ -301,3 +301,30 @@ export interface LayoutTemplate {
   supports_image: boolean;
   slots: LayoutSlot[];
 }
+
+export type MontageStatus = "queued" | "processing" | "completed" | "failed";
+
+export interface MontageClip {
+  type: "video" | "image";
+  url: string;
+  name: string;
+  duration_seconds: number | null;
+}
+
+export interface MontageJob {
+  id: string;
+  status: MontageStatus;
+  title: string | null;
+  stage: string | null;
+  progress: number;
+  spec: { clips: MontageClip[]; subtitles: boolean; width: number; height: number };
+  result_video_url: string | null;
+  error_message: string | null;
+  created_at: string;
+  completed_at: string | null;
+}
+
+export interface MontageAgentsStatus {
+  online: boolean;
+  last_seen_at: string | null;
+}

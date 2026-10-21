@@ -38,6 +38,13 @@ class IntegrationProvider(str, enum.Enum):
     heygen = "heygen"
 
 
+class MontageStatus(str, enum.Enum):
+    queued = "queued"
+    processing = "processing"
+    completed = "completed"
+    failed = "failed"
+
+
 class SubscriptionTier(str, enum.Enum):
     free = "free"
     pro = "pro"
@@ -86,6 +93,10 @@ class UsageEventType(str, enum.Enum):
     # bills their wallet, so this isn't our AI spend -- it bounds the
     # worker time spent polling the render and the copy kept in R2.
     byo_avatar_video = "byo_avatar_video"
+    # A montage assembled and rendered in DaVinci Resolve on Cindra's
+    # render machine -- one Resolve instance renders one job at a time,
+    # so this bounds queue time for everyone, not AI spend.
+    davinci_montage = "davinci_montage"
 
 
 class GenerationContentType(str, enum.Enum):
@@ -564,6 +575,55 @@ class Integration(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
+
+
+class MontageJob(Base):
+    """A montage (clips + music + subtitles) to be assembled and
+    rendered in DaVinci Resolve by a davinci_agent on a render machine.
+
+    Not a GenerationJob: Celery can't run it -- Resolve lives on another
+    machine, so the agent pulls work from the API (claim/progress/
+    result) instead of the API pushing it."""
+
+    __tablename__ = "montage_jobs"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    status: Mapped[MontageStatus] = mapped_column(
+        Enum(MontageStatus, name="montage_status"),
+        nullable=False,
+        default=MontageStatus.queued,
+        index=True,
+    )
+    title: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    spec: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    stage: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    progress: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    result_video_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    agent_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+
+
+class MontageAgent(Base):
+    """Last check-in of each DaVinci render agent -- the UI says whether
+    montage can run right now or will wait for the render machine."""
+
+    __tablename__ = "montage_agents"
+
+    name: Mapped[str] = mapped_column(String(120), primary_key=True)
+    version: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class VideoProject(Base):

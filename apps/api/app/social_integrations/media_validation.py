@@ -19,9 +19,20 @@ def is_own_media_url(url: str) -> bool:
     and content_pipeline/attachments.py::fetch_attachment_bytes for a
     caller that raises its own UnsupportedAttachmentError instead.
     """
-    allowed_base = get_settings().r2_public_url_base.rstrip("/")
+    settings = get_settings()
+    allowed_base = settings.r2_public_url_base.rstrip("/")
     parsed = urlparse(url)
-    return bool(allowed_base) and parsed.scheme == "https" and url.startswith(f"{allowed_base}/")
+    # https only -- except the dev-only local storage (media_local_dir),
+    # whose base is the API's own http://localhost/dev-media. Production
+    # never sets media_local_dir, so this never loosens a real deploy.
+    allowed_schemes = {"https"}
+    if settings.media_local_dir:
+        allowed_schemes.add(urlparse(allowed_base).scheme)
+    return (
+        bool(allowed_base)
+        and parsed.scheme in allowed_schemes
+        and url.startswith(f"{allowed_base}/")
+    )
 
 
 def validate_own_media_url(url: str, platform: str) -> None:

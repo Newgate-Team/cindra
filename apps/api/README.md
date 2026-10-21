@@ -73,6 +73,7 @@ R2_SECRET_ACCESS_KEY
 R2_BUCKET_NAME
 R2_PUBLIC_URL_BASE
 BACKUP_ENCRYPTION_KEY        # см. CIN-160 ниже -- без него ежедневный бэкап падает явно
+MONTAGE_AGENT_TOKEN          # секрет агента DaVinci (davinci_agent/); пусто = монтажи ждут в очереди
 PAYPAL_CLIENT_ID             # live, не sandbox
 PAYPAL_CLIENT_SECRET         # live
 PAYPAL_MODE=live

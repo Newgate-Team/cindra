@@ -730,3 +730,74 @@ class VideoStyleOut(BaseModel):
     produces: str
     # CIN-137: the studio can generate this style's visuals itself.
     generates_illustrations: bool = False
+
+
+class MontageClipIn(BaseModel):
+    type: Literal["video", "image"]
+    url: str = Field(min_length=1, max_length=2048)
+    name: str | None = Field(default=None, max_length=120)
+    # Images only -- a video clip runs for its own length.
+    duration_seconds: float | None = Field(default=None, ge=0.5, le=30)
+
+
+class MontageMusicIn(BaseModel):
+    url: str = Field(min_length=1, max_length=2048)
+    volume_db: float = Field(default=-18.0, ge=-40.0, le=0.0)
+
+
+class MontageCreate(BaseModel):
+    clips: list[MontageClipIn] = Field(min_length=1, max_length=20)
+    music: MontageMusicIn | None = None
+    # Resolve Studio's own speech-to-text ("Create Subtitles from
+    # Audio"), burned into the render.
+    subtitles: bool = True
+    subtitles_language: Literal["auto", "russian", "english"] = "auto"
+    aspect_ratio: Literal["9:16", "16:9", "1:1"] = "9:16"
+    title: str | None = Field(default=None, max_length=200)
+
+
+class MontageJobOut(BaseModel):
+    id: uuid.UUID
+    status: str
+    title: str | None
+    stage: str | None
+    progress: int
+    spec: dict[str, Any]
+    result_video_url: str | None
+    error_message: str | None
+    created_at: datetime
+    completed_at: datetime | None
+
+    model_config = {"from_attributes": True}
+
+
+class MontageAgentsStatusOut(BaseModel):
+    online: bool
+    last_seen_at: datetime | None
+
+
+class MontageAgentHello(BaseModel):
+    agent_name: str = Field(min_length=1, max_length=120)
+    version: str | None = Field(default=None, max_length=60)
+
+
+class MontageAgentJobOut(BaseModel):
+    id: uuid.UUID
+    spec: dict[str, Any]
+    title: str | None
+
+
+class MontageAgentProgress(BaseModel):
+    agent_name: str = Field(min_length=1, max_length=120)
+    stage: str = Field(min_length=1, max_length=200)
+    progress: int = Field(ge=0, le=100)
+
+
+class MontageAgentFailure(BaseModel):
+    agent_name: str = Field(min_length=1, max_length=120)
+    error: str = Field(min_length=1, max_length=4000)
+
+
+class MontageMediaOut(BaseModel):
+    url: str
+    type: Literal["video", "image", "audio"]

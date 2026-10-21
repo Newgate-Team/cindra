@@ -27,6 +27,8 @@ def _kind_label(
         return "карточек по шаблону"
     if event_type is UsageEventType.byo_avatar_video:
         return "аватар-видео HeyGen"
+    if event_type is UsageEventType.davinci_montage:
+        return "монтажей в DaVinci"
     if content_type is None:
         return event_type.value
     return f"{content_type.value} {event_type.value}"
@@ -202,6 +204,7 @@ _USAGE_KINDS: list[tuple[UsageEventType, GenerationContentType | None]] = [
     (UsageEventType.long_video_generation, None),
     (UsageEventType.layout_render, None),
     (UsageEventType.byo_avatar_video, None),
+    (UsageEventType.davinci_montage, None),
 ]
 
 

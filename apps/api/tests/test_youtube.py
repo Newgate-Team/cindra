@@ -75,7 +75,7 @@ def test_download_video_rejects_url_outside_r2_bucket() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         raise AssertionError("must not fetch an off-bucket URL")
 
-    settings = SimpleNamespace(r2_public_url_base="https://media.cindra.test")
+    settings = SimpleNamespace(media_local_dir="", r2_public_url_base="https://media.cindra.test")
     with (
         _client(handler) as client,
         patch("app.social_integrations.media_validation.get_settings", return_value=settings),
@@ -89,7 +89,7 @@ def test_download_video_accepts_r2_bucket_url() -> None:
         assert str(request.url) == "https://media.cindra.test/video.mp4"
         return httpx.Response(200, content=b"video-bytes", headers={"content-type": "video/mp4"})
 
-    settings = SimpleNamespace(r2_public_url_base="https://media.cindra.test")
+    settings = SimpleNamespace(media_local_dir="", r2_public_url_base="https://media.cindra.test")
     with (
         _client(handler) as client,
         patch("app.social_integrations.media_validation.get_settings", return_value=settings),
@@ -165,7 +165,7 @@ def test_publish_uploads_video_via_resumable_session() -> None:
             return httpx.Response(200, json={"id": "yt-video-1"})
         raise AssertionError(f"unexpected request: {request.method} {request.url}")
 
-    settings = SimpleNamespace(r2_public_url_base="https://media.cindra.test")
+    settings = SimpleNamespace(media_local_dir="", r2_public_url_base="https://media.cindra.test")
     with (
         _client(handler) as client,
         patch("app.social_integrations.media_validation.get_settings", return_value=settings),
@@ -190,7 +190,7 @@ def test_publish_falls_back_to_post_text_when_no_title_given() -> None:
             )
         return httpx.Response(200, json={"id": "yt-video-2"})
 
-    settings = SimpleNamespace(r2_public_url_base="https://media.cindra.test")
+    settings = SimpleNamespace(media_local_dir="", r2_public_url_base="https://media.cindra.test")
     with (
         _client(handler) as client,
         patch("app.social_integrations.media_validation.get_settings", return_value=settings),

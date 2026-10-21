@@ -20,7 +20,10 @@ def _clean_tables() -> None:
         # _previews (CIN-150) is keyed by template id and has no FK to
         # users, so it survives that and has to be named explicitly --
         # otherwise one test's stored previews leak into the next.
-        session.execute(text("TRUNCATE TABLE users, image_template_previews CASCADE"))
+        # montage_agents (DaVinci render agents) isn't user-owned either.
+        session.execute(
+            text("TRUNCATE TABLE users, image_template_previews, montage_agents CASCADE")
+        )
         session.commit()
 
 
