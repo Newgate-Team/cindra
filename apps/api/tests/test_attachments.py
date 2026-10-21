@@ -42,7 +42,7 @@ def _client(handler) -> httpx.Client:
 def _r2_settings():
     return patch(
         "app.social_integrations.media_validation.get_settings",
-        return_value=SimpleNamespace(r2_public_url_base=_R2_BASE),
+        return_value=SimpleNamespace(media_local_dir="", r2_public_url_base=_R2_BASE),
     )
 
 

@@ -498,6 +498,13 @@ label {
   font-weight: 500;
 }
 
+/* A checkbox sits beside its text, not stacked above it. */
+label:has(> input[type="checkbox"]) {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
 fieldset {
   border: 1px solid var(--border);
   border-radius: var(--radius);

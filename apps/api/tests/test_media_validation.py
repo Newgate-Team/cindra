@@ -15,7 +15,7 @@ _R2_BASE = "https://media.cindra.test"
 def _with_settings(r2_public_url_base: str):
     return patch(
         "app.social_integrations.media_validation.get_settings",
-        return_value=SimpleNamespace(r2_public_url_base=r2_public_url_base),
+        return_value=SimpleNamespace(media_local_dir="", r2_public_url_base=r2_public_url_base),
     )
 
 
@@ -70,3 +70,27 @@ def test_error_message_names_the_platform() -> None:
     with _with_settings(_R2_BASE), pytest.raises(PermanentPublishError) as exc_info:
         validate_own_media_url("https://evil.example.com/x.mp4", "Telegram")
     assert "Telegram" in str(exc_info.value)
+
+
+def _dev_settings(media_local_dir: str):
+    return patch(
+        "app.social_integrations.media_validation.get_settings",
+        return_value=SimpleNamespace(
+            media_local_dir=media_local_dir,
+            r2_public_url_base="http://localhost:8000/dev-media",
+        ),
+    )
+
+
+def test_plain_http_base_is_refused_in_production() -> None:
+    """A misconfigured http:// bucket base must not turn into an
+    http-allowing SSRF guard -- only the dev-only local storage may."""
+    with _dev_settings(""):
+        assert is_own_media_url("http://localhost:8000/dev-media/a.mp4") is False
+
+
+def test_dev_local_storage_allows_its_own_http_base_only() -> None:
+    with _dev_settings("/tmp/cindra-media"):
+        assert is_own_media_url("http://localhost:8000/dev-media/a.mp4") is True
+        assert is_own_media_url("http://localhost:8000/other/a.mp4") is False
+        assert is_own_media_url("http://169.254.169.254/latest/meta-data") is False

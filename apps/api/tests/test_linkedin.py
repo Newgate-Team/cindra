@@ -57,7 +57,7 @@ def test_download_image_rejects_url_outside_r2_bucket() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         raise AssertionError("must not fetch an off-bucket URL")
 
-    settings = SimpleNamespace(r2_public_url_base="https://media.cindra.test")
+    settings = SimpleNamespace(media_local_dir="", r2_public_url_base="https://media.cindra.test")
     with (
         _client(handler) as client,
         patch("app.social_integrations.media_validation.get_settings", return_value=settings),
@@ -71,7 +71,7 @@ def test_download_image_accepts_r2_bucket_url() -> None:
         assert str(request.url) == "https://media.cindra.test/image.jpg"
         return httpx.Response(200, content=b"image-bytes", headers={"content-type": "image/jpeg"})
 
-    settings = SimpleNamespace(r2_public_url_base="https://media.cindra.test")
+    settings = SimpleNamespace(media_local_dir="", r2_public_url_base="https://media.cindra.test")
     with (
         _client(handler) as client,
         patch("app.social_integrations.media_validation.get_settings", return_value=settings),
@@ -173,7 +173,7 @@ def test_publish_with_image_uploads_then_posts() -> None:
             return httpx.Response(201, headers={"x-restli-id": "urn:li:share:1000"}, content=b"")
         raise AssertionError(f"unexpected request: {request.method} {request.url}")
 
-    settings_media = SimpleNamespace(r2_public_url_base="https://media.cindra.test")
+    settings_media = SimpleNamespace(media_local_dir="", r2_public_url_base="https://media.cindra.test")
     settings_linkedin = _linkedin_settings()
     with (
         _client(handler) as client,

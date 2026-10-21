@@ -118,6 +118,10 @@ class Settings(BaseSettings):
     # -- with no paid HeyGen key, that's the only way to drive the whole
     # avatar-video flow end to end.
     heygen_api_base_url: str = "https://api.heygen.com"
+    # Shared secret the DaVinci render agent (davinci_agent/) sends as a
+    # Bearer token on /montage/agent/*. Empty = no agent can connect and
+    # montage jobs just wait in the queue. Generate: openssl rand -hex 32.
+    montage_agent_token: str = ""
     # Comma-separated. Without CORS the browser blocks every request
     # from the web app (blocked at the OPTIONS preflight, not
     # something curl-based manual testing ever exercises) -- found

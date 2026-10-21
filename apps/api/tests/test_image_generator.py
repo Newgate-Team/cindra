@@ -22,7 +22,7 @@ def _r2_settings():
     # R2 bucket now that fetch_attachment_bytes validates the host.
     with patch(
         "app.social_integrations.media_validation.get_settings",
-        return_value=SimpleNamespace(r2_public_url_base="https://media.cindra.test"),
+        return_value=SimpleNamespace(media_local_dir="", r2_public_url_base="https://media.cindra.test"),
     ):
         yield
 

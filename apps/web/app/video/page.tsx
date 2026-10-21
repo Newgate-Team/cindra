@@ -65,6 +65,10 @@ function VideoProjectsPage() {
         <Link href="/video/avatar">Аватар-видео через HeyGen →</Link>{" "}
         <span className="muted">готовый ролик с вашим аватаром по сценарию, сразу в нескольких вариантах</span>
       </p>
+      <p>
+        <Link href="/video/montage">Монтаж в DaVinci →</Link>{" "}
+        <span className="muted">склейка клипов, музыка и субтитры одним кликом</span>
+      </p>
       <form onSubmit={handleCreate}>
         <label>
           О чём видео

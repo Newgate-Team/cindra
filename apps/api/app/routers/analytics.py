@@ -34,6 +34,7 @@ _USAGE_LABELS: dict[tuple[UsageEventType, GenerationContentType | None], str] = 
     (UsageEventType.long_video_generation, None): "Длинные AI-ролики",
     (UsageEventType.layout_render, None): "Карточки по шаблону",
     (UsageEventType.byo_avatar_video, None): "Аватар-видео HeyGen",
+    (UsageEventType.davinci_montage, None): "Монтажи в DaVinci",
 }
 
 

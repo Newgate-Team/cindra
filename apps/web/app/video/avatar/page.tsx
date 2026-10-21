@@ -238,9 +238,17 @@ function VariantCard({
       )}
       {job.error_message && <p className="error">{job.error_message}</p>}
       {job.status === "completed" && job.video_url && !publishing && (
-        <button type="button" onClick={() => setPublishing(true)}>
-          Опубликовать этот вариант
-        </button>
+        <div className="list-row-actions">
+          <button type="button" onClick={() => setPublishing(true)}>
+            Опубликовать этот вариант
+          </button>
+          <Link
+            className="secondary"
+            href={`/video/montage?${new URLSearchParams({ video: job.video_url, name: avatarName })}`}
+          >
+            Смонтировать
+          </Link>
+        </div>
       )}
       {publishing && job.video_url && (
         <ReviewAndPublish

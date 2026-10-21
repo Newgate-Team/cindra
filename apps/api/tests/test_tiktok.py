@@ -137,6 +137,7 @@ def test_direct_post_queries_creator_then_uploads_video() -> None:
         raise AssertionError(f"unexpected request: {request.method} {request.url}")
 
     settings = SimpleNamespace(
+        media_local_dir="",
         r2_public_url_base="https://media.cindra.test",
         tiktok_client_key="client-key",
         tiktok_client_secret="client-secret",
@@ -205,7 +206,7 @@ def test_draft_upload_skips_creator_settings_and_sends_video_to_inbox() -> None:
             return httpx.Response(201)
         raise AssertionError(f"unexpected request: {request.method} {request.url}")
 
-    settings = SimpleNamespace(r2_public_url_base="https://media.cindra.test")
+    settings = SimpleNamespace(media_local_dir="", r2_public_url_base="https://media.cindra.test")
     with (
         _client(handler) as client,
         patch("app.social_integrations.tiktok.get_settings", return_value=settings),
@@ -253,7 +254,7 @@ def test_direct_post_requires_creator_selected_privacy() -> None:
             return httpx.Response(200, content=b"video", headers={"content-type": "video/mp4"})
         raise AssertionError("Direct Post init must not run without privacy")
 
-    settings = SimpleNamespace(r2_public_url_base="https://media.cindra.test")
+    settings = SimpleNamespace(media_local_dir="", r2_public_url_base="https://media.cindra.test")
     with (
         _client(handler) as client,
         patch("app.social_integrations.tiktok.get_settings", return_value=settings),
@@ -270,7 +271,7 @@ def test_download_video_rejects_url_outside_r2_bucket() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         raise AssertionError("must not fetch an off-bucket URL")
 
-    settings = SimpleNamespace(r2_public_url_base="https://media.cindra.test")
+    settings = SimpleNamespace(media_local_dir="", r2_public_url_base="https://media.cindra.test")
     with (
         _client(handler) as client,
         patch("app.social_integrations.media_validation.get_settings", return_value=settings),
@@ -284,7 +285,7 @@ def test_download_video_accepts_r2_bucket_url() -> None:
         assert str(request.url) == "https://media.cindra.test/video.mp4"
         return httpx.Response(200, content=b"video-bytes", headers={"content-type": "video/mp4"})
 
-    settings = SimpleNamespace(r2_public_url_base="https://media.cindra.test")
+    settings = SimpleNamespace(media_local_dir="", r2_public_url_base="https://media.cindra.test")
     with (
         _client(handler) as client,
         patch("app.social_integrations.media_validation.get_settings", return_value=settings),
