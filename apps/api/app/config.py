@@ -23,6 +23,13 @@ class Settings(BaseSettings):
     # API directly. Same key covers Imagen (CIN-54) and Veo (CIN-55).
     gemini_api_key: str = ""
     gemini_model: str = "gemini-3.5-flash-lite"
+    # The live-stream avatar's voice (Interactions API, PCM 24 kHz out).
+    # Flash-Lite: lowest latency, which matters more on air than studio
+    # fidelity.
+    gemini_tts_model: str = "gemini-3.8-flash-lite-tts"
+    # Only the live-stream reply/voice calls read this -- so a local run
+    # can point them at devtools/gemini_stub.py without a key.
+    gemini_api_base_url: str = "https://generativelanguage.googleapis.com"
     # Imagen 4 (old imagen_model setting) was deprecated by Google,
     # shut down 2026-08-17 -- migrated in CIN-58 to the Interactions
     # API's Nano Banana family. gemini-2.5-flash-image (not

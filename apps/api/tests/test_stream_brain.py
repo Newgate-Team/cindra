@@ -126,3 +126,50 @@ def test_copypasta_wave_counts_once() -> None:
     for user in ("a", "b", "c", "d"):
         brain.observe(_msg(user, "ВСЕ ПИШЕМ ПЛЮС В ЧАТ"))
     assert brain.pending == 1
+
+
+def test_laughter_and_one_word_reactions_are_not_answered() -> None:
+    brain, _ = _brain()
+    brain.spoke()
+    for user, text in [("a", "hahahahahhhaha"), ("b", "ахахахах"), ("c", "Auraaaa"), ("d", "W")]:
+        brain.observe(_msg(user, text))
+    assert brain.next_pick() is None
+    brain.observe(_msg("e", "Miles?"))  # a one-word question still counts
+    brain.observe(_msg("f", "Привет", first_message=True))  # a newcomer's hello too
+    assert {brain.next_pick().event.user, brain.next_pick().event.user} == {"e", "f"}
+
+
+def _notice(user: str, kind: str, text: str = "") -> ChatEvent:
+    return ChatEvent(kind="notice", channel="c", user=user, display_name=user,
+                     notice_type=kind, text=text)
+
+
+def test_a_gift_bomb_is_thanked_once_and_does_not_starve_the_chat() -> None:
+    brain, clock = _brain(thanks_cooldown=45)
+    brain.spoke()
+    brain.observe(_notice("totaamc", "submysterygift", "totaamc is gifting 10 subs!"))
+    for i in range(10):
+        brain.observe(_notice("totaamc", "subgift", f"totaamc gifted a sub to fan{i}!"))
+    brain.observe(_notice("cassr23", "resub", "cassr23 subscribed for 17 months"))
+    brain.observe(_msg("ann", "а как часто выходят видео?"))
+
+    thanks = brain.next_pick()
+    assert thanks.mode == "notice"
+    assert thanks.event.display_name == "totaamc, cassr23"
+    assert thanks.event.text.startswith("totaamc is gifting 10 subs!")
+    assert brain.next_pick().event.user == "ann"  # the question gets its turn
+
+    brain.observe(_notice("late", "sub"))
+    assert brain.next_pick() is None or brain.next_pick().mode != "notice"  # cooling down
+    clock.now += 46
+    assert brain.next_pick().event.display_name == "late"
+
+
+def test_raids_are_welcomed_at_once_and_separately() -> None:
+    brain, _ = _brain()
+    brain.spoke()
+    brain.observe(_notice("subber", "sub"))
+    brain.next_pick()  # thanks spent: the sub cooldown is running now
+    brain.observe(_notice("bigstreamer", "raid"))
+    pick = brain.next_pick()
+    assert (pick.mode, pick.event.notice_type, pick.event.user) == ("notice", "raid", "bigstreamer")

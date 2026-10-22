@@ -78,6 +78,7 @@ R2_PUBLIC_URL_BASE
 BACKUP_ENCRYPTION_KEY        # см. CIN-160 ниже -- без него ежедневный бэкап падает явно
 MONTAGE_AGENT_TOKEN          # секрет агента DaVinci (davinci_agent/); пусто = монтажи ждут в очереди
 STREAM_AGENT_TOKEN           # секрет агента эфиров (stream_agent/), отдельный от DaVinci; пусто = эфиры ждут в очереди
+GEMINI_TTS_MODEL             # голос аватара в эфире; по умолчанию gemini-3.8-flash-lite-tts (сверить со списком моделей Gemini TTS перед деплоем)
 PAYPAL_CLIENT_ID             # live, не sandbox
 PAYPAL_CLIENT_SECRET         # live
 PAYPAL_MODE=live
@@ -87,6 +88,31 @@ PAYPAL_WEBHOOK_ID             # регистрируется после перв
 ```
 
 Redirect URI каждой соцсети должен быть зарегистрирован в её же Developer Portal буквально таким же значением -- расхождение (например http vs https, конечный слэш) роняет OAuth-обмен кода на токен с ошибкой на стороне платформы, не Cindra.
+
+## Агент эфиров (stream_agent)
+
+Эфир с AI-аватаром ведёт отдельный процесс на машине, которая кодирует видео (720p30 H.264 ≈ 2–4 ядра CPU на эфир), — не Railway. Он сам забирает запущенные эфиры из API (`/streams/agent/*`, секрет `STREAM_AGENT_TOKEN`), держит сессии LiveAvatar (меняет их до истечения лимита плана — 20/60 мин — в паузе между репликами), читает чат Twitch и шлёт RTMP на `ingest.global-contribute.live-video.net`.
+
+```bash
+pip install -e ".[stream-agent]"          # livekit, PyAV (FFmpeg внутри), numpy, aiohttp
+sudo apt-get install -y fonts-dejavu-core # кириллица в подписях на экране
+python -m stream_agent --api https://<api> --token <STREAM_AGENT_TOKEN>
+```
+
+Один процесс = один эфир; для нескольких эфиров — несколько процессов/машин. Упавший агент: эфир через 2 минуты без heartbeat подхватывает другой.
+
+**Проверка всего пути локально, без ключей** (LiveKit в Docker, симулятор LiveAvatar с фейковым аватаром, заглушка Gemini с речью macOS `say`, ffmpeg вместо Twitch):
+
+```bash
+docker run -d --name cindra-livekit -p 7880:7880 -p 7881:7881 -p 7882:7882/udp livekit/livekit-server --dev --bind 0.0.0.0 --node-ip 127.0.0.1
+LIVEAVATAR_SIM_LIVEKIT_URL=ws://localhost:7880 LIVEAVATAR_SIM_MAX_SESSION=120 uvicorn devtools.liveavatar_simulator:app --port 8767
+uvicorn devtools.gemini_stub:app --port 8768
+STREAM_AGENT_TOKEN=dev LIVEAVATAR_API_BASE_URL=http://localhost:8767 GEMINI_API_BASE_URL=http://localhost:8768 GEMINI_API_KEY=stub uvicorn app.main:app --port 8000
+ffmpeg -listen 1 -i rtmp://127.0.0.1:1935/live/<ключ эфира> -c copy received.flv
+python -m stream_agent --api http://localhost:8000 --token dev --rtmp-url "rtmp://127.0.0.1:1935/live/{key}" --liveavatar-url http://localhost:8767
+```
+
+Дальше в приложении: «Инструменты» → LiveAvatar с ключом `la_sim_любой` → «Эфир» → создать и запустить. Сессии по 2 минуты — смена аватара видна по цвету фона. **Не запускать pytest во время такого прогона**: тесты чистят ту же локальную БД.
 
 ## Бэкапы
 

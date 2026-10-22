@@ -7,6 +7,7 @@ stream whose agent goes silent is handed to another agent -- for a
 24/7 stream, a crashed machine must cost a minute, not the rest of the
 day."""
 
+import base64
 import hmac
 import logging
 import random
@@ -26,6 +27,8 @@ from app.content_pipeline.stream_replies import (
     ReplyGenerationError,
     generate_reply,
 )
+from app.content_pipeline.stream_speech import SAMPLE_RATE as SPEECH_SAMPLE_RATE
+from app.content_pipeline.stream_speech import SpeechError, synthesize
 from app.db import get_db
 from app.deps import get_current_user
 from app.integrations import find_integration, get_secret
@@ -492,6 +495,7 @@ def agent_reply(
     stream = _agents_stream(db, stream_id, request.agent_name)
     # Read what's needed, then release the row lock before the model call.
     persona, blocked = stream.persona, list(stream.blocked_terms or [])
+    stream_avatar = dict(stream.avatar or {})
     topics = [t.strip() for t in stream.idle_topics.splitlines() if t.strip()]
     recent_said = _recent_said(db, stream)
     db.commit()
@@ -537,6 +541,15 @@ def agent_reply(
                      "Аватар молчит: не удалось сгенерировать ответ — проверьте настройки сервера")
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
+    voice = (stream_avatar.get("voice_id") or stream_avatars.DEFAULT_TTS_VOICE)
+    try:
+        audio = synthesize(reply.say, voice=voice, emotion=reply.emotion)
+    except (TransientGenerationError, SpeechError) as exc:
+        log.warning("stream speech failed: %s", exc)
+        _log_failure(db, stream_id, request.agent_name,
+                     "Аватар молчит: не удалось озвучить ответ — проверьте настройки сервера")
+        return StreamReplyOut(say=None, skipped="Не удалось озвучить ответ")
+
     stream = _agents_stream(db, stream_id, request.agent_name)
     kind = {"answer": "reply", "idle": "idle", "notice": "notice"}[request.mode]
     author = target.author if target else (request.notice.author if request.notice else None)
@@ -550,7 +563,13 @@ def agent_reply(
         emotion=reply.emotion,
     )
     db.commit()
-    return StreamReplyOut(say=reply.say, emotion=reply.emotion, reaction=reply.reaction)
+    return StreamReplyOut(
+        say=reply.say,
+        emotion=reply.emotion,
+        reaction=reply.reaction,
+        audio_b64=base64.b64encode(audio).decode("ascii"),
+        sample_rate=SPEECH_SAMPLE_RATE,
+    )
 
 
 @router.post("/agent/{stream_id}/event", status_code=status.HTTP_204_NO_CONTENT)

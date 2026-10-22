@@ -23,10 +23,24 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# The live-stream agent (stream_agent/) on the machine that encodes the
+# broadcast: LiveKit to receive the avatar, PyAV (bundles FFmpeg) to
+# encode H.264/AAC and push RTMP.
+stream-agent = [
+    "livekit>=1.1",
+    "av>=14",
+    "numpy>=2",
+    "aiohttp>=3.9",
+]
 dev = [
     "pytest>=8.3",
     "ruff>=0.8",
     "jsonschema>=4.23",
+    "livekit>=1.1",
+    "livekit-api>=1.0",
+    "av>=14",
+    "numpy>=2",
+    "aiohttp>=3.9",
 ]
 
 [tool.setuptools.packages.find]

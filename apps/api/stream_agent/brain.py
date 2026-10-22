@@ -28,8 +28,10 @@ _SPACES = re.compile(r"\s+")
 # Laughter and one-word reactions: chat atmosphere, not something to
 # answer out loud.
 _NOISE = re.compile(
-    r"^(l+o+l+|k+e+k+|l+m+a+o+|x+d+|g+g+|(ha)+h?|(а?ха)+х?|о+р+у+|\++|f|w+|\?+|!+|\.+)$", re.IGNORECASE
+    r"^(l+o+l+|k+e+k+|l+m+a+o+|x+d+|g+g+|о+р+у+|\++|f|w+|\?+|!+|\.+)$", re.IGNORECASE
 )
+# "hahahahahhhaha", "ахахаххах", "xaxaxa": only laughter letters.
+_LAUGHTER = re.compile(r"^[haаxх]{4,}$", re.IGNORECASE)
 _THANKED_NOTICES = {"raid", "sub", "resub", "subgift", "submysterygift", "anongiftpaidupgrade",
                     "giftpaidupgrade"}
 
@@ -54,12 +56,17 @@ class ChatBrain:
     max_age: float = 90.0
     idle_after: float = 45.0
     user_cooldown: float = 120.0
+    # Subs/gifts are thanked together at most this often -- a "gift
+    # bomb" is a dozen notices in a second, and thanking each one would
+    # crowd every chat question off the air.
+    thanks_cooldown: float = 45.0
     clock: Callable[[], float] = time.monotonic
     _pool: dict[str, _Candidate] = field(default_factory=dict)  # by user
     _notices: deque[ChatEvent] = field(default_factory=lambda: deque(maxlen=20))
     _recent: deque[ChatEvent] = field(default_factory=lambda: deque(maxlen=30))
     _answered_at: dict[str, float] = field(default_factory=dict)
     _last_spoke: float | None = None
+    _last_thanks: float = -1e9
 
     # -- input --------------------------------------------------------
 
@@ -90,9 +97,19 @@ class ChatBrain:
         if not text or text.startswith("!"):
             return  # chat commands are for bots
         self._recent.append(event)
-        words = _LETTERS.findall(text)
-        if _LINK.search(text) or len(words) < 3 or _NOISE.match(text.replace(" ", "")):
-            return  # links, emote-only and "lol"-sized messages: context, not prompts
+        letters = _LETTERS.findall(text)
+        squashed = text.replace(" ", "")
+        lone_word = len(text.split()) == 1 and "?" not in text
+        if (
+            _LINK.search(text)
+            or len(letters) < 3
+            or _NOISE.match(squashed)
+            or _LAUGHTER.match(squashed)
+            # "Auraaaa", "W", "Pog": reactions, not something to answer --
+            # unless it's someone's first message or they cheered.
+            or (lone_word and not event.first_message and not event.bits)
+        ):
+            return  # links, emotes, laughter, one-word reactions: context, not prompts
         normalized = text.lower()
         if any(
             c.event.text.lower() == normalized and c.event.user != event.user
@@ -124,8 +141,14 @@ class ChatBrain:
 
     def next_pick(self) -> Pick | None:
         now = self.clock()
-        if self._notices:
-            return Pick("notice", self._notices.popleft())
+        raid = next((n for n in self._notices if n.notice_type == "raid"), None)
+        if raid is not None:
+            # A raid brings a crowd right now: welcome them right away.
+            self._notices.remove(raid)
+            return Pick("notice", raid)
+        if self._notices and now - self._last_thanks >= self.thanks_cooldown:
+            self._last_thanks = now
+            return Pick("notice", self._merge_thanks())
         self._pool = {
             u: c for u, c in self._pool.items() if now - c.seen_at <= self.max_age
         }
@@ -145,6 +168,28 @@ class ChatBrain:
         if now - quiet_since >= self.idle_after:
             return Pick("idle")
         return None
+
+    def _merge_thanks(self) -> ChatEvent:
+        """All pending subs/gifts as one notice: "A, B и ещё 3"."""
+        notices, self._notices = list(self._notices), deque(maxlen=20)
+        names: list[str] = []
+        texts: list[str] = []
+        for notice in notices:
+            name = notice.display_name or notice.user
+            if name not in names:  # one gifter of ten subs is one name
+                names.append(name)
+                if notice.text:
+                    texts.append(notice.text)
+        shown = ", ".join(names[:5]) + (f" и ещё {len(names) - 5}" if len(names) > 5 else "")
+        first = notices[0]
+        return ChatEvent(
+            kind="notice",
+            channel=first.channel,
+            user=first.user,
+            display_name=shown,
+            notice_type="sub" if len(names) > 1 else first.notice_type,
+            text="; ".join(texts)[:450],
+        )
 
     def recent_chat(self, limit: int = 20) -> list[ChatEvent]:
         return list(self._recent)[-limit:]
