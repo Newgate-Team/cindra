@@ -2,10 +2,12 @@
 
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 
-import { api } from "./api";
+import { api, onUnauthorized } from "./api";
 import type { User, UserRole } from "./types";
 
 const TOKEN_STORAGE_KEY = "cindra_token";
+// Read once by the login page to say why the user landed there.
+export const SESSION_EXPIRED_KEY = "cindra_session_expired";
 
 interface AuthContextValue {
   token: string | null;
@@ -45,6 +47,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setToken(null);
       })
       .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    onUnauthorized((failedToken) => {
+      // Only the token still in use: a late 401 from a request made with
+      // an older token must not log out a session started since.
+      if (localStorage.getItem(TOKEN_STORAGE_KEY) !== failedToken) return;
+      try {
+        sessionStorage.setItem(SESSION_EXPIRED_KEY, "1");
+      } catch {
+        // storage unavailable -- the login page just won't explain why
+      }
+      localStorage.removeItem(TOKEN_STORAGE_KEY);
+      setToken(null);
+      setUser(null);
+    });
+    return () => onUnauthorized(null);
   }, []);
 
   async function login(email: string, password: string) {

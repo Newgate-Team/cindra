@@ -34,8 +34,11 @@ declare global {
 
 export default function GoogleSignInButton({
   onError,
+  next = "/generate",
 }: {
   onError: (message: string) => void;
+  // Already vetted by safeNext() on the login page.
+  next?: string;
 }) {
   const { loginWithGoogle } = useAuth();
   const router = useRouter();
@@ -48,7 +51,7 @@ export default function GoogleSignInButton({
       callback: async (response) => {
         try {
           await loginWithGoogle(response.credential);
-          router.push("/generate");
+          router.push(next);
         } catch (err) {
           onError(
             err instanceof ApiError ? err.message : "Не удалось войти через Google"
@@ -63,7 +66,7 @@ export default function GoogleSignInButton({
       locale: "ru",
       width: 320,
     });
-  }, [loginWithGoogle, onError, router]);
+  }, [loginWithGoogle, onError, router, next]);
 
   // Without a configured client id there is nothing to render -- the
   // page falls back to email/password only.

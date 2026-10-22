@@ -9,6 +9,16 @@ export class ApiError extends Error {
   }
 }
 
+// Set by AuthProvider: a 401 on a request that carried a token means the
+// session is gone (expired JWT, deleted account) -- log out once, centrally,
+// instead of every page showing errors and polling pages retrying forever.
+// A 401 without a token (e.g. a wrong password on /auth/login) is not that.
+let unauthorizedHandler: ((token: string) => void) | null = null;
+
+export function onUnauthorized(handler: ((token: string) => void) | null) {
+  unauthorizedHandler = handler;
+}
+
 async function request<T>(
   path: string,
   options: RequestInit = {},
@@ -26,6 +36,7 @@ async function request<T>(
 
   const response = await fetch(`${API_URL}${path}`, { ...options, headers });
 
+  if (response.status === 401 && token) unauthorizedHandler?.(token);
   if (!response.ok) {
     let detail: string = response.statusText;
     try {
@@ -58,6 +69,7 @@ async function upload<T>(path: string, file: File, token?: string | null): Promi
     headers,
   });
 
+  if (response.status === 401 && token) unauthorizedHandler?.(token);
   if (!response.ok) {
     let detail: string = response.statusText;
     try {

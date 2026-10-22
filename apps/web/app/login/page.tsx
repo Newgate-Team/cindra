@@ -6,7 +6,8 @@ import { Suspense, useState, type FormEvent } from "react";
 
 import GoogleSignInButton from "@/app/components/GoogleSignInButton";
 import { ApiError } from "@/lib/api";
-import { useAuth } from "@/lib/auth-context";
+import { SESSION_EXPIRED_KEY, useAuth } from "@/lib/auth-context";
+import { safeNext } from "@/lib/safe-next";
 
 function LoginForm() {
   const { login } = useAuth();
@@ -15,7 +16,16 @@ function LoginForm() {
   // e.g. a team-invite link sends a logged-out visitor here first
   // (app/team/accept/page.tsx) -- ?next= brings them back to finish
   // what they came for instead of always landing on /generate.
-  const next = searchParams.get("next") || "/generate";
+  const next = safeNext(searchParams.get("next"));
+  const [expired] = useState(() => {
+    try {
+      const flag = sessionStorage.getItem(SESSION_EXPIRED_KEY) === "1";
+      sessionStorage.removeItem(SESSION_EXPIRED_KEY);
+      return flag;
+    } catch {
+      return false;
+    }
+  });
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -38,6 +48,7 @@ function LoginForm() {
   return (
     <>
       <h1>Вход</h1>
+      {expired && <p className="muted">Сессия истекла — войдите снова, и вы вернётесь туда, где были.</p>}
       <form onSubmit={handleSubmit}>
         <label>
           Email
@@ -65,7 +76,7 @@ function LoginForm() {
       <p className="muted">
         <Link href="/forgot-password">Забыли пароль?</Link>
       </p>
-      <GoogleSignInButton onError={setError} />
+      <GoogleSignInButton onError={setError} next={next} />
     </>
   );
 }
