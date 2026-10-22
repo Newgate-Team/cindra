@@ -50,21 +50,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    if (!token) return;
     onUnauthorized((failedToken) => {
-      // Only the token still in use: a late 401 from a request made with
-      // an older token must not log out a session started since.
-      if (localStorage.getItem(TOKEN_STORAGE_KEY) !== failedToken) return;
+      // Only this tab's current token: a late 401 from a request made with
+      // an older token must not log out a session started since. Compared
+      // with the tab's own state, not localStorage -- that is shared by all
+      // tabs, so once one tab had cleared it, a second tab on the same dead
+      // token never matched and kept polling 401s forever.
+      if (failedToken !== token) return;
       try {
         sessionStorage.setItem(SESSION_EXPIRED_KEY, "1");
       } catch {
         // storage unavailable -- the login page just won't explain why
       }
-      localStorage.removeItem(TOKEN_STORAGE_KEY);
+      // ...and don't wipe a newer login another tab has stored since.
+      if (localStorage.getItem(TOKEN_STORAGE_KEY) === failedToken) {
+        localStorage.removeItem(TOKEN_STORAGE_KEY);
+      }
       setToken(null);
       setUser(null);
     });
     return () => onUnauthorized(null);
-  }, []);
+  }, [token]);
 
   async function login(email: string, password: string) {
     const { access_token } = await api.post<{ access_token: string }>("/auth/login", {
