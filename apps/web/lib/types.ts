@@ -65,7 +65,7 @@ export interface SocialAccount {
   created_at: string;
 }
 
-export type IntegrationProvider = "heygen" | "google_drive" | "liveavatar";
+export type IntegrationProvider = "heygen" | "google_drive" | "liveavatar" | "simli";
 
 export interface Integration {
   provider: IntegrationProvider;

@@ -26,7 +26,7 @@ from typing import Any
 import numpy as np
 from PIL import Image, ImageDraw
 
-from stream_agent.media import _font, resample_24k_to_48k
+from stream_agent.media import _font, resample_24k_to_48k, resample_pcm
 
 log = logging.getLogger("liveavatar_sim")
 
@@ -73,6 +73,9 @@ class SimAvatar:
     last_active: float = field(default_factory=time.monotonic)
     ended: str | None = None
     ws: Any = None
+    # "liveavatar": JSON events; "simli": bare words (SPEAK/SILENT/...).
+    finish_after_audio: bool = False
+    dialect: str = "liveavatar"
     _tasks: list[asyncio.Task] = field(default_factory=list)
 
     # -- websocket events -------------------------------------------------
@@ -80,9 +83,37 @@ class SimAvatar:
     async def emit(self, kind: str, **payload: Any) -> None:
         if self.ws is None:
             return
+        if self.dialect == "simli":
+            word = {
+                "agent.speak_started": "SPEAK",
+                "agent.speak_ended": "SILENT",
+            }.get(kind)
+            if kind == "session.state_updated" and payload.get("state") == "disconnected":
+                word = f"CLOSING {self.ended or 'session ended'}"
+            if word:
+                with contextlib.suppress(Exception):
+                    await self.ws.send_text(word)
+            return
         event = {"type": kind, "event_id": os.urandom(16).hex(), "source_event_id": None, **payload}
         with contextlib.suppress(Exception):
             await self.ws.send_text(json.dumps(event))
+
+    async def on_simli(self, data: bytes | str) -> None:
+        """Simli's socket: binary PCM16 at 16 kHz to speak, "SKIP" to
+        interrupt, "DONE" to finish after the current audio."""
+        self.last_active = time.monotonic()
+        if isinstance(data, bytes):
+            pcm = np.frombuffer(data[: len(data) - len(data) % 2], dtype=np.int16)
+            if pcm.size:
+                self.utterance = self.utterance or os.urandom(8).hex()
+                self.committed = True  # no commit message in Simli's protocol
+                self.audio += resample_pcm(pcm.tobytes(), 16000, 48000)
+        elif data.strip() == "SKIP":
+            self.audio.clear()
+            self.utterance, self.committed, self.talking = None, False, False
+            await self.emit("agent.speak_ended")
+        elif data.strip() == "DONE":
+            self.finish_after_audio = True
 
     async def on_command(self, raw: str) -> None:
         if len(raw) > _MAX_FRAME:
@@ -234,6 +265,8 @@ class SimAvatar:
                     await self.emit("agent.speak_ended", source_event_id=finished)
                     await self.emit("agent.state_updated", previous_state="talking",
                                     new_state="idle")
+                    if self.finish_after_audio:
+                        self.ended = "DONE received"
             if source is None:
                 await asyncio.sleep(0.01)
                 continue

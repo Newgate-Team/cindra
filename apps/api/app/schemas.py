@@ -1069,3 +1069,7 @@ class LiveAvatarAvatarOut(BaseModel):
 class LiveAvatarAvatarPage(BaseModel):
     items: list[LiveAvatarAvatarOut]
     next_page: int | None
+
+
+class SimliAccountOut(BaseModel):
+    active_sessions: int

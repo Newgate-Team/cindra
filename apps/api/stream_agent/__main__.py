@@ -10,7 +10,8 @@ CINDRA_STREAM_TOKEN, CINDRA_AGENT_NAME.
 
 For local runs: --rtmp-url overrides Twitch's ingest (a "{key}"
 placeholder gets the stream key) and LIVEAVATAR_API_BASE_URL points
-the avatar at devtools/liveavatar_simulator.py.
+the avatar at devtools/liveavatar_simulator.py (SIMLI_API_BASE_URL: at
+devtools/simli_simulator.py).
 """
 
 from __future__ import annotations
@@ -26,17 +27,16 @@ from stream_agent.api_client import StreamApi
 from stream_agent.broadcaster import twitch_ingest
 from stream_agent.liveavatar import DEFAULT_BASE_URL
 from stream_agent.runner import run
+from stream_agent.simli import DEFAULT_BASE_URL as SIMLI_BASE_URL
 from stream_agent.stage import AvatarStage
 
 VERSION = "1.0"
 
 
-def stage_factory(rtmp_url: str | None, liveavatar_url: str):
+def stage_factory(rtmp_url: str | None, vendor_urls: dict[str, str]):
     def make(job: dict[str, Any]) -> AvatarStage:
-        if job["avatar_provider"] != "liveavatar":
-            raise RuntimeError(f"Сервис аватара {job['avatar_provider']!r} не поддерживается агентом")
         url = rtmp_url.format(key=job["stream_key"]) if rtmp_url else twitch_ingest(job["stream_key"])
-        return AvatarStage(job, rtmp_url=url, liveavatar_base_url=liveavatar_url)
+        return AvatarStage(job, rtmp_url=url, vendor_urls=vendor_urls)
 
     return make
 
@@ -51,6 +51,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--liveavatar-url", default=os.environ.get("LIVEAVATAR_API_BASE_URL", DEFAULT_BASE_URL)
     )
+    parser.add_argument(
+        "--simli-url", default=os.environ.get("SIMLI_API_BASE_URL", SIMLI_BASE_URL)
+    )
     parser.add_argument("--once", action="store_true", help="host at most one stream, then exit")
     args = parser.parse_args(argv)
     if not args.api or not args.token:
@@ -59,7 +62,8 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     api = StreamApi(args.api, args.token, args.name, VERSION)
     logging.getLogger("stream_agent").info("waiting for streams from %s as %r", args.api, args.name)
-    run(api, stage_factory(args.rtmp_url, args.liveavatar_url), once=args.once)
+    vendors = {"liveavatar": args.liveavatar_url, "simli": args.simli_url}
+    run(api, stage_factory(args.rtmp_url, vendors), once=args.once)
     return 0
 
 

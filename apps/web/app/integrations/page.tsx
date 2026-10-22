@@ -343,42 +343,78 @@ function GoogleDriveConnected({
   );
 }
 
-function LiveAvatarSection({
+interface AvatarVendor {
+  id: "liveavatar" | "simli";
+  name: string;
+  intro: string;
+  keyHint: string;
+  // One line about the account (credits, live sessions) from /account.
+  describe: (account: Record<string, number | null>) => string | null;
+  broke: (account: Record<string, number | null>) => boolean;
+}
+
+const AVATAR_VENDORS: AvatarVendor[] = [
+  {
+    id: "liveavatar",
+    name: "LiveAvatar",
+    intro:
+      "Аватар HeyGen, который ведёт эфир на Twitch в реальном времени. Это отдельный продукт HeyGen со своим " +
+      "ключом и кредитами: ключ HeyGen API здесь не подойдёт. ≈ $130 за сутки эфира.",
+    keyHint: "Где взять: app.liveavatar.com → Developers → API key.",
+    describe: (a) => (a.credits_left == null ? null : `кредитов: ${a.credits_left.toLocaleString("ru-RU")}`),
+    broke: (a) => a.credits_left === 0,
+  },
+  {
+    id: "simli",
+    name: "Simli",
+    intro:
+      "Аватар для эфира примерно в 10 раз дешевле LiveAvatar (≈ $13 за сутки круглосуточного эфира). " +
+      "Можно взять одно из готовых лиц или создать своё по фото на app.simli.com.",
+    keyHint: "Где взять: app.simli.com → API Keys.",
+    describe: (a) => (a.active_sessions == null ? null : `активных сессий: ${a.active_sessions}`),
+    broke: () => false,
+  },
+];
+
+function AvatarVendorSection({
+  vendor,
   integration,
   onChanged,
 }: {
+  vendor: AvatarVendor;
   integration: Integration | null;
   onChanged: () => void;
 }) {
   const { token } = useAuth();
   const [apiKey, setApiKey] = useState("");
-  const [credits, setCredits] = useState<number | null>(null);
+  const [account, setAccount] = useState<Record<string, number | null> | null>(null);
   const [avatars, setAvatars] = useState<LiveAvatarAvatar[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const base = `/integrations/${vendor.id}`;
 
   useEffect(() => {
     if (!integration) return;
     api
-      .get<{ credits_left: number | null }>("/integrations/liveavatar/account", token)
-      .then((account) => setCredits(account.credits_left))
-      .catch((err) => setError(err instanceof ApiError ? err.message : "LiveAvatar не отвечает"));
+      .get<Record<string, number | null>>(`${base}/account`, token)
+      .then(setAccount)
+      .catch((err) => setError(err instanceof ApiError ? err.message : `${vendor.name} не отвечает`));
     api
-      .get<{ items: LiveAvatarAvatar[] }>("/integrations/liveavatar/avatars", token)
+      .get<{ items: LiveAvatarAvatar[] }>(`${base}/avatars`, token)
       .then((page) => setAvatars(page.items))
       .catch(() => setAvatars(null));
-  }, [integration, token]);
+  }, [integration, token, base, vendor.name]);
 
   async function connect(event: FormEvent) {
     event.preventDefault();
     setError(null);
     setBusy(true);
     try {
-      await api.put("/integrations/liveavatar", { api_key: apiKey }, token);
+      await api.put(base, { api_key: apiKey }, token);
       setApiKey("");
       onChanged();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Не удалось подключить LiveAvatar");
+      setError(err instanceof ApiError ? err.message : `Не удалось подключить ${vendor.name}`);
     } finally {
       setBusy(false);
     }
@@ -387,7 +423,7 @@ function LiveAvatarSection({
   async function disconnect() {
     setBusy(true);
     try {
-      await api.delete("/integrations/liveavatar", token);
+      await api.delete(base, token);
       onChanged();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Не удалось отключить");
@@ -398,12 +434,9 @@ function LiveAvatarSection({
   if (!integration) {
     return (
       <form onSubmit={connect}>
-        <p className="muted">
-          Аватар, который ведёт эфир на Twitch в реальном времени. Это отдельный продукт HeyGen со своим
-          ключом и кредитами: ключ HeyGen API здесь не подойдёт.
-        </p>
+        <p className="muted">{vendor.intro}</p>
         <label>
-          API-ключ LiveAvatar
+          API-ключ {vendor.name}
           <input
             type="password"
             required
@@ -414,25 +447,28 @@ function LiveAvatarSection({
             placeholder="вставьте ключ"
           />
         </label>
-        <p className="muted">Где взять: app.liveavatar.com → Developers → API key.</p>
+        <p className="muted">{vendor.keyHint}</p>
         {error && <p className="error">{error}</p>}
         <button type="submit" disabled={busy}>
-          {busy ? "Проверяем ключ…" : "Подключить LiveAvatar"}
+          {busy ? "Проверяем ключ…" : `Подключить ${vendor.name}`}
         </button>
       </form>
     );
   }
 
+  const summary = account ? vendor.describe(account) : null;
   return (
     <>
       <p>
-        Подключён: <strong>LiveAvatar</strong>
-        {credits !== null && <> · кредитов: {credits.toLocaleString("ru-RU")}</>}
+        Подключён: <strong>{vendor.name}</strong>
+        {summary && <> · {summary}</>}
         {" · "}
         <Link href="/streams">Настроить эфир →</Link>
       </p>
-      {credits === 0 && (
-        <p className="error">Кредиты LiveAvatar закончились — эфир не запустится, пока вы их не пополните.</p>
+      {account && vendor.broke(account) && (
+        <p className="error">
+          Кредиты {vendor.name} закончились — эфир не запустится, пока вы их не пополните.
+        </p>
       )}
       {!integration.is_own && (
         <p className="muted">Этот ключ подключил участник вашей команды — минуты эфира оплачиваются с его аккаунта.</p>
@@ -442,15 +478,19 @@ function LiveAvatarSection({
         <div className="avatar-grid">
           {avatars.slice(0, 12).map((avatar) => (
             <div key={avatar.id} className={`avatar-tile${avatar.ready ? "" : " disabled"}`}>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={avatar.preview_url ?? ""} alt="" />
+              {avatar.preview_url ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={avatar.preview_url} alt="" />
+              ) : (
+                <div className="avatar-placeholder">{avatar.name.slice(0, 1)}</div>
+              )}
               <span title={avatar.name}>{avatar.ready ? avatar.name : `${avatar.name} — обучается`}</span>
             </div>
           ))}
         </div>
       )}
       {avatars && avatars.length === 0 && (
-        <p className="muted">Своих аватаров в LiveAvatar пока нет — для эфира доступны публичные.</p>
+        <p className="muted">Своих аватаров в {vendor.name} пока нет — для эфира доступны готовые.</p>
       )}
       {integration.is_own && (
         <div className="list-row-actions">
@@ -479,7 +519,6 @@ function IntegrationsManager() {
 
   const heygen = integrations?.find((item) => item.provider === "heygen") ?? null;
   const drive = integrations?.find((item) => item.provider === "google_drive") ?? null;
-  const liveAvatar = integrations?.find((item) => item.provider === "liveavatar") ?? null;
 
   return (
     <>
@@ -512,10 +551,18 @@ function IntegrationsManager() {
             )}
           </div>
 
-          <h2>LiveAvatar — аватар для эфира</h2>
-          <div className="card">
-            <LiveAvatarSection integration={liveAvatar} onChanged={reload} />
-          </div>
+          {AVATAR_VENDORS.map((vendor) => (
+            <div key={vendor.id}>
+              <h2>{vendor.name} — аватар для эфира</h2>
+              <div className="card">
+                <AvatarVendorSection
+                  vendor={vendor}
+                  integration={integrations.find((item) => item.provider === vendor.id) ?? null}
+                  onChanged={reload}
+                />
+              </div>
+            </div>
+          ))}
 
           <h2>Google Drive — хранилище</h2>
           <div className="card">

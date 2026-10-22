@@ -141,6 +141,7 @@ class Settings(BaseSettings):
     heygen_api_base_url: str = "https://api.heygen.com"
     # Same, for devtools/liveavatar_simulator.py.
     liveavatar_api_base_url: str = "https://api.liveavatar.com"
+    simli_api_base_url: str = "https://api.simli.ai"
     # Shared secret the DaVinci render agent (davinci_agent/) sends as a
     # Bearer token on /montage/agent/*. Empty = no agent can connect and
     # montage jobs just wait in the queue. Generate: openssl rand -hex 32.

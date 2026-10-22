@@ -41,6 +41,8 @@ class IntegrationProvider(str, enum.Enum):
     google_drive = "google_drive"
     # HeyGen's real-time avatar product: its own key and credits.
     liveavatar = "liveavatar"
+    # Real-time avatars too, ~10x cheaper per minute than LiveAvatar.
+    simli = "simli"
 
 
 class StreamPlatform(str, enum.Enum):
