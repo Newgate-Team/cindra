@@ -12,6 +12,7 @@ from app.content_pipeline.attachments import (
 from app.content_pipeline.prompts import TONE_GUIDANCE
 from app.image_templates import IMAGE_TEMPLATES
 from app.models import (
+    DriveExportStatus,
     GenerationContentType,
     GenerationStatus,
     IntegrationProvider,
@@ -449,6 +450,43 @@ class IntegrationOut(BaseModel):
     # False when the connection visible to this user is a teammate's --
     # the UI says whose account generations will be billed to.
     is_own: bool
+    # Google Drive only.
+    folder_url: str | None = None
+    auto_save: bool | None = None
+
+
+class GoogleDriveStartOut(BaseModel):
+    authorization_url: str
+
+
+class GoogleDriveConnectRequest(BaseModel):
+    code: str = Field(min_length=1, max_length=2048)
+    state: str = Field(min_length=1, max_length=4096)
+    # The browser's IANA zone, so saved files are named in the user's
+    # local time rather than UTC (nothing else in Cindra stores one).
+    timezone: str | None = Field(default=None, max_length=64)
+
+
+class GoogleDriveSettingsIn(BaseModel):
+    auto_save: bool
+
+
+class DriveExportCreate(BaseModel):
+    url: str = Field(min_length=1, max_length=1024)
+    title: str | None = Field(default=None, max_length=200)
+
+
+class DriveExportOut(BaseModel):
+    model_config = {"from_attributes": True}
+
+    id: uuid.UUID
+    file_name: str
+    origin: str
+    status: DriveExportStatus
+    web_view_link: str | None
+    error_message: str | None
+    created_at: datetime
+    completed_at: datetime | None
 
 
 class HeyGenConnectRequest(BaseModel):

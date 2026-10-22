@@ -5,7 +5,14 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 
 import { ApiError, api } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
-import type { HeyGenAccount, HeyGenAvatar, Integration, TokenPage } from "@/lib/types";
+import type {
+  DriveExport,
+  HeyGenAccount,
+  HeyGenAvatar,
+  Integration,
+  Page,
+  TokenPage,
+} from "@/lib/types";
 
 import { RequireAuth } from "../components/RequireAuth";
 
@@ -162,6 +169,179 @@ function HeyGenConnected({ integration, onChanged }: { integration: Integration;
   );
 }
 
+const EXPORT_STATUS: Record<DriveExport["status"], string> = {
+  queued: "в очереди",
+  processing: "сохраняется…",
+  completed: "сохранён",
+  failed: "ошибка",
+};
+
+function ConnectGoogleDriveButton({ label }: { label: string }) {
+  const { token } = useAuth();
+  const [error, setError] = useState<string | null>(null);
+  const [starting, setStarting] = useState(false);
+
+  async function handleClick() {
+    setError(null);
+    setStarting(true);
+    try {
+      const { authorization_url } = await api.post<{ authorization_url: string }>(
+        "/integrations/google-drive/start",
+        undefined,
+        token
+      );
+      window.location.href = authorization_url;
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Не удалось начать подключение");
+      setStarting(false);
+    }
+  }
+
+  return (
+    <>
+      <button type="button" onClick={handleClick} disabled={starting}>
+        {starting ? "Открываем Google…" : label}
+      </button>
+      {error && <p className="error">{error}</p>}
+    </>
+  );
+}
+
+function DriveExports() {
+  const { token } = useAuth();
+  const [exports, setExports] = useState<DriveExport[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const load = () =>
+      api
+        .get<Page<DriveExport>>("/integrations/google-drive/exports?limit=10", token)
+        .then((page) => {
+          if (cancelled) return;
+          setExports(page.items);
+          // Keep watching while something is still on its way to Drive.
+          if (page.items.some((item) => item.status === "queued" || item.status === "processing")) {
+            timer = setTimeout(load, 4000);
+          }
+        })
+        .catch(() => !cancelled && setExports(null));
+    load();
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [token]);
+
+  if (!exports || exports.length === 0) return null;
+  return (
+    <>
+      <p className="muted">Последние сохранения:</p>
+      <ul className="drive-exports">
+        {exports.map((item) => (
+          <li key={item.id}>
+            <span className="drive-export-name" title={item.file_name}>
+              {item.file_name}
+            </span>{" "}
+            {item.status === "completed" && item.web_view_link ? (
+              <a href={item.web_view_link} target="_blank" rel="noreferrer">
+                открыть
+              </a>
+            ) : (
+              <span className={item.status === "failed" ? "error" : "muted"}>
+                {EXPORT_STATUS[item.status]}
+              </span>
+            )}
+            {item.status === "failed" && item.error_message && (
+              <span className="muted"> — {item.error_message}</span>
+            )}
+          </li>
+        ))}
+      </ul>
+    </>
+  );
+}
+
+function GoogleDriveConnected({
+  integration,
+  onChanged,
+}: {
+  integration: Integration;
+  onChanged: () => void;
+}) {
+  const { token } = useAuth();
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function setAutoSave(autoSave: boolean) {
+    setError(null);
+    setBusy(true);
+    try {
+      await api.patch("/integrations/google-drive", { auto_save: autoSave }, token);
+      onChanged();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Не удалось сохранить настройку");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleDisconnect() {
+    setError(null);
+    setBusy(true);
+    try {
+      await api.delete("/integrations/google-drive", token);
+      onChanged();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Не удалось отключить Google Drive");
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <p>
+        Подключён: <strong>{integration.account_label ?? "аккаунт Google"}</strong>
+        {integration.folder_url && (
+          <>
+            {" · "}
+            <a href={integration.folder_url} target="_blank" rel="noreferrer">
+              Открыть папку «Cindra»
+            </a>
+          </>
+        )}
+      </p>
+      {!integration.is_own && (
+        <p className="muted">
+          Этот Google Drive подключил участник вашей команды — ваш контент сохраняется в его папку
+          «Cindra». Можно подключить свой Google Drive, тогда файлы пойдут к вам.
+        </p>
+      )}
+      <label>
+        <input
+          type="checkbox"
+          checked={integration.auto_save ?? true}
+          disabled={busy || !integration.is_own}
+          onChange={(e) => setAutoSave(e.target.checked)}
+        />
+        Сохранять готовые изображения, видео и монтажи автоматически
+      </label>
+      {error && <p className="error">{error}</p>}
+      <DriveExports />
+      <div className="list-row-actions">
+        <ConnectGoogleDriveButton
+          label={integration.is_own ? "Подключить другой аккаунт" : "Подключить свой Google Drive"}
+        />
+        {integration.is_own && (
+          <button type="button" className="secondary" onClick={handleDisconnect} disabled={busy}>
+            Отключить
+          </button>
+        )}
+      </div>
+    </>
+  );
+}
+
 function IntegrationsManager() {
   const { token } = useAuth();
   const [integrations, setIntegrations] = useState<Integration[] | null>(null);
@@ -177,6 +357,7 @@ function IntegrationsManager() {
   useEffect(reload, [reload]);
 
   const heygen = integrations?.find((item) => item.provider === "heygen") ?? null;
+  const drive = integrations?.find((item) => item.provider === "google_drive") ?? null;
 
   return (
     <>
@@ -184,8 +365,8 @@ function IntegrationsManager() {
         <div>
           <h1>Инструменты</h1>
           <p className="muted">
-            Подключите свои аккаунты сервисов генерации — Cindra работает с ними от вашего имени, а
-            оплата идёт с вашего аккаунта у сервиса.
+            Подключите свои аккаунты сервисов — Cindra генерирует в них и складывает туда готовый
+            контент от вашего имени, а оплата идёт с вашего аккаунта у сервиса.
           </p>
         </div>
       </div>
@@ -205,6 +386,22 @@ function IntegrationsManager() {
                   кошелька HeyGen API.
                 </p>
                 <HeyGenKeyForm submitLabel="Подключить HeyGen" onConnected={reload} />
+              </>
+            )}
+          </div>
+
+          <h2>Google Drive — хранилище</h2>
+          <div className="card">
+            {drive ? (
+              <GoogleDriveConnected integration={drive} onChanged={reload} />
+            ) : (
+              <>
+                <p className="muted">
+                  Готовые изображения, видео и монтажи сами складываются в папку «Cindra» на вашем
+                  Google Диске. Cindra получает доступ только к файлам, которые создаёт сама, —
+                  остальное содержимое Диска ей не видно.
+                </p>
+                <ConnectGoogleDriveButton label="Подключить Google Drive" />
               </>
             )}
           </div>

@@ -17,6 +17,7 @@ import type {
 
 import { RequireAuth } from "../../components/RequireAuth";
 import { ReviewAndPublish } from "../../components/ReviewAndPublish";
+import { SaveToDriveButton } from "../../components/SaveToDriveButton";
 
 const MAX_VARIANTS = 4;
 const POLL_MS = 10_000;
@@ -248,6 +249,7 @@ function VariantCard({
           >
             Смонтировать
           </Link>
+          <SaveToDriveButton url={job.video_url} title={avatarName} />
         </div>
       )}
       {publishing && job.video_url && (

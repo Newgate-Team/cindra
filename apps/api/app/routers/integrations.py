@@ -11,12 +11,16 @@ from app.content_pipeline.moderation import check_content
 from app.content_pipeline.tasks import run_generation_job
 from app.db import get_db
 from app.deps import get_current_user
-from app.integrations import find_integration, get_secret, upsert_integration
+from app.integrations import (
+    find_integration,
+    get_secret,
+    integration_out,
+    upsert_integration,
+)
 from app.models import (
     GenerationContentType,
     GenerationJob,
     GenerationStatus,
-    Integration,
     IntegrationProvider,
     UsageEvent,
     UsageEventType,
@@ -37,15 +41,6 @@ from app.tool_integrations import heygen
 from app.usage import check_usage_limit
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
-
-
-def _out(integration: Integration, user: User) -> IntegrationOut:
-    return IntegrationOut(
-        provider=integration.provider,
-        account_label=integration.account_label,
-        created_at=integration.created_at,
-        is_own=integration.user_id == user.id,
-    )
 
 
 _STORED_KEY_REJECTED = "Ключ HeyGen недействителен или отозван — подключите HeyGen заново"
@@ -81,7 +76,7 @@ def list_integrations(
     db: Session = Depends(get_db),
 ) -> list[IntegrationOut]:
     found = (find_integration(db, current_user, provider) for provider in IntegrationProvider)
-    return [_out(integration, current_user) for integration in found if integration]
+    return [integration_out(integration, current_user) for integration in found if integration]
 
 
 @router.put("/heygen", response_model=IntegrationOut)
@@ -104,7 +99,7 @@ def connect_heygen(
         payload.api_key,
         heygen.account_label(account),
     )
-    return _out(integration, current_user)
+    return integration_out(integration, current_user)
 
 
 @router.delete("/heygen", status_code=status.HTTP_204_NO_CONTENT)

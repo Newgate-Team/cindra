@@ -8,9 +8,11 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    Index,
     Integer,
     String,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -36,6 +38,14 @@ class SocialPlatform(str, enum.Enum):
 
 class IntegrationProvider(str, enum.Enum):
     heygen = "heygen"
+    google_drive = "google_drive"
+
+
+class DriveExportStatus(str, enum.Enum):
+    queued = "queued"
+    processing = "processing"
+    completed = "completed"
+    failed = "failed"
 
 
 class MontageStatus(str, enum.Enum):
@@ -569,10 +579,77 @@ class Integration(Base):
     # returned to the client, not even masked.
     encrypted_secret: Mapped[str] = mapped_column(String(2048), nullable=False)
     account_label: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Provider-specific, non-secret: for Google Drive the "Cindra" folder
+    # id/link and whether finished content is saved there automatically.
+    settings: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
     updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+
+
+class DriveExport(Base):
+    """One finished image/video being copied into a connected Google
+    Drive. A row per file, so the UI can show what landed where -- and
+    so a retried upload resumes the same Drive upload session instead of
+    leaving a second copy of the file in the user's Drive."""
+
+    __tablename__ = "drive_exports"
+    __table_args__ = (
+        # A double-clicked "save" (or a generation finishing while the
+        # user saves it by hand) must not upload the same file twice.
+        Index(
+            "uq_drive_export_in_flight",
+            "integration_id",
+            "source_url",
+            unique=True,
+            postgresql_where=text("status IN ('queued', 'processing')"),
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    integration_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("integrations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    source_url: Mapped[str] = mapped_column(String(1024), nullable=False)
+    file_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    # generation | montage | manual
+    origin: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[DriveExportStatus] = mapped_column(
+        Enum(DriveExportStatus, name="drive_export_status"),
+        nullable=False,
+        default=DriveExportStatus.queued,
+        index=True,
+    )
+    # Google's resumable-upload session URI. Kept so a retry asks Google
+    # how much it already has instead of starting a new file.
+    upload_session_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    drive_file_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    web_view_link: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # Last time the row was (re)queued -- the periodic sweep re-sends
+    # rows whose Celery message was lost (enqueue failed, broker reset).
+    queued_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    # When a worker took it -- a worker killed mid-upload leaves the row
+    # "processing"; the sweep puts rows stuck there back in the queue.
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
 

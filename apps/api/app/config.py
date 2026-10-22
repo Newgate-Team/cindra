@@ -114,6 +114,20 @@ class Settings(BaseSettings):
     twitter_client_id: str = ""
     twitter_client_secret: str = ""
     twitter_redirect_uri: str = "https://cindra-chi.vercel.app/oauth/twitter/callback"
+    # Google Drive (Инструменты): finished images/videos are copied into
+    # a "Cindra" folder in the user's own Drive. Scope drive.file only --
+    # the app sees just the files it created itself, and it's a
+    # non-sensitive scope, so publishing the consent screen needs no
+    # Google security assessment. May be the same Google Cloud OAuth
+    # client as YouTube's: enable the Drive API on that project and
+    # register this redirect URI on the client too.
+    google_drive_client_id: str = ""
+    google_drive_client_secret: str = ""
+    google_drive_redirect_uri: str = "https://cindra-chi.vercel.app/oauth/google-drive/callback"
+    # Dev-only: one base URL standing in for accounts.google.com,
+    # oauth2.googleapis.com and www.googleapis.com, to drive the Drive
+    # flow against devtools/google_drive_simulator.py. Empty = Google.
+    google_api_base_url: str = ""
     # Only ever changed for local runs against devtools/heygen_simulator.py
     # -- with no paid HeyGen key, that's the only way to drive the whole
     # avatar-video flow end to end.

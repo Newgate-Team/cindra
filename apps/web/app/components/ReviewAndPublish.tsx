@@ -7,6 +7,7 @@ import { useAuth } from "@/lib/auth-context";
 import { allowedContentKindsFor, allowedContentTypesFor } from "@/lib/publish-matrix";
 import type { GenerationContentType, Post, SocialAccount } from "@/lib/types";
 
+import { SaveToDriveButton } from "./SaveToDriveButton";
 import { TikTokPublishFields, useTikTokPublishOptions } from "./TikTokPublishFields";
 
 // datetime-local reads and writes LOCAL time, so the `min` guard has
@@ -140,6 +141,11 @@ export function ReviewAndPublish({
         <img src={imageUrl} alt="Изображение для публикации" style={{ maxWidth: "100%", borderRadius: 8 }} />
       )}
       {videoUrl && <video src={videoUrl} controls style={{ maxWidth: "100%", borderRadius: 8 }} />}
+      {(videoUrl || imageUrl) && (
+        <div className="list-row-actions">
+          <SaveToDriveButton url={(videoUrl || imageUrl) as string} />
+        </div>
+      )}
       <label>
         {imageUrl || videoUrl ? "Подпись (можно отредактировать перед публикацией)" : "Текст (можно отредактировать перед публикацией)"}
         <textarea rows={6} value={text} onChange={(e) => setText(e.target.value)} />

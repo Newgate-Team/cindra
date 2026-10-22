@@ -230,6 +230,34 @@ def decode_youtube_oauth_state(token: str) -> uuid.UUID:
     return uuid.UUID(payload["sub"])
 
 
+GOOGLE_DRIVE_OAUTH_STATE_EXPIRE_MINUTES = 10
+_GOOGLE_DRIVE_OAUTH_STATE_TYPE = "google_drive_oauth_state"
+
+
+def create_google_drive_oauth_state(user_id: uuid.UUID) -> str:
+    """Same CSRF reasoning as create_tiktok_oauth_state: binds the Google
+    Drive callback to the Cindra user who started the flow -- otherwise
+    an attacker could hand a victim their own `code` and have the
+    victim's content saved into the attacker's Drive."""
+    settings = get_settings()
+    expire = datetime.now(UTC) + timedelta(minutes=GOOGLE_DRIVE_OAUTH_STATE_EXPIRE_MINUTES)
+    payload = {
+        "sub": str(user_id),
+        "nonce": uuid.uuid4().hex,
+        "exp": expire,
+        "typ": _GOOGLE_DRIVE_OAUTH_STATE_TYPE,
+    }
+    return jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
+
+
+def decode_google_drive_oauth_state(token: str) -> uuid.UUID:
+    settings = get_settings()
+    payload = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
+    if payload.get("typ") != _GOOGLE_DRIVE_OAUTH_STATE_TYPE:
+        raise jwt.InvalidTokenError("not a google_drive_oauth_state token")
+    return uuid.UUID(payload["sub"])
+
+
 LINKEDIN_OAUTH_STATE_EXPIRE_MINUTES = 10
 _LINKEDIN_OAUTH_STATE_TYPE = "linkedin_oauth_state"
 

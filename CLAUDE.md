@@ -68,6 +68,7 @@ cd apps/web && npm run lint && npm run build
 | Вход через Google | OAuth Web Client ID в Google Cloud Console → `GOOGLE_CLIENT_ID` + `NEXT_PUBLIC_GOOGLE_CLIENT_ID` |
 | TikTok | `TIKTOK_CLIENT_KEY` / `TIKTOK_CLIENT_SECRET` из TikTok Developer Portal |
 | YouTube | `YOUTUBE_CLIENT_ID` / `YOUTUBE_CLIENT_SECRET` — отдельный OAuth-клиент от `GOOGLE_CLIENT_ID` (тот только вход, без refresh-токена) |
+| Google Drive | `GOOGLE_DRIVE_CLIENT_ID` / `GOOGLE_DRIVE_CLIENT_SECRET` — можно тот же клиент, что YouTube (включить Drive API, добавить redirect URI); экран согласия в «In production», иначе Google отзывает токены через 7 дней. До этого проверяется симулятором `devtools/google_drive_simulator.py` |
 | LinkedIn | `LINKEDIN_CLIENT_ID` / `LINKEDIN_CLIENT_SECRET` из LinkedIn Developer Portal |
 | Reddit | `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` (тип «web app») из reddit.com/prefs/apps |
 | X (Twitter) | `TWITTER_CLIENT_ID` / `TWITTER_CLIENT_SECRET` — confidential-клиент; уточнить, что тариф X API включает write-доступ (с 2023 бесплатный не включает) |

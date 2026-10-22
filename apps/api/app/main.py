@@ -13,6 +13,7 @@ from app.routers import (
     billing,
     content,
     feed,
+    google_drive,
     integrations,
     metrics,
     montage,
@@ -44,6 +45,7 @@ app.include_router(analytics.router)
 app.include_router(ab_tests.router)
 app.include_router(team.router)
 app.include_router(integrations.router)
+app.include_router(google_drive.router)
 app.include_router(montage.router)
 
 if get_settings().media_local_dir:
