@@ -87,16 +87,18 @@ class _FakeTwitch:
         return socket.create_connection(("127.0.0.1", self.port), timeout=5)
 
     def accept(self) -> socket.socket:
-        self.server.settimeout(5)
+        # Generous: a reconnect waits 1-2 s of backoff plus up to 1 s of
+        # recv timeout, and a loaded CI box can stretch that well past 5 s.
+        self.server.settimeout(20)
         conn, _ = self.server.accept()
-        conn.settimeout(5)
+        conn.settimeout(20)
         self.connections.append(conn)
         self.received.append([])
         return conn
 
     def read_until(self, conn: socket.socket, needle: str) -> list[str]:
         data = b""
-        deadline = time.time() + 5
+        deadline = time.time() + 20
         while needle.encode() not in data and time.time() < deadline:
             data += conn.recv(4096)
         lines = data.decode().split("\r\n")

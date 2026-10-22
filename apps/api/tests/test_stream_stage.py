@@ -56,7 +56,7 @@ def make_stage(tmp_path: Path):
         stage = AvatarStage(
             {"avatar_api_key": "k", "avatar": {"avatar_id": "a"}},
             rtmp_url=str(tmp_path / f"out{len(stages)}.flv"),
-            liveavatar_base_url="http://unused",
+            vendor_urls={},
             width=160, height=90, fps=10,
             make_session=FakeSession, **kwargs,
         )

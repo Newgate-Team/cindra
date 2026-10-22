@@ -1045,3 +1045,14 @@ a.list-row {
 .avatar-tile.disabled {
   opacity: 0.55;
 }
+
+.avatar-placeholder {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  aspect-ratio: 1;
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font-size: 32px;
+  font-weight: 600;
+}

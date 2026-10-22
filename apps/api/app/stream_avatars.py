@@ -36,4 +36,7 @@ PROVIDERS: dict[str, AvatarProvider] = {
     # LITE mode: Cindra supplies the speech (its own TTS), LiveAvatar
     # animates the face -- half the credits of FULL mode.
     "liveavatar": AvatarProvider(IntegrationProvider.liveavatar, "LiveAvatar (HeyGen)"),
+    # Same flow (our speech in, video out via LiveKit); ~$0.009/min vs
+    # LiveAvatar's ~$0.09 -- the affordable option for round-the-clock.
+    "simli": AvatarProvider(IntegrationProvider.simli, "Simli"),
 }

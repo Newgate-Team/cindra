@@ -70,6 +70,18 @@ class AudioRing:
         return len(self._buf) // 2
 
 
+def resample_pcm(pcm: bytes, from_rate: int, to_rate: int) -> bytes:
+    """Mono PCM16 rate conversion, linear interpolation -- plenty for
+    speech (our TTS gives 24 kHz; Simli wants 16 kHz)."""
+    data = np.frombuffer(pcm[: len(pcm) - len(pcm) % 2], dtype=np.int16).astype(np.float32)
+    if data.size == 0 or from_rate == to_rate:
+        return data.astype(np.int16).tobytes()
+    count = round(data.size * to_rate / from_rate)
+    positions = np.arange(count) * (from_rate / to_rate)
+    out = np.interp(positions, np.arange(data.size), data)
+    return np.clip(out, -32768, 32767).astype(np.int16).tobytes()
+
+
 def resample_24k_to_48k(pcm: bytes) -> bytes:
     """2x upsampling with linear interpolation -- plenty for speech."""
     data = np.frombuffer(pcm[: len(pcm) - len(pcm) % 2], dtype=np.int16).astype(np.float32)
