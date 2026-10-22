@@ -1,3 +1,4 @@
+import base64
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -40,6 +41,9 @@ def _setup(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
         return Reply(say=f"Ответ #{len(calls)}", emotion="happy", reaction="👋")
 
     monkeypatch.setattr(streams_router, "generate_reply", fake_reply)
+    monkeypatch.setattr(
+        streams_router, "synthesize", lambda text, voice, emotion: b"\x01\x00" * 2400
+    )
     return calls
 
 
@@ -252,7 +256,11 @@ def test_reply_logs_what_was_said_and_feeds_recent_lines_back(
         "target": {"author": "Ронни", "text": "Привет, как дела?"},
         "recent_chat": [{"author": "a", "text": "всем ку"}],
     }, headers=_AGENT).json()
-    assert first == {"say": "Ответ #1", "emotion": "happy", "reaction": "👋", "skipped": None}
+    assert {k: first[k] for k in ("say", "emotion", "reaction", "skipped")} == {
+        "say": "Ответ #1", "emotion": "happy", "reaction": "👋", "skipped": None
+    }
+    assert base64.b64decode(first["audio_b64"]) == b"\x01\x00" * 2400
+    assert first["sample_rate"] == 24000
     client.post(url, json={"agent_name": "stream-1", "mode": "idle"}, headers=_AGENT)
     assert _setup[1]["recent_said"] == ["Ответ #1"]
     assert _setup[1]["topic"] in {"тренды reels", "как писать посты"}
@@ -356,3 +364,38 @@ def test_events_are_kept_per_stream(client: TestClient, db: Session, monkeypatch
     rows = db.scalars(select(StreamEvent).where(StreamEvent.stream_id == stream["id"])).all()
     assert {"system", "error"} <= {r.kind for r in rows}
     assert db.get(LiveStream, stream["id"]).status == StreamStatus.live
+
+
+def test_a_line_that_cannot_be_voiced_is_not_logged_as_said(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, _setup: list[dict]
+) -> None:
+    from app.content_pipeline.stream_speech import SpeechError
+
+    headers = _login(client)
+    stream, job = _live(client, headers, monkeypatch)
+
+    def mute(text, voice, emotion):
+        raise SpeechError("Gemini TTS 400")
+
+    monkeypatch.setattr(streams_router, "synthesize", mute)
+    reply = client.post(f"/streams/agent/{job['id']}/reply",
+                        json={"agent_name": "stream-1", "mode": "idle"}, headers=_AGENT).json()
+    assert reply["say"] is None and reply["audio_b64"] is None
+    events = client.get(f"/streams/{stream['id']}/events", headers=headers).json()
+    assert not [e for e in events if e["kind"] in ("reply", "idle")]
+    assert any("озвучить" in e["text"] for e in events if e["kind"] == "error")
+
+
+def test_the_streams_voice_is_used(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    headers = _login(client)
+    _stream, job = _live(client, headers, monkeypatch)
+    voices: list[str] = []
+    monkeypatch.setattr(
+        streams_router, "synthesize",
+        lambda text, voice, emotion: voices.append(voice) or b"\x00\x00",
+    )
+    client.post(f"/streams/agent/{job['id']}/reply",
+                json={"agent_name": "stream-1", "mode": "idle"}, headers=_AGENT)
+    assert voices == ["Kore"]

@@ -20,6 +20,7 @@ import socket
 import ssl
 import threading
 import time
+import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
@@ -108,6 +109,16 @@ def parse_line(line: str) -> IrcLine | None:
     return IrcLine(tags, prefix, parts[0].upper(), params)
 
 
+def _visible(text: str) -> str:
+    """Drops invisible characters: chat extensions append Unicode tag
+    characters (U+E0000 block) and zero-width marks to dodge Twitch's
+    duplicate-message filter -- noise for the model and the overlay."""
+    return "".join(
+        ch for ch in text
+        if not (0xE0000 <= ord(ch) <= 0xE007F or unicodedata.category(ch) == "Cf")
+    ).strip()
+
+
 def _badges(raw: str) -> frozenset[str]:
     return frozenset(item.split("/")[0] for item in raw.split(",") if item)
 
@@ -135,6 +146,7 @@ def to_event(line: IrcLine) -> ChatEvent | None:
     if line.command == "PRIVMSG":
         if text.startswith("\x01ACTION ") and text.endswith("\x01"):
             text = text[8:-1]  # "/me does something"
+        text = _visible(text)
         return ChatEvent(
             kind="message",
             user=user,

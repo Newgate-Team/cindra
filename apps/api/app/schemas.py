@@ -1026,6 +1026,10 @@ class StreamReplyOut(BaseModel):
     emotion: str | None = None
     reaction: str | None = None
     skipped: str | None = None
+    # The spoken line as PCM16 mono, base64 -- the agent forwards it to
+    # the avatar as is.
+    audio_b64: str | None = None
+    sample_rate: int | None = None
 
 
 class StreamAgentEvent(BaseModel):

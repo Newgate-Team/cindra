@@ -168,3 +168,8 @@ def test_stop_is_quick_even_while_connected() -> None:
     reader.stop()
     assert time.time() - started < 3
     assert not threading.Thread.is_alive(reader._thread)
+
+
+def test_invisible_characters_are_stripped() -> None:
+    line = parse_line(":u!u@u PRIVMSG #cindra :Jack Doherty? \U000e0000\u200b")
+    assert to_event(line).text == "Jack Doherty?"

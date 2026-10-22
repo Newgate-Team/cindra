@@ -11,6 +11,7 @@ point, and that must cost seconds, not the broadcast.
 
 from __future__ import annotations
 
+import base64
 import logging
 import queue
 import threading
@@ -35,7 +36,8 @@ _MAX_STAGE_FAILURES = 5
 
 class Stage(Protocol):
     def start(self) -> None: ...
-    def speak(self, text: str, emotion: str) -> None: ...
+    # `audio`: the line voiced by the API (PCM16 mono, 24 kHz).
+    def speak(self, text: str, emotion: str, audio: bytes | None = None) -> None: ...
     def speaking(self) -> bool: ...
     def healthy(self) -> bool: ...
     def show(self, *, author: str | None, message: str | None, reaction: str | None) -> None: ...
@@ -176,7 +178,7 @@ class StreamSession:
             return
         if not stage.healthy():
             self.stats.stage_restarts += 1
-            self._report("system", "Аватар переподключается")
+            self._report("system", getattr(stage, "problem", None) or "Аватар переподключается")
             try:
                 stage.stop()
             except Exception:
@@ -239,12 +241,16 @@ class StreamSession:
         if not reply.get("say"):
             self.stats.skipped += 1
             return
+        subject = kwargs.get("target") or kwargs.get("notice") or {}
         stage.show(
-            author=kwargs.get("target", kwargs.get("notice", {})).get("author"),
-            message=kwargs.get("target", {}).get("text"),
+            author=subject.get("author"),
+            # A sub/raid shows Twitch's own line ("X subscribed for 3
+            # months") so viewers see who's being thanked.
+            message=subject.get("text") or None,
             reaction=reply.get("reaction"),
         )
-        stage.speak(reply["say"], reply.get("emotion") or "neutral")
+        audio = base64.b64decode(reply["audio_b64"]) if reply.get("audio_b64") else None
+        stage.speak(reply["say"], reply.get("emotion") or "neutral", audio)
         self._was_speaking = True
         self.stats.replies += 1
 

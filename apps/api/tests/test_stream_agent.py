@@ -39,6 +39,9 @@ def _setup(monkeypatch: pytest.MonkeyPatch) -> None:
         return Reply(say=line, emotion="happy", reaction="👋")
 
     monkeypatch.setattr(streams_router, "generate_reply", fake_reply)
+    monkeypatch.setattr(
+        streams_router, "synthesize", lambda text, voice, emotion: b"\x01\x00" * 2400
+    )
     from app.tool_integrations import heygen
 
     monkeypatch.setattr(heygen, "get_current_user", lambda key: {"email": "me@x"})
@@ -58,6 +61,7 @@ class _Stage:
     def __init__(self, job: dict) -> None:
         self.job = job
         self.lines: list[tuple[str, str]] = []
+        self.audio: list[bytes | None] = []
         self.shown: list[dict] = []
         self.alive = True
         self.started = self.stopped = False
@@ -67,8 +71,9 @@ class _Stage:
     def start(self) -> None:
         self.started = True
 
-    def speak(self, text: str, emotion: str) -> None:
+    def speak(self, text: str, emotion: str, audio: bytes | None = None) -> None:
         self.lines.append((text, emotion))
+        self.audio.append(audio)
         self._speaking_ticks = 2
 
     def speaking(self) -> bool:
@@ -145,6 +150,7 @@ def test_agent_answers_chat_keeps_the_log_and_stops_when_the_owner_says(
         stage = _Stage.instances[0]
         assert {line for line, _ in stage.lines} == {"Отвечаю ann", "Отвечаю bob"}
         assert stage.shown[0]["reaction"] == "👋"
+        assert stage.audio == [b"\x01\x00" * 2400] * 2  # the API's voice, untouched
 
         client.post(f"/streams/{stream['id']}/stop", headers=headers)
         worker.join(timeout=10)

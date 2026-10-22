@@ -25,7 +25,6 @@ from app.content_pipeline.moderation import check_content
 
 log = logging.getLogger(__name__)
 
-_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 _RETRYABLE = {429, 500, 502, 503, 504}
 EMOTIONS = ("neutral", "happy", "laughing", "surprised", "thinking", "sad")
 REACTIONS = ("👋", "😂", "🔥", "❤️", "🤔", "😮", "👍", "🎉", "🙏")
@@ -149,7 +148,10 @@ def generate_reply(
             {"category": c, "threshold": "BLOCK_LOW_AND_ABOVE"} for c in _SAFETY_CATEGORIES
         ],
     }
-    url = f"{_GEMINI_BASE_URL}/{settings.gemini_model}:generateContent"
+    url = (
+        f"{settings.gemini_api_base_url.rstrip('/')}/v1beta/models/"
+        f"{settings.gemini_model}:generateContent"
+    )
     kwargs: dict[str, Any] = {
         "params": {"key": settings.gemini_api_key},
         "json": body,

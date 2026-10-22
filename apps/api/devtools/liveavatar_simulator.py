@@ -19,6 +19,7 @@ Essential plan's 20 minutes) caps max_session_duration.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import secrets
@@ -27,9 +28,10 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, Response
 
+from devtools import liveavatar_sim_media as media
 from devtools.openapi_contract import OpenApiContract
 
 contract = OpenApiContract(
@@ -51,6 +53,8 @@ class _State:
     def __init__(self) -> None:
         self.sessions: dict[str, dict[str, Any]] = {}
         self.tokens: dict[str, str] = {}  # session_token -> session_id
+        self.avatars: dict[str, media.SimAvatar] = {}
+        self.started = 0
 
 
 state = _State()
@@ -184,22 +188,36 @@ async def session_token(request: Request) -> Response:
 
 
 @app.post("/v1/sessions/start")
-def session_start(request: Request) -> Response:
+async def session_start(request: Request) -> Response:
     token = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
     session_id = state.tokens.get(token)
     if session_id is None:
         return _error(401, "Invalid session token")
     session = state.sessions[session_id]
+    if session["started_at"] is not None:
+        return _error(400, "Session already started")
     session["started_at"] = time.time()
+    state.started += 1
     base = _base(request).replace("http", "ws", 1)
+    room = f"liveavatar-{session_id}"
+    config = media.livekit_config()
     data = {
         "session_id": session_id,
-        "livekit_url": os.environ.get("LIVEAVATAR_SIM_LIVEKIT_URL", "ws://localhost:7880"),
-        "livekit_client_token": "sim-client-" + session_id,
+        "livekit_url": config[0] if config else "ws://localhost:7880",
+        "livekit_client_token": (
+            media.mint(f"viewer-{session_id[:8]}", room, publish=False)
+            if config else "sim-client-" + session_id
+        ),
         "livekit_agent_token": "sim-agent-" + session_id,
         "max_session_duration": session["max"],
         "ws_url": f"{base}/v1/sessions/{session_id}/ws",
     }
+    # Media mode: a fake avatar actually joins the room. Without LiveKit,
+    # only the control WebSocket and its timing are simulated.
+    avatar = media.SimAvatar(session_id, state.started, session["max"], room)
+    state.avatars[session_id] = avatar
+    loop = asyncio.get_running_loop()
+    loop.create_task(avatar.run(config[0]) if config else avatar.run_protocol_only())
     return _reply("/v1/sessions/start", "post", 201, data)
 
 
@@ -237,7 +255,26 @@ async def stop(request: Request) -> Response:
         return found
     session_id, body = found
     state.sessions[session_id]["stopped"] = body.get("reason", "UNKNOWN")
+    if (avatar := state.avatars.get(session_id)) is not None and avatar.ended is None:
+        avatar.ended = body.get("reason", "USER_CLOSED")
     return _reply("/v1/sessions/stop", "post", 200, None)
+
+
+@app.websocket("/v1/sessions/{session_id}/ws")
+async def session_ws(websocket: WebSocket, session_id: str) -> None:
+    avatar = state.avatars.get(session_id)
+    await websocket.accept()
+    if avatar is None or avatar.ended:
+        await websocket.close(code=4404)
+        return
+    avatar.ws = websocket  # one socket per session: a new one replaces the old
+    await avatar.emit("session.state_updated", state="new")
+    await avatar.emit("session.state_updated", state="connected")
+    try:
+        while avatar.ended is None:
+            await avatar.on_command(await websocket.receive_text())
+    except WebSocketDisconnect:
+        pass
 
 
 @app.get("/files/avatar/{name}")
