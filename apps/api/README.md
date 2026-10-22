@@ -91,7 +91,7 @@ Redirect URI каждой соцсети должен быть зарегист�
 
 ## Агент эфиров (stream_agent)
 
-Эфир с AI-аватаром ведёт отдельный процесс на машине, которая кодирует видео (720p30 H.264 ≈ 2–4 ядра CPU на эфир), — не Railway. Он сам забирает запущенные эфиры из API (`/streams/agent/*`, секрет `STREAM_AGENT_TOKEN`), держит сессии LiveAvatar (меняет их до истечения лимита плана — 20/60 мин — в паузе между репликами), читает чат Twitch и шлёт RTMP на `ingest.global-contribute.live-video.net`.
+Эфир с AI-аватаром (LiveAvatar или Simli — по ключу пользователя) ведёт отдельный процесс на машине, которая кодирует видео (720p30 H.264 ≈ 2–4 ядра CPU на эфир), — не Railway. Он сам забирает запущенные эфиры из API (`/streams/agent/*`, секрет `STREAM_AGENT_TOKEN`), держит сессии LiveAvatar (меняет их до истечения лимита плана — 20/60 мин — в паузе между репликами), читает чат Twitch и шлёт RTMP на `ingest.global-contribute.live-video.net`.
 
 ```bash
 pip install -e ".[stream-agent]"          # livekit, PyAV (FFmpeg внутри), numpy, aiohttp
@@ -112,7 +112,7 @@ ffmpeg -listen 1 -i rtmp://127.0.0.1:1935/live/<ключ эфира> -c copy rec
 python -m stream_agent --api http://localhost:8000 --token dev --rtmp-url "rtmp://127.0.0.1:1935/live/{key}" --liveavatar-url http://localhost:8767
 ```
 
-Дальше в приложении: «Инструменты» → LiveAvatar с ключом `la_sim_любой` → «Эфир» → создать и запустить. Сессии по 2 минуты — смена аватара видна по цвету фона. **Не запускать pytest во время такого прогона**: тесты чистят ту же локальную БД.
+Для Simli — `devtools.simli_simulator` на порту 8769 и `--simli-url http://localhost:8769` у агента (ключ `simli_sim_любой`). Дальше в приложении: «Инструменты» → LiveAvatar с ключом `la_sim_любой` → «Эфир» → создать и запустить. Сессии по 2 минуты — смена аватара видна по цвету фона. **Не запускать pytest во время такого прогона**: тесты чистят ту же локальную БД.
 
 ## Бэкапы
 

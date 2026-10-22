@@ -24,10 +24,8 @@ import uuid
 from typing import Any
 
 import aiohttp
-import numpy as np
-from livekit import rtc
 
-from stream_agent.media import AudioRing
+from stream_agent.livekit_feed import LiveKitFeed
 
 log = logging.getLogger("stream_agent.liveavatar")
 
@@ -39,7 +37,6 @@ _CHUNK_BYTES = SPEECH_RATE * 2  # 1 s of PCM16 mono, as the docs recommend
 # Essential 20 min, Free 2 min), so step down until one is accepted.
 _DURATIONS = (3600, 1200, 120)
 _KEEP_ALIVE_SECONDS = 60.0
-_FIRST_FRAME_TIMEOUT = 45.0
 
 
 class LiveAvatarError(Exception):
@@ -69,17 +66,21 @@ class LiveAvatarSession:
         self._session_token: str | None = None
         self.max_duration = 0
         self.opened_at = 0.0
-        self.audio = AudioRing()
-        self.latest_frame: np.ndarray | None = None
-        self.frame_at = 0.0
         self.ended: str | None = None
         self._speaking_until = 0.0
         self._utterance: str | None = None
         self._ws: aiohttp.ClientWebSocketResponse | None = None
         self._ws_connected = asyncio.Event()
-        self._first_frame = asyncio.Event()
-        self._room = rtc.Room()
+        self.feed = LiveKitFeed(self._end)
         self._tasks: list[asyncio.Task] = []
+
+    @property
+    def latest_frame(self):
+        return self.feed.latest_frame
+
+    @property
+    def audio(self):
+        return self.feed.audio
 
     # -- REST -------------------------------------------------------------
 
@@ -139,11 +140,7 @@ class LiveAvatarSession:
         self._tasks.append(asyncio.create_task(self._keep_alive(), name="liveavatar-keepalive"))
 
     async def join_room(self, url: str, token: str) -> None:
-        self._room.on("track_subscribed", self._on_track)
-        self._room.on("disconnected", lambda *_: self._end("room disconnected"))
-        self._room.on("participant_disconnected", lambda *_: self._end("avatar left the room"))
-        await self._room.connect(url, token)
-        await asyncio.wait_for(self._first_frame.wait(), timeout=_FIRST_FRAME_TIMEOUT)
+        await self.feed.join(url, token)
 
     async def close(self, reason: str = "USER_CLOSED") -> None:
         self._end(reason)
@@ -151,10 +148,7 @@ class LiveAvatarSession:
             task.cancel()
         if self._ws is not None and not self._ws.closed:
             await self._ws.close()
-        try:
-            await self._room.disconnect()
-        except Exception:  # already gone
-            log.debug("room disconnect failed", exc_info=True)
+        await self.feed.leave()
         if self._session_token:
             try:
                 await self._post(
@@ -177,7 +171,7 @@ class LiveAvatarSession:
 
     @property
     def ready(self) -> bool:
-        return self.alive and self._first_frame.is_set()
+        return self.alive and self.feed.has_picture
 
     def age(self) -> float:
         return time.monotonic() - self.opened_at if self.opened_at else 0.0
@@ -250,23 +244,3 @@ class LiveAvatarSession:
         while self.alive:
             await asyncio.sleep(_KEEP_ALIVE_SECONDS)
             self._send({"type": "session.keep_alive", "event_id": str(uuid.uuid4())})
-
-    def _on_track(self, track: rtc.Track, *_: Any) -> None:
-        if track.kind == rtc.TrackKind.KIND_VIDEO:
-            self._tasks.append(asyncio.create_task(self._read_video(track)))
-        elif track.kind == rtc.TrackKind.KIND_AUDIO:
-            self._tasks.append(asyncio.create_task(self._read_audio(track)))
-
-    async def _read_video(self, track: rtc.Track) -> None:
-        async for event in rtc.VideoStream(track):
-            frame = event.frame.convert(rtc.VideoBufferType.RGBA)
-            # Copied: the SDK reuses the frame's buffer once we move on.
-            self.latest_frame = np.frombuffer(frame.data, dtype=np.uint8).reshape(
-                frame.height, frame.width, 4
-            ).copy()
-            self.frame_at = time.monotonic()
-            self._first_frame.set()
-
-    async def _read_audio(self, track: rtc.Track) -> None:
-        async for event in rtc.AudioStream(track, sample_rate=48000, num_channels=1):
-            self.audio.write(bytes(event.frame.data))

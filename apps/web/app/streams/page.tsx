@@ -173,8 +173,13 @@ function AvatarPicker({
             title={avatar.ready ? avatar.name : `${avatar.name} — ещё обучается`}
             onClick={() => onChange(avatar)}
           >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={avatar.preview_url ?? ""} alt="" />
+            {avatar.preview_url ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={avatar.preview_url} alt="" />
+            ) : (
+              // Simli's own faces come without a picture.
+              <div className="avatar-placeholder">{avatar.name.slice(0, 1)}</div>
+            )}
             <span>{avatar.ready ? avatar.name : `${avatar.name} · обучается`}</span>
           </button>
         ))}
@@ -201,7 +206,7 @@ function StreamForm({
 }) {
   const { token } = useAuth();
   const [form, setForm] = useState<FormState>(() =>
-    stream ? formFrom(stream) : emptyForm(providers[0]?.id ?? "")
+    stream ? formFrom(stream) : emptyForm((providers.find((p) => p.connected) ?? providers[0])?.id ?? "")
   );
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -290,7 +295,14 @@ function StreamForm({
       {!stream && (
         <label>
           Сервис аватара
-          <select value={form.avatar_provider} onChange={(e) => set("avatar_provider", e.target.value)}>
+          <select
+            value={form.avatar_provider}
+            onChange={(e) => {
+              // An avatar id belongs to one vendor: pick again for the new one.
+              const provider = e.target.value;
+              setForm((current) => ({ ...current, avatar_provider: provider, avatar_id: "" }));
+            }}
+          >
             {providers.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.label}

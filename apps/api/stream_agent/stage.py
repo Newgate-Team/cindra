@@ -26,9 +26,11 @@ from typing import Any
 import aiohttp
 import numpy as np
 
+from stream_agent import liveavatar, simli
 from stream_agent.broadcaster import Broadcaster
 from stream_agent.liveavatar import SPEECH_RATE, LiveAvatarAuthError, LiveAvatarSession
 from stream_agent.media import Layer, render_caption, render_reaction
+from stream_agent.simli import SimliAuthError, SimliSession
 
 log = logging.getLogger("stream_agent.stage")
 
@@ -40,7 +42,22 @@ _MAX_SESSION_FAILURES = 5
 _REACTION_SECONDS = 4.0
 _CAPTION_TAIL_SECONDS = 2.0
 
-SessionFactory = Callable[[aiohttp.ClientSession], LiveAvatarSession]
+AvatarSession = LiveAvatarSession | SimliSession
+SessionFactory = Callable[[aiohttp.ClientSession], AvatarSession]
+_AUTH_ERRORS = (LiveAvatarAuthError, SimliAuthError)
+
+
+def vendor_session_factory(job: dict[str, Any], urls: dict[str, str]) -> SessionFactory:
+    """The stream's avatar vendor, with the owner's own key (BYO)."""
+    provider, key = job["avatar_provider"], job["avatar_api_key"]
+    avatar_id = job["avatar"]["avatar_id"]
+    if provider == "liveavatar":
+        base = urls.get("liveavatar", liveavatar.DEFAULT_BASE_URL)
+        return lambda http: LiveAvatarSession(key, avatar_id, http=http, base_url=base)
+    if provider == "simli":
+        base = urls.get("simli", simli.DEFAULT_BASE_URL)
+        return lambda http: SimliSession(key, avatar_id, http=http, base_url=base)
+    raise ValueError(f"Сервис аватара {provider!r} не поддерживается агентом")
 
 
 class AvatarStage:
@@ -49,7 +66,7 @@ class AvatarStage:
         job: dict[str, Any],
         *,
         rtmp_url: str,
-        liveavatar_base_url: str,
+        vendor_urls: dict[str, str] | None = None,
         width: int = 1280,
         height: int = 720,
         fps: int = 30,
@@ -58,20 +75,13 @@ class AvatarStage:
     ) -> None:
         self.job = job
         self._width, self._height = width, height
-        self._make_session = make_session or (
-            lambda http: LiveAvatarSession(
-                job["avatar_api_key"],
-                job["avatar"]["avatar_id"],
-                http=http,
-                base_url=liveavatar_base_url,
-            )
-        )
+        self._make_session = make_session or vendor_session_factory(job, vendor_urls or {})
         self._handover_lead = handover_lead
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(target=self._loop.run_forever, name="stage", daemon=True)
         self._http: aiohttp.ClientSession | None = None
-        self.current: LiveAvatarSession | None = None
-        self._next: LiveAvatarSession | None = None
+        self.current: AvatarSession | None = None
+        self._next: AvatarSession | None = None
         self._opening: asyncio.Task | None = None
         self._watch: asyncio.Future | None = None
         self.handovers = 0
@@ -194,7 +204,7 @@ class AvatarStage:
 
     # -- session rotation -----------------------------------------------------
 
-    async def _open_session(self) -> LiveAvatarSession:
+    async def _open_session(self) -> AvatarSession:
         assert self._http is not None
         session = self._make_session(self._http)
         try:
@@ -209,8 +219,8 @@ class AvatarStage:
             try:
                 self._next = await self._open_session()
                 self.session_failures = 0
-            except LiveAvatarAuthError as exc:
-                self._broken = f"LiveAvatar не принял ключ: {exc}"
+            except _AUTH_ERRORS as exc:
+                self._broken = f"Сервис аватара не принял ключ: {exc}"
             except Exception as exc:
                 self.session_failures += 1
                 self._retry_at = time.monotonic() + min(30.0, 2.0**self.session_failures)
