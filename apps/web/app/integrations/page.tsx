@@ -10,6 +10,7 @@ import type {
   HeyGenAccount,
   HeyGenAvatar,
   Integration,
+  LiveAvatarAvatar,
   Page,
   TokenPage,
 } from "@/lib/types";
@@ -342,6 +343,126 @@ function GoogleDriveConnected({
   );
 }
 
+function LiveAvatarSection({
+  integration,
+  onChanged,
+}: {
+  integration: Integration | null;
+  onChanged: () => void;
+}) {
+  const { token } = useAuth();
+  const [apiKey, setApiKey] = useState("");
+  const [credits, setCredits] = useState<number | null>(null);
+  const [avatars, setAvatars] = useState<LiveAvatarAvatar[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!integration) return;
+    api
+      .get<{ credits_left: number | null }>("/integrations/liveavatar/account", token)
+      .then((account) => setCredits(account.credits_left))
+      .catch((err) => setError(err instanceof ApiError ? err.message : "LiveAvatar не отвечает"));
+    api
+      .get<{ items: LiveAvatarAvatar[] }>("/integrations/liveavatar/avatars", token)
+      .then((page) => setAvatars(page.items))
+      .catch(() => setAvatars(null));
+  }, [integration, token]);
+
+  async function connect(event: FormEvent) {
+    event.preventDefault();
+    setError(null);
+    setBusy(true);
+    try {
+      await api.put("/integrations/liveavatar", { api_key: apiKey }, token);
+      setApiKey("");
+      onChanged();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Не удалось подключить LiveAvatar");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function disconnect() {
+    setBusy(true);
+    try {
+      await api.delete("/integrations/liveavatar", token);
+      onChanged();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Не удалось отключить");
+      setBusy(false);
+    }
+  }
+
+  if (!integration) {
+    return (
+      <form onSubmit={connect}>
+        <p className="muted">
+          Аватар, который ведёт эфир на Twitch в реальном времени. Это отдельный продукт HeyGen со своим
+          ключом и кредитами: ключ HeyGen API здесь не подойдёт.
+        </p>
+        <label>
+          API-ключ LiveAvatar
+          <input
+            type="password"
+            required
+            minLength={8}
+            autoComplete="off"
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+            placeholder="вставьте ключ"
+          />
+        </label>
+        <p className="muted">Где взять: app.liveavatar.com → Developers → API key.</p>
+        {error && <p className="error">{error}</p>}
+        <button type="submit" disabled={busy}>
+          {busy ? "Проверяем ключ…" : "Подключить LiveAvatar"}
+        </button>
+      </form>
+    );
+  }
+
+  return (
+    <>
+      <p>
+        Подключён: <strong>LiveAvatar</strong>
+        {credits !== null && <> · кредитов: {credits.toLocaleString("ru-RU")}</>}
+        {" · "}
+        <Link href="/streams">Настроить эфир →</Link>
+      </p>
+      {credits === 0 && (
+        <p className="error">Кредиты LiveAvatar закончились — эфир не запустится, пока вы их не пополните.</p>
+      )}
+      {!integration.is_own && (
+        <p className="muted">Этот ключ подключил участник вашей команды — минуты эфира оплачиваются с его аккаунта.</p>
+      )}
+      {error && <p className="error">{error}</p>}
+      {avatars && avatars.length > 0 && (
+        <div className="avatar-grid">
+          {avatars.slice(0, 12).map((avatar) => (
+            <div key={avatar.id} className={`avatar-tile${avatar.ready ? "" : " disabled"}`}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={avatar.preview_url ?? ""} alt="" />
+              <span title={avatar.name}>{avatar.ready ? avatar.name : `${avatar.name} — обучается`}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {avatars && avatars.length === 0 && (
+        <p className="muted">Своих аватаров в LiveAvatar пока нет — для эфира доступны публичные.</p>
+      )}
+      {integration.is_own && (
+        <div className="list-row-actions">
+          <button type="button" className="secondary" onClick={disconnect} disabled={busy}>
+            Отключить
+          </button>
+        </div>
+      )}
+    </>
+  );
+}
+
 function IntegrationsManager() {
   const { token } = useAuth();
   const [integrations, setIntegrations] = useState<Integration[] | null>(null);
@@ -358,6 +479,7 @@ function IntegrationsManager() {
 
   const heygen = integrations?.find((item) => item.provider === "heygen") ?? null;
   const drive = integrations?.find((item) => item.provider === "google_drive") ?? null;
+  const liveAvatar = integrations?.find((item) => item.provider === "liveavatar") ?? null;
 
   return (
     <>
@@ -388,6 +510,11 @@ function IntegrationsManager() {
                 <HeyGenKeyForm submitLabel="Подключить HeyGen" onConnected={reload} />
               </>
             )}
+          </div>
+
+          <h2>LiveAvatar — аватар для эфира</h2>
+          <div className="card">
+            <LiveAvatarSection integration={liveAvatar} onChanged={reload} />
           </div>
 
           <h2>Google Drive — хранилище</h2>

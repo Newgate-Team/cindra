@@ -7,6 +7,7 @@ import { useAuth } from "@/lib/auth-context";
 
 import {
   AnalyticsIcon,
+  BroadcastIcon,
   CalendarIcon,
   CardIcon,
   ClapperboardIcon,
@@ -23,6 +24,7 @@ import {
 const NAV_LINKS = [
   { href: "/generate", label: "Посты", icon: WandIcon },
   { href: "/video", label: "Видео", icon: ClapperboardIcon },
+  { href: "/streams", label: "Эфир", icon: BroadcastIcon },
   { href: "/templates", label: "Шаблоны", icon: LayoutIcon },
   { href: "/ab-tests", label: "A/B тесты", icon: SplitTestIcon },
   { href: "/calendar", label: "Календарь", icon: CalendarIcon },

@@ -35,6 +35,7 @@ _USAGE_LABELS: dict[tuple[UsageEventType, GenerationContentType | None], str] = 
     (UsageEventType.layout_render, None): "Карточки по шаблону",
     (UsageEventType.byo_avatar_video, None): "Аватар-видео HeyGen",
     (UsageEventType.davinci_montage, None): "Монтажи в DaVinci",
+    (UsageEventType.stream_hour, None): "Часы эфира аватара",
 }
 
 

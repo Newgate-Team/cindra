@@ -839,3 +839,229 @@ class MontageAgentFailure(BaseModel):
 class MontageMediaOut(BaseModel):
     url: str
     type: Literal["video", "image", "audio"]
+
+
+_CHANNEL_RE = re.compile(r"^[A-Za-z0-9_]{3,25}$")
+
+
+def _clean_terms(terms: list[str] | None) -> list[str] | None:
+    if terms is None:
+        return None
+    cleaned = []
+    for term in terms:
+        term = " ".join(term.split())
+        if term and term.lower() not in {t.lower() for t in cleaned}:
+            cleaned.append(term[:60])
+    return cleaned[:100]
+
+
+class StreamAvatarIn(BaseModel):
+    avatar_id: str = Field(min_length=1, max_length=200)
+    voice_id: str | None = Field(default=None, max_length=200)
+
+
+class _StreamFields(BaseModel):
+    @field_validator("channel", check_fields=False)
+    @classmethod
+    def _channel(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip().lstrip("@#").lower()
+        if not _CHANNEL_RE.fullmatch(value):
+            raise ValueError("Логин канала Twitch: 3–25 латинских букв, цифр или _")
+        return value
+
+    @field_validator("blocked_terms", check_fields=False)
+    @classmethod
+    def _terms(cls, value: list[str] | None) -> list[str] | None:
+        return _clean_terms(value)
+
+    @field_validator("stream_key", check_fields=False)
+    @classmethod
+    def _key(cls, value: str | None) -> str | None:
+        return value.strip() if value else value
+
+
+class LiveStreamCreate(_StreamFields):
+    title: str = Field(min_length=1, max_length=200)
+    platform: Literal["twitch"] = "twitch"
+    channel: str
+    stream_key: str | None = Field(default=None, max_length=500)
+    persona: str = Field(min_length=10, max_length=4000)
+    idle_topics: str = Field(default="", max_length=4000)
+    blocked_terms: list[str] = Field(default_factory=list)
+    avatar_provider: str = Field(min_length=1, max_length=40)
+    avatar: StreamAvatarIn
+    min_reply_interval_seconds: int = Field(default=15, ge=5, le=300)
+    max_hours: int = Field(default=24, ge=1, le=72)
+
+
+class LiveStreamUpdate(_StreamFields):
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    channel: str | None = None
+    stream_key: str | None = Field(default=None, max_length=500)
+    persona: str | None = Field(default=None, min_length=10, max_length=4000)
+    idle_topics: str | None = Field(default=None, max_length=4000)
+    blocked_terms: list[str] | None = None
+    avatar: StreamAvatarIn | None = None
+    min_reply_interval_seconds: int | None = Field(default=None, ge=5, le=300)
+    max_hours: int | None = Field(default=None, ge=1, le=72)
+
+
+class LiveStreamOut(BaseModel):
+    model_config = {"from_attributes": True}
+
+    id: uuid.UUID
+    title: str
+    platform: str
+    channel: str
+    stream_key_set: bool
+    persona: str
+    idle_topics: str
+    blocked_terms: list[str]
+    avatar_provider: str
+    avatar: dict[str, Any]
+    min_reply_interval_seconds: int
+    max_hours: int
+    status: str
+    stop_requested: bool
+    started_at: datetime | None
+    ended_at: datetime | None
+    heartbeat_at: datetime | None
+    hours_billed: int
+    stats: dict[str, Any]
+    error_message: str | None
+    created_at: datetime
+
+
+class StreamEventOut(BaseModel):
+    model_config = {"from_attributes": True}
+
+    id: uuid.UUID
+    kind: str
+    author: str | None
+    message: str | None
+    text: str
+    emotion: str | None
+    created_at: datetime
+
+
+class StreamVoiceOut(BaseModel):
+    id: str
+    label: str
+
+
+class StreamProviderOut(BaseModel):
+    id: str
+    label: str
+    connected: bool
+
+
+class StreamAgentsStatusOut(BaseModel):
+    online: bool
+    agents: int
+
+
+class StreamAgentHello(BaseModel):
+    agent_name: str = Field(min_length=1, max_length=120)
+    version: str | None = Field(default=None, max_length=60)
+
+
+class StreamAgentJobOut(BaseModel):
+    id: uuid.UUID
+    title: str
+    platform: str
+    channel: str
+    stream_key: str
+    avatar_provider: str
+    avatar: dict[str, Any]
+    # The stream owner's own key with the avatar vendor (BYO-key).
+    avatar_api_key: str
+    min_reply_interval_seconds: int
+    max_hours: int
+    started_at: datetime
+
+
+class StreamAgentHeartbeat(BaseModel):
+    agent_name: str = Field(min_length=1, max_length=120)
+    stats: dict[str, Any] = Field(default_factory=dict)
+
+
+class StreamAgentHeartbeatOut(BaseModel):
+    stop: bool
+    stop_reason: str | None = None
+    min_reply_interval_seconds: int
+
+
+class StreamChatLineIn(BaseModel):
+    author: str = Field(min_length=1, max_length=100)
+    text: str = Field(min_length=1, max_length=500)
+
+
+class StreamNoticeIn(BaseModel):
+    type: str = Field(min_length=1, max_length=40)
+    author: str = Field(min_length=1, max_length=100)
+    viewer_count: int = Field(default=0, ge=0)
+    text: str = Field(default="", max_length=500)
+
+
+class StreamReplyRequest(BaseModel):
+    agent_name: str = Field(min_length=1, max_length=120)
+    mode: Literal["answer", "idle", "notice"]
+    target: StreamChatLineIn | None = None
+    notice: StreamNoticeIn | None = None
+    recent_chat: list[StreamChatLineIn] = Field(default_factory=list, max_length=30)
+
+    @model_validator(mode="after")
+    def _needs_subject(self) -> "StreamReplyRequest":
+        if self.mode == "answer" and self.target is None:
+            raise ValueError("mode=answer needs target")
+        if self.mode == "notice" and self.notice is None:
+            raise ValueError("mode=notice needs notice")
+        return self
+
+
+class StreamReplyOut(BaseModel):
+    say: str | None
+    emotion: str | None = None
+    reaction: str | None = None
+    skipped: str | None = None
+
+
+class StreamAgentEvent(BaseModel):
+    agent_name: str = Field(min_length=1, max_length=120)
+    kind: Literal["system", "error"]
+    text: str = Field(min_length=1, max_length=2000)
+
+
+class StreamAgentFinish(BaseModel):
+    agent_name: str = Field(min_length=1, max_length=120)
+    error: str | None = Field(default=None, max_length=2000)
+
+
+class LiveAvatarConnectRequest(BaseModel):
+    api_key: str = Field(min_length=8, max_length=512)
+
+    @field_validator("api_key")
+    @classmethod
+    def _strip(cls, value: str) -> str:
+        return value.strip()
+
+
+class LiveAvatarAccountOut(BaseModel):
+    credits_left: float | None
+
+
+class LiveAvatarAvatarOut(BaseModel):
+    id: str
+    name: str
+    preview_url: str | None
+    status: str
+    type: str
+    default_voice_name: str | None
+    ready: bool
+
+
+class LiveAvatarAvatarPage(BaseModel):
+    items: list[LiveAvatarAvatarOut]
+    next_page: int | None

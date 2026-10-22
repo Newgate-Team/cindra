@@ -1,0 +1,1676 @@
+{
+ "components": {
+  "schemas": {
+   "AgoraConfigSchema": {
+    "properties": {
+     "agora_app_id": {
+      "title": "Agora App Id",
+      "type": "string"
+     },
+     "agora_channel": {
+      "title": "Agora Channel",
+      "type": "string"
+     },
+     "agora_token": {
+      "title": "Agora Token",
+      "type": "string"
+     },
+     "agora_uid": {
+      "title": "Agora Uid",
+      "type": "string"
+     }
+    },
+    "required": [
+     "agora_app_id",
+     "agora_token",
+     "agora_channel",
+     "agora_uid"
+    ],
+    "title": "AgoraConfigSchema",
+    "type": "object"
+   },
+   "AvatarPersonaSchema": {
+    "properties": {
+     "context_id": {
+      "description": "Context ID",
+      "format": "uuid",
+      "title": "Context Id",
+      "type": "string"
+     },
+     "language": {
+      "default": "en",
+      "description": "Language",
+      "title": "Language",
+      "type": "string"
+     },
+     "llm_settings": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/OpenAILLMSetting"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "LLM selection (provider + model). None → the managed default model."
+     },
+     "stt_config": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/STTConfigSchema-Input"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "ASR/STT configuration override"
+     },
+     "voice_id": {
+      "description": "Voice ID. If empty use default avatar voice",
+      "format": "uuid",
+      "title": "Voice Id",
+      "type": "string"
+     },
+     "voice_settings": {
+      "anyOf": [
+       {
+        "discriminator": {
+         "mapping": {
+          "cartesia": "#/components/schemas/CartesiaVoiceSettings",
+          "elevenLabs": "#/components/schemas/ElevenLabsVoiceSettings",
+          "fish": "#/components/schemas/FishAudioVoiceSettings"
+         },
+         "propertyName": "provider"
+        },
+        "oneOf": [
+         {
+          "$ref": "#/components/schemas/ElevenLabsVoiceSettings"
+         },
+         {
+          "$ref": "#/components/schemas/FishAudioVoiceSettings"
+         },
+         {
+          "$ref": "#/components/schemas/CartesiaVoiceSettings"
+         }
+        ]
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Additional voice settings (provider-specific, discriminated by 'provider' field)",
+      "title": "Voice Settings"
+     }
+    },
+    "title": "AvatarPersonaSchema",
+    "type": "object"
+   },
+   "AvatarSchema": {
+    "properties": {
+     "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+     },
+     "default_voice": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/DefaultAvatarVoice"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "default_voice_agent_id": {
+      "title": "Default Voice Agent Id",
+      "type": "string"
+     },
+     "error_message": {
+      "description": "Error message if training failed (prefer detailed, fallback to short).",
+      "readOnly": true,
+      "title": "Error Message",
+      "type": "string"
+     },
+     "id": {
+      "format": "uuid",
+      "title": "Id",
+      "type": "string"
+     },
+     "is_1080p": {
+      "default": false,
+      "title": "Is 1080P",
+      "type": "boolean"
+     },
+     "is_expired": {
+      "readOnly": true,
+      "title": "Is Expired",
+      "type": "boolean"
+     },
+     "name": {
+      "title": "Name",
+      "type": "string"
+     },
+     "preview_url": {
+      "title": "Preview Url",
+      "type": "string"
+     },
+     "space_id": {
+      "title": "Space Id",
+      "type": "string"
+     },
+     "status": {
+      "$ref": "#/components/schemas/AvatarStatusEnum",
+      "default": "INIT"
+     },
+     "type": {
+      "$ref": "#/components/schemas/AvatarTypeEnum",
+      "default": "VIDEO"
+     },
+     "updated_at": {
+      "format": "date-time",
+      "title": "Updated At",
+      "type": "string"
+     }
+    },
+    "required": [
+     "id",
+     "name",
+     "created_at",
+     "updated_at",
+     "is_expired",
+     "error_message"
+    ],
+    "title": "AvatarSchema",
+    "type": "object"
+   },
+   "AvatarStatusEnum": {
+    "enum": [
+     "ACTIVE",
+     "INIT",
+     "DEPLOYING",
+     "FAILED",
+     "DEACTIVATED",
+     "DELETED"
+    ],
+    "title": "AvatarStatusEnum",
+    "type": "string"
+   },
+   "AvatarTypeEnum": {
+    "enum": [
+     "IMAGE",
+     "VIDEO"
+    ],
+    "title": "AvatarTypeEnum",
+    "type": "string"
+   },
+   "CartesiaAgentConfigSchema-Input": {
+    "description": "Config for Cartesia Agent mode in LITE sessions. All fields required when present.\n\nMirrors `ElevenLabsAgentConfigSchema` (field names align with the stored\nvoice_agents `CartesiaAgentConfigSchema`) so the routing path maps one onto the\nother without renaming. Cartesia agents own their voice/prompt server-side, so —\nunlike ElevenLabs — there is no voice_id override or dynamic_variables here.",
+    "properties": {
+     "agent_id": {
+      "description": "Cartesia Agent ID",
+      "title": "Agent Id",
+      "type": "string"
+     },
+     "secret_id": {
+      "description": "Secret ID for CARTESIA_API_KEY",
+      "format": "uuid",
+      "title": "Secret Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "secret_id",
+     "agent_id"
+    ],
+    "title": "CartesiaAgentConfigSchema",
+    "type": "object"
+   },
+   "CartesiaModelEnum": {
+    "enum": [
+     "sonic-3.6",
+     "sonic-3.5",
+     "sonic-3",
+     "sonic-2",
+     "sonic-turbo"
+    ],
+    "title": "CartesiaModelEnum",
+    "type": "string"
+   },
+   "CartesiaVoiceSettings": {
+    "description": "Cartesia-specific voice settings for TTS configuration.",
+    "properties": {
+     "model": {
+      "$ref": "#/components/schemas/CartesiaModelEnum",
+      "default": "sonic-3.6",
+      "description": "Cartesia TTS model."
+     },
+     "provider": {
+      "const": "cartesia",
+      "default": "cartesia",
+      "title": "Provider",
+      "type": "string"
+     },
+     "speed": {
+      "default": 1.0,
+      "maximum": 1.5,
+      "minimum": 0.6,
+      "title": "Speed",
+      "type": "number"
+     }
+    },
+    "title": "CartesiaVoiceSettings",
+    "type": "object"
+   },
+   "DefaultAvatarVoice": {
+    "properties": {
+     "id": {
+      "title": "Id",
+      "type": "string"
+     },
+     "name": {
+      "title": "Name",
+      "type": "string"
+     }
+    },
+    "required": [
+     "id",
+     "name"
+    ],
+    "title": "DefaultAvatarVoice",
+    "type": "object"
+   },
+   "ElevenLabsAgentConfigSchema-Input": {
+    "description": "Config for ElevenLabs Agent mode in LITE sessions. All fields required when present.",
+    "properties": {
+     "agent_id": {
+      "description": "ElevenLabs Agent ID",
+      "title": "Agent Id",
+      "type": "string"
+     },
+     "dynamic_variables": {
+      "additionalProperties": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "integer"
+        },
+        {
+         "type": "number"
+        },
+        {
+         "type": "boolean"
+        }
+       ]
+      },
+      "description": "ElevenLabs Agent dynamic variables injected into prompts and tools. See https://elevenlabs.io/docs/eleven-agents/customization/personalization/dynamic-variables",
+      "title": "Dynamic Variables",
+      "type": "object"
+     },
+     "secret_id": {
+      "description": "Secret ID for ELEVENLABS_API_KEY",
+      "format": "uuid",
+      "title": "Secret Id",
+      "type": "string"
+     },
+     "voice_id": {
+      "description": "Optional ElevenLabs voice ID override. When set, sent to the ElevenLabs Agent WebSocket as `conversation_config_override.tts.voice_id`, overriding the agent's default voice for this session. When omitted, the agent's configured default voice is used. See https://elevenlabs.io/docs/eleven-agents/api-reference/eleven-agents/websocket",
+      "title": "Voice Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "secret_id",
+     "agent_id"
+    ],
+    "title": "ElevenLabsAgentConfigSchema",
+    "type": "object"
+   },
+   "ElevenLabsModelEnum": {
+    "enum": [
+     "eleven_flash_v2_5",
+     "eleven_multilingual_v2",
+     "eleven_v3",
+     "eleven_v3_conversational",
+     "eleven_v4_turbo"
+    ],
+    "title": "ElevenLabsModelEnum",
+    "type": "string"
+   },
+   "ElevenLabsVoiceSettings": {
+    "description": "ElevenLabs-specific voice settings for TTS configuration.",
+    "properties": {
+     "apply_language_text_normalization": {
+      "default": false,
+      "description": "Apply ElevenLabs language-specific text normalization. Improves pronunciation for languages with complex orthography — currently only Japanese ('ja') is supported. Enabling this adds latency, so it is opt-in and only valid when the session language is set to 'ja'.",
+      "title": "Apply Language Text Normalization",
+      "type": "boolean"
+     },
+     "model": {
+      "$ref": "#/components/schemas/ElevenLabsModelEnum",
+      "default": "eleven_flash_v2_5",
+      "description": "ElevenLabs TTS model. 'eleven_flash_v2_5' (default, fastest), 'eleven_multilingual_v2' (higher quality), 'eleven_v3', 'eleven_v3_conversational' and 'eleven_v4_turbo' (most expressive; these honor only 'stability' from the voice settings)."
+     },
+     "provider": {
+      "const": "elevenLabs",
+      "default": "elevenLabs",
+      "title": "Provider",
+      "type": "string"
+     },
+     "similarity_boost": {
+      "default": 0.75,
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Similarity Boost",
+      "type": "number"
+     },
+     "speed": {
+      "default": 1.0,
+      "maximum": 1.2,
+      "minimum": 0.8,
+      "title": "Speed",
+      "type": "number"
+     },
+     "stability": {
+      "default": 0.75,
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Stability",
+      "type": "number"
+     },
+     "style": {
+      "default": 0.0,
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Style",
+      "type": "number"
+     },
+     "use_speaker_boost": {
+      "default": true,
+      "title": "Use Speaker Boost",
+      "type": "boolean"
+     }
+    },
+    "title": "ElevenLabsVoiceSettings",
+    "type": "object"
+   },
+   "FishAudioModelEnum": {
+    "enum": [
+     "s1",
+     "s2",
+     "s2-pro",
+     "s2.1-pro"
+    ],
+    "title": "FishAudioModelEnum",
+    "type": "string"
+   },
+   "FishAudioVoiceSettings": {
+    "description": "Fish Audio-specific voice settings for TTS configuration.",
+    "properties": {
+     "latency_mode": {
+      "default": "balanced",
+      "description": "Latency mode: 'normal' (best quality), 'balanced', or 'low' (lowest latency).",
+      "enum": [
+       "normal",
+       "balanced",
+       "low"
+      ],
+      "title": "Latency Mode",
+      "type": "string"
+     },
+     "model": {
+      "$ref": "#/components/schemas/FishAudioModelEnum",
+      "default": "s2.1-pro",
+      "description": "Fish Audio TTS model."
+     },
+     "provider": {
+      "const": "fish",
+      "default": "fish",
+      "title": "Provider",
+      "type": "string"
+     },
+     "speed": {
+      "default": 1.0,
+      "maximum": 1.2,
+      "minimum": 0.8,
+      "title": "Speed",
+      "type": "number"
+     }
+    },
+    "title": "FishAudioVoiceSettings",
+    "type": "object"
+   },
+   "FullSDKSessionTokenConfigDataSchema": {
+    "properties": {
+     "avatar_id": {
+      "format": "uuid",
+      "title": "Avatar Id",
+      "type": "string"
+     },
+     "avatar_persona": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/AvatarPersonaSchema"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "deprecated": true,
+      "description": "Inline voice / context / voice_settings. Mutually exclusive with voice_agent."
+     },
+     "dynamic_variables": {
+      "additionalProperties": {
+       "type": "string"
+      },
+      "description": "Values for ${var} placeholders in the context's opening_text and prompt. Required keys are derived from the context; extra keys are ignored. At most 50 entries; keys <= 64 chars; values <= 1000 chars.",
+      "title": "Dynamic Variables",
+      "type": "object"
+     },
+     "interactivity_type": {
+      "$ref": "#/components/schemas/SessionInteractivityTypeEnum",
+      "default": "CONVERSATIONAL"
+     },
+     "is_sandbox": {
+      "default": false,
+      "title": "Is Sandbox",
+      "type": "boolean"
+     },
+     "llm_configuration_id": {
+      "description": "Optional custom LLM configuration ID",
+      "format": "uuid",
+      "title": "Llm Configuration Id",
+      "type": "string"
+     },
+     "max_session_duration": {
+      "description": "Maximum session duration in seconds. Must be <= the configured limit for your subscription tier.",
+      "title": "Max Session Duration",
+      "type": "integer"
+     },
+     "memory": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/MemoryRef"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Attach session memory. Provide `prev_session_id` to seed/reuse from a prior session, `session_memory_id` to attach an existing memory, or both (must resolve to the same memory_id)."
+     },
+     "mode": {
+      "const": "FULL",
+      "default": "FULL",
+      "title": "Mode",
+      "type": "string"
+     },
+     "video_settings": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/VideoSettings"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Video encoding settings"
+     },
+     "voice_agent": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/VoiceAgentRef"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Reference a stored voice_agent by id; the server resolves its agent_type and builds the session accordingly (which per-session overrides apply depends on the type — see VoiceAgentRef). An elevenlabs_agent produces a LITE session even on this FULL request. Mutually exclusive with avatar_persona."
+     }
+    },
+    "required": [
+     "avatar_id"
+    ],
+    "title": "Full Mode",
+    "type": "object"
+   },
+   "GPTLiveVoiceEnum": {
+    "enum": [
+     "aster",
+     "beacon",
+     "cinder",
+     "marin",
+     "stone",
+     "vesper"
+    ],
+    "title": "GPTLiveVoiceEnum",
+    "type": "string"
+   },
+   "GeminiRealtimeConfigSchema": {
+    "description": "Config for Gemini Realtime Agent mode in LITE sessions.",
+    "properties": {
+     "context_id": {
+      "description": "Context ID.",
+      "format": "uuid",
+      "title": "Context Id",
+      "type": "string"
+     },
+     "model": {
+      "$ref": "#/components/schemas/GeminiRealtimeModelEnum",
+      "default": "gemini-3.1-flash-live-preview",
+      "description": "Gemini Realtime model"
+     },
+     "secret_id": {
+      "description": "Secret ID referencing GEMINI_API_KEY secret",
+      "format": "uuid",
+      "title": "Secret Id",
+      "type": "string"
+     },
+     "temperature": {
+      "default": 0.8,
+      "description": "Sampling temperature",
+      "maximum": 2.0,
+      "minimum": 0.0,
+      "title": "Temperature",
+      "type": "number"
+     },
+     "voice": {
+      "$ref": "#/components/schemas/GeminiRealtimeVoiceEnum",
+      "default": "Puck",
+      "description": "Gemini Realtime voice"
+     }
+    },
+    "required": [
+     "secret_id"
+    ],
+    "title": "GeminiRealtimeConfigSchema",
+    "type": "object"
+   },
+   "GeminiRealtimeModelEnum": {
+    "enum": [
+     "gemini-2.5-flash-native-audio-preview-12-2025",
+     "gemini-3.1-flash-live-preview"
+    ],
+    "title": "GeminiRealtimeModelEnum",
+    "type": "string"
+   },
+   "GeminiRealtimeVoiceEnum": {
+    "enum": [
+     "Achernar",
+     "Achird",
+     "Algenib",
+     "Algieba",
+     "Alnilam",
+     "Aoede",
+     "Autonoe",
+     "Callirrhoe",
+     "Charon",
+     "Despina",
+     "Enceladus",
+     "Erinome",
+     "Fenrir",
+     "Gacrux",
+     "Iapetus",
+     "Kore",
+     "Laomedeia",
+     "Leda",
+     "Orus",
+     "Pulcherrima",
+     "Puck",
+     "Rasalgethi",
+     "Sadachbia",
+     "Sadaltager",
+     "Schedar",
+     "Sulafat",
+     "Umbriel",
+     "Vindemiatrix",
+     "Zephyr",
+     "Zubenelgenubi"
+    ],
+    "title": "GeminiRealtimeVoiceEnum",
+    "type": "string"
+   },
+   "HTTPValidationError": {
+    "properties": {
+     "detail": {
+      "items": {
+       "$ref": "#/components/schemas/ValidationError"
+      },
+      "title": "Detail",
+      "type": "array"
+     }
+    },
+    "title": "HTTPValidationError",
+    "type": "object"
+   },
+   "KeepSessionAliveSchema": {
+    "properties": {
+     "session_id": {
+      "format": "uuid",
+      "title": "Session Id",
+      "type": "string"
+     }
+    },
+    "title": "KeepSessionAliveSchema",
+    "type": "object"
+   },
+   "LiteSDKSessionTokenConfigDataSchema": {
+    "properties": {
+     "agora_config": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/AgoraConfigSchema"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Agora config. Allow users to use Agora as the transport layer"
+     },
+     "avatar_id": {
+      "format": "uuid",
+      "title": "Avatar Id",
+      "type": "string"
+     },
+     "cartesia_agent_config": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/CartesiaAgentConfigSchema-Input"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Cartesia Agent config. When set, uses Cartesia Agent instead of default."
+     },
+     "elevenlabs_agent_config": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/ElevenLabsAgentConfigSchema-Input"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "ElevenLabs Agent config. When set, uses ElevenLabs Agent instead of default."
+     },
+     "gemini_realtime_config": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/GeminiRealtimeConfigSchema"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Gemini Realtime config. When set, uses Gemini Live API instead of default."
+     },
+     "is_sandbox": {
+      "default": false,
+      "title": "Is Sandbox",
+      "type": "boolean"
+     },
+     "livekit_config": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/LiveKitConfigSchema"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "LiveKit config. Allow users to override the livekit config"
+     },
+     "max_session_duration": {
+      "description": "Maximum session duration in seconds. Must be <= the configured limit for your subscription tier.",
+      "title": "Max Session Duration",
+      "type": "integer"
+     },
+     "mode": {
+      "const": "LITE",
+      "default": "LITE",
+      "title": "Mode",
+      "type": "string"
+     },
+     "openai_realtime_config": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/OpenAIRealtimeConfigSchema"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "OpenAI Realtime config. When set, uses OpenAI Realtime API instead of default."
+     },
+     "video_settings": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/VideoSettings"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Video encoding settings"
+     }
+    },
+    "required": [
+     "avatar_id"
+    ],
+    "title": "Lite Mode",
+    "type": "object"
+   },
+   "LiveKitConfigSchema": {
+    "properties": {
+     "livekit_client_token": {
+      "title": "Livekit Client Token",
+      "type": "string"
+     },
+     "livekit_room": {
+      "title": "Livekit Room",
+      "type": "string"
+     },
+     "livekit_url": {
+      "title": "Livekit Url",
+      "type": "string"
+     }
+    },
+    "required": [
+     "livekit_url",
+     "livekit_room",
+     "livekit_client_token"
+    ],
+    "title": "LiveKitConfigSchema",
+    "type": "object"
+   },
+   "MemoryRef": {
+    "description": "Session-memory attach request.\n\nEither field may be set. If both are set, they must resolve to the same\nmemory_id; mismatch -> 400.",
+    "properties": {
+     "prev_session_id": {
+      "description": "Seed memory from a prior FULL-mode session. Reused if a session-memory already exists for that session; otherwise sync-bootstrapped.",
+      "format": "uuid",
+      "title": "Prev Session Id",
+      "type": "string"
+     },
+     "session_memory_id": {
+      "description": "Attach an existing session-typed memory by id (must belong to caller's space).",
+      "format": "uuid",
+      "title": "Session Memory Id",
+      "type": "string"
+     }
+    },
+    "title": "MemoryRef",
+    "type": "object"
+   },
+   "OpenAILLMSetting": {
+    "properties": {
+     "model": {
+      "$ref": "#/components/schemas/OpenAIModelEnum",
+      "default": "gpt-5.4-nano"
+     },
+     "provider": {
+      "const": "openai",
+      "default": "openai",
+      "title": "Provider",
+      "type": "string"
+     }
+    },
+    "title": "OpenAILLMSetting",
+    "type": "object"
+   },
+   "OpenAIModelEnum": {
+    "description": "Recommended OpenAI chat models selectable for the FULL pipeline (LA-1498).",
+    "enum": [
+     "gpt-4o",
+     "gpt-4o-mini",
+     "gpt-5-nano",
+     "gpt-5.4-nano"
+    ],
+    "title": "OpenAIModelEnum",
+    "type": "string"
+   },
+   "OpenAIRealtimeConfigSchema": {
+    "description": "Config for OpenAI Realtime Agent mode in LITE sessions.\n\n`model` picks the connector: a GPT-Live model runs OpenAI's full-duplex GPT-Live,\nanything else runs the Realtime API. `model` / `voice` / `temperature` and the rule\ncoupling them come from `OpenAIRealtimeOptions`, shared with the worker's settings.",
+    "properties": {
+     "context_id": {
+      "description": "Context ID.",
+      "format": "uuid",
+      "title": "Context Id",
+      "type": "string"
+     },
+     "model": {
+      "$ref": "#/components/schemas/OpenAIRealtimeModelEnum",
+      "default": "gpt-realtime",
+      "description": "OpenAI model"
+     },
+     "secret_id": {
+      "description": "Secret ID referencing OPENAI_API_KEY secret",
+      "format": "uuid",
+      "title": "Secret Id",
+      "type": "string"
+     },
+     "temperature": {
+      "default": 0.8,
+      "description": "Sampling temperature. Realtime models only.",
+      "maximum": 1.2,
+      "minimum": 0.6,
+      "title": "Temperature",
+      "type": "number"
+     },
+     "voice": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/OpenAIRealtimeVoiceEnum"
+       },
+       {
+        "$ref": "#/components/schemas/GPTLiveVoiceEnum"
+       }
+      ],
+      "default": "alloy",
+      "description": "Voice from the model's voice set. Defaults to 'alloy' (Realtime) or 'marin' (GPT-Live).",
+      "title": "Voice"
+     }
+    },
+    "required": [
+     "secret_id"
+    ],
+    "title": "OpenAIRealtimeConfigSchema",
+    "type": "object"
+   },
+   "OpenAIRealtimeModelEnum": {
+    "description": "OpenAI speech-to-speech models. GPT-Live models run the full-duplex GPT-Live\nconnector; the rest run the Realtime API. The two families differ in voices and\nGPT-Live has no temperature — ask the member (`is_gpt_live` / `voices` /\n`default_voice`) rather than matching on the slug.",
+    "enum": [
+     "gpt-realtime",
+     "gpt-realtime-mini",
+     "gpt-realtime-2.1",
+     "gpt-realtime-2.1-mini",
+     "gpt-live-1"
+    ],
+    "title": "OpenAIRealtimeModelEnum",
+    "type": "string"
+   },
+   "OpenAIRealtimeVoiceEnum": {
+    "enum": [
+     "alloy",
+     "ash",
+     "ballad",
+     "coral",
+     "echo",
+     "fable",
+     "onyx",
+     "nova",
+     "shimmer",
+     "sage",
+     "verse",
+     "marin",
+     "cedar"
+    ],
+    "title": "OpenAIRealtimeVoiceEnum",
+    "type": "string"
+   },
+   "PaginatedResponse_AvatarSchema_": {
+    "properties": {
+     "count": {
+      "title": "Count",
+      "type": "integer"
+     },
+     "next": {
+      "title": "Next",
+      "type": "string"
+     },
+     "previous": {
+      "title": "Previous",
+      "type": "string"
+     },
+     "results": {
+      "items": {
+       "$ref": "#/components/schemas/AvatarSchema"
+      },
+      "title": "Results",
+      "type": "array"
+     }
+    },
+    "required": [
+     "count",
+     "results"
+    ],
+    "title": "PaginatedResponse[AvatarSchema]",
+    "type": "object"
+   },
+   "Response_NoneType_": {
+    "properties": {
+     "code": {
+      "default": 100,
+      "title": "Code",
+      "type": "integer"
+     },
+     "data": {
+      "title": "Data",
+      "type": "null"
+     },
+     "message": {
+      "title": "Message",
+      "type": "string"
+     }
+    },
+    "title": "Response[NoneType]",
+    "type": "object"
+   },
+   "Response_PaginatedResponse_AvatarSchema__": {
+    "properties": {
+     "code": {
+      "default": 100,
+      "title": "Code",
+      "type": "integer"
+     },
+     "data": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/PaginatedResponse_AvatarSchema_"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "message": {
+      "title": "Message",
+      "type": "string"
+     }
+    },
+    "title": "Response[PaginatedResponse[AvatarSchema]]",
+    "type": "object"
+   },
+   "Response_SDKSessionTokenSchema_": {
+    "properties": {
+     "code": {
+      "default": 100,
+      "title": "Code",
+      "type": "integer"
+     },
+     "data": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/SDKSessionTokenSchema"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "message": {
+      "title": "Message",
+      "type": "string"
+     }
+    },
+    "title": "Response[SDKSessionTokenSchema]",
+    "type": "object"
+   },
+   "Response_StartSessionResponseSchema_": {
+    "properties": {
+     "code": {
+      "default": 100,
+      "title": "Code",
+      "type": "integer"
+     },
+     "data": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/StartSessionResponseSchema"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "message": {
+      "title": "Message",
+      "type": "string"
+     }
+    },
+    "title": "Response[StartSessionResponseSchema]",
+    "type": "object"
+   },
+   "Response_UserCreditsSchema_": {
+    "properties": {
+     "code": {
+      "default": 100,
+      "title": "Code",
+      "type": "integer"
+     },
+     "data": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/UserCreditsSchema"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "message": {
+      "title": "Message",
+      "type": "string"
+     }
+    },
+    "title": "Response[UserCreditsSchema]",
+    "type": "object"
+   },
+   "SDKSessionTokenSchema": {
+    "properties": {
+     "session_id": {
+      "format": "uuid",
+      "title": "Session Id",
+      "type": "string"
+     },
+     "session_token": {
+      "title": "Session Token",
+      "type": "string"
+     }
+    },
+    "required": [
+     "session_id",
+     "session_token"
+    ],
+    "title": "SDKSessionTokenSchema",
+    "type": "object"
+   },
+   "STTConfigSchema-Input": {
+    "description": "User-provided STT configuration for sessions.",
+    "properties": {
+     "provider": {
+      "$ref": "#/components/schemas/STTProviderEnum",
+      "description": "STT provider. Auto-selected if not specified."
+     }
+    },
+    "required": [
+     "provider"
+    ],
+    "title": "STTConfigSchema",
+    "type": "object"
+   },
+   "STTProviderEnum": {
+    "enum": [
+     "deepgram",
+     "assembly_ai",
+     "gladia",
+     "elevenlabs"
+    ],
+    "title": "STTProviderEnum",
+    "type": "string"
+   },
+   "SessionEndReasonEnum": {
+    "enum": [
+     "UNKNOWN",
+     "USER_DISCONNECTED",
+     "SERVER_ERROR",
+     "IDLE_TIMEOUT",
+     "NO_CREDITS",
+     "USER_CLOSED",
+     "AVATAR_DELETED",
+     "MAX_DURATION_REACHED",
+     "ZOMBIE_SESSION_REAP",
+     "AGENT_HANG_UP",
+     "DISPATCH_FAILED"
+    ],
+    "title": "SessionEndReasonEnum",
+    "type": "string"
+   },
+   "SessionInteractivityTypeEnum": {
+    "enum": [
+     "CONVERSATIONAL",
+     "PUSH_TO_TALK"
+    ],
+    "title": "SessionInteractivityTypeEnum",
+    "type": "string"
+   },
+   "StartSessionResponseSchema": {
+    "properties": {
+     "livekit_agent_token": {
+      "title": "Livekit Agent Token",
+      "type": "string"
+     },
+     "livekit_client_token": {
+      "title": "Livekit Client Token",
+      "type": "string"
+     },
+     "livekit_url": {
+      "title": "Livekit Url",
+      "type": "string"
+     },
+     "max_session_duration": {
+      "title": "Max Session Duration",
+      "type": "integer"
+     },
+     "session_id": {
+      "title": "Session Id",
+      "type": "string"
+     },
+     "ws_url": {
+      "description": "Websocket URL to send session events to. Custom Mode only.",
+      "title": "Ws Url",
+      "type": "string"
+     }
+    },
+    "required": [
+     "session_id",
+     "livekit_url",
+     "livekit_client_token"
+    ],
+    "title": "StartSessionResponseSchema",
+    "type": "object"
+   },
+   "StopSessionSchema": {
+    "properties": {
+     "reason": {
+      "$ref": "#/components/schemas/SessionEndReasonEnum",
+      "default": "UNKNOWN"
+     },
+     "session_id": {
+      "format": "uuid",
+      "title": "Session Id",
+      "type": "string"
+     }
+    },
+    "title": "StopSessionSchema",
+    "type": "object"
+   },
+   "UserCreditsSchema": {
+    "properties": {
+     "credits_left": {
+      "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+      "title": "Credits Left",
+      "type": "string"
+     }
+    },
+    "required": [
+     "credits_left"
+    ],
+    "title": "UserCreditsSchema",
+    "type": "object"
+   },
+   "ValidationError": {
+    "properties": {
+     "ctx": {
+      "title": "Context",
+      "type": "object"
+     },
+     "input": {
+      "title": "Input"
+     },
+     "loc": {
+      "items": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "integer"
+        }
+       ]
+      },
+      "title": "Location",
+      "type": "array"
+     },
+     "msg": {
+      "title": "Message",
+      "type": "string"
+     },
+     "type": {
+      "title": "Error Type",
+      "type": "string"
+     }
+    },
+    "required": [
+     "loc",
+     "msg",
+     "type"
+    ],
+    "title": "ValidationError",
+    "type": "object"
+   },
+   "VideoEncodingEnum": {
+    "enum": [
+     "VP8",
+     "H264"
+    ],
+    "title": "VideoEncodingEnum",
+    "type": "string"
+   },
+   "VideoQualityEnum": {
+    "enum": [
+     "very_high",
+     "high",
+     "medium",
+     "low"
+    ],
+    "title": "VideoQualityEnum",
+    "type": "string"
+   },
+   "VideoSettings": {
+    "description": "Video encoding settings for session configuration",
+    "properties": {
+     "encoding": {
+      "$ref": "#/components/schemas/VideoEncodingEnum",
+      "default": "H264"
+     },
+     "quality": {
+      "$ref": "#/components/schemas/VideoQualityEnum",
+      "default": "high"
+     }
+    },
+    "title": "VideoSettings",
+    "type": "object"
+   },
+   "VoiceAgentRef": {
+    "description": "Reference to a stored voice_agent, plus optional per-session overrides.\n\nThe caller passes only the agent ``id``; the server resolves the stored\nagent's ``agent_type`` and decides how the session is built. The override\nfields below are NOT universal — which ones are accepted depends on the\nresolved type, and an override that doesn't apply is rejected (400) rather\nthan silently ignored:\n\n* ``liveavatar_agent`` (managed STT -> LLM -> TTS pipeline): ``language``\n  and ``dynamic_variables`` are honored, layered over the stored agent's\n  config for this session only.\n* ``elevenlabs_agent`` (ElevenLabs-hosted): the stored agent is used as-is;\n  passing ``language`` or ``dynamic_variables`` is rejected with a 400.\n\nOverrides are per-session-at-creation choices, not properties of the stored\nagent — the same agent is reused across sessions with different values each\ntime, and the resolved result is what gets frozen into the session snapshot.\nShared across the SDK and app token requests.\n\n``dynamic_variables`` is typed as the bounded union for forward-compatibility\n(a single wire type across agent types); the server narrows or rejects it per\nthe resolved ``agent_type`` as described on the field.",
+    "properties": {
+     "dynamic_variables": {
+      "additionalProperties": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "integer"
+        },
+        {
+         "type": "number"
+        },
+        {
+         "type": "boolean"
+        }
+       ]
+      },
+      "description": "Per-session dynamic_variables override. Accepted only for a liveavatar_agent, where values must be strings (substituted as text into the context's ${var} placeholders; non-string values are rejected with a 400). Rejected with a 400 for an elevenlabs_agent. Mutually exclusive with the top-level dynamic_variables (400 if both set). At most 50 entries; keys <= 64 chars; string values <= 1000 chars.",
+      "title": "Dynamic Variables",
+      "type": "object"
+     },
+     "id": {
+      "description": "Stored voice_agent id. Its server-resolved agent_type determines which of the override fields below are accepted.",
+      "format": "uuid",
+      "title": "Id",
+      "type": "string"
+     },
+     "language": {
+      "description": "Per-session language override, layered over the agent's stored language. Accepted only for a liveavatar_agent; rejected with a 400 for an elevenlabs_agent.",
+      "title": "Language",
+      "type": "string"
+     }
+    },
+    "required": [
+     "id"
+    ],
+    "title": "VoiceAgentRef",
+    "type": "object"
+   }
+  },
+  "securitySchemes": {
+   "APIKeyHeader": {
+    "in": "header",
+    "name": "X-API-KEY",
+    "type": "apiKey"
+   },
+   "HTTPBearer": {
+    "bearerFormat": "JWT",
+    "scheme": "bearer",
+    "type": "http"
+   }
+  }
+ },
+ "info": {
+  "title": "Live avatar API",
+  "version": "0.1.0",
+  "x-cindra-note": "Cut from https://docs.liveavatar.com/openapi.json -- only what Cindra calls."
+ },
+ "openapi": "3.1.0",
+ "paths": {
+  "/v1/avatars": {
+   "get": {
+    "description": "Get avatars list for auth user",
+    "operationId": "list_user_avatars_v1_avatars_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "page",
+      "required": false,
+      "schema": {
+       "default": 1,
+       "minimum": 1,
+       "title": "Page",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "page_size",
+      "required": false,
+      "schema": {
+       "default": 20,
+       "maximum": 100,
+       "minimum": 1,
+       "title": "Page Size",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Response_PaginatedResponse_AvatarSchema__"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "APIKeyHeader": []
+     }
+    ],
+    "summary": "List User Avatars",
+    "tags": [
+     "Avatar"
+    ]
+   }
+  },
+  "/v1/avatars/public": {
+   "get": {
+    "description": "Get public avatars list",
+    "operationId": "list_public_avatars_v1_avatars_public_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "page",
+      "required": false,
+      "schema": {
+       "default": 1,
+       "minimum": 1,
+       "title": "Page",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "page_size",
+      "required": false,
+      "schema": {
+       "default": 20,
+       "maximum": 100,
+       "minimum": 1,
+       "title": "Page Size",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Response_PaginatedResponse_AvatarSchema__"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "APIKeyHeader": []
+     }
+    ],
+    "summary": "List Public Avatars",
+    "tags": [
+     "Avatar"
+    ]
+   }
+  },
+  "/v1/sessions/keep-alive": {
+   "post": {
+    "description": "Keep the session alive",
+    "operationId": "keep_session_alive_v1_sessions_keep_alive_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/KeepSessionAliveSchema",
+        "default": {}
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Response_NoneType_"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "APIKeyHeader": []
+     },
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Keep Session Alive",
+    "tags": [
+     "Sessions"
+    ]
+   }
+  },
+  "/v1/sessions/start": {
+   "post": {
+    "description": "Start a new session",
+    "operationId": "start_session_v1_sessions_start_post",
+    "responses": {
+     "201": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Response_StartSessionResponseSchema_"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Start Session",
+    "tags": [
+     "Sessions"
+    ]
+   }
+  },
+  "/v1/sessions/stop": {
+   "post": {
+    "description": "Stop a session",
+    "operationId": "stop_session_v1_sessions_stop_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/StopSessionSchema",
+        "default": {
+         "reason": "USER_CLOSED"
+        }
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Response_NoneType_"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "APIKeyHeader": []
+     },
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Stop Session",
+    "tags": [
+     "Sessions"
+    ]
+   }
+  },
+  "/v1/sessions/token": {
+   "post": {
+    "description": "Create session token for an API-key-authenticated user.\n\nMinting a session token is only doable via an API key (``APIUserDep``) — a\nsession JWT (``SessionUser``) cannot mint a token for another participant.",
+    "operationId": "create_session_token_v1_sessions_token_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "oneOf": [
+         {
+          "$ref": "#/components/schemas/FullSDKSessionTokenConfigDataSchema"
+         },
+         {
+          "$ref": "#/components/schemas/LiteSDKSessionTokenConfigDataSchema"
+         }
+        ],
+        "title": "Payload"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Response_SDKSessionTokenSchema_"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "APIKeyHeader": []
+     }
+    ],
+    "summary": "Create Session Token",
+    "tags": [
+     "Sessions"
+    ]
+   }
+  },
+  "/v1/users/credits": {
+   "get": {
+    "description": "Get the current user's credit balance.",
+    "operationId": "get_user_credits_v1_users_credits_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Response_UserCreditsSchema_"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "APIKeyHeader": []
+     }
+    ],
+    "summary": "Get User Credits",
+    "tags": [
+     "Users"
+    ]
+   }
+  }
+ }
+}

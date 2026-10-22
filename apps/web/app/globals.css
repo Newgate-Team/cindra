@@ -1007,3 +1007,41 @@ a.list-row {
   font-size: 14px;
   white-space: nowrap;
 }
+
+/* Live stream log: what the avatar said, newest first */
+.stream-log {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 10px;
+  max-height: 420px;
+  overflow-y: auto;
+  font-size: 14px;
+}
+
+.stream-log li {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.stream-log-question {
+  color: var(--muted-foreground);
+}
+
+.stream-log-blocked span:last-child,
+.stream-log-error span:last-child {
+  color: var(--warning);
+}
+
+.form-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.avatar-tile.disabled {
+  opacity: 0.55;
+}

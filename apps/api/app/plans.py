@@ -34,6 +34,10 @@ class PlanLimits:
     # One Resolve instance renders one montage at a time on Cindra's
     # render machine -- this rations that queue, not AI spend.
     max_davinci_montages_per_month: int | None = 3
+    # Started hours on air of a live avatar stream: Cindra's machine
+    # encodes the video and pays for the chat replies. Business covers
+    # one round-the-clock stream for a whole month (31 x 24 = 744).
+    max_stream_hours_per_month: int | None = 1
 
 
 # Values fixed in CIN-59, derived from real per-generation AI cost
@@ -61,6 +65,7 @@ PLAN_LIMITS: dict[SubscriptionTier, PlanLimits] = {
         max_layout_renders_per_month=30,
         max_byo_avatar_videos_per_month=5,
         max_davinci_montages_per_month=3,
+        max_stream_hours_per_month=1,
     ),
     SubscriptionTier.pro: PlanLimits(
         max_generations_per_format={
@@ -74,6 +79,7 @@ PLAN_LIMITS: dict[SubscriptionTier, PlanLimits] = {
         max_layout_renders_per_month=500,
         max_byo_avatar_videos_per_month=100,
         max_davinci_montages_per_month=50,
+        max_stream_hours_per_month=100,
     ),
     SubscriptionTier.business: PlanLimits(
         max_generations_per_format={
@@ -87,6 +93,7 @@ PLAN_LIMITS: dict[SubscriptionTier, PlanLimits] = {
         max_layout_renders_per_month=None,
         max_byo_avatar_videos_per_month=300,
         max_davinci_montages_per_month=200,
+        max_stream_hours_per_month=744,
     ),
 }
 
@@ -133,4 +140,6 @@ def limit_for(
         return limits.max_byo_avatar_videos_per_month
     if event_type is UsageEventType.davinci_montage:
         return limits.max_davinci_montages_per_month
+    if event_type is UsageEventType.stream_hour:
+        return limits.max_stream_hours_per_month
     return limits.max_publications_per_month

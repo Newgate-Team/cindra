@@ -72,6 +72,7 @@ cd apps/web && npm run lint && npm run build
 | LinkedIn | `LINKEDIN_CLIENT_ID` / `LINKEDIN_CLIENT_SECRET` из LinkedIn Developer Portal |
 | Reddit | `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` (тип «web app») из reddit.com/prefs/apps |
 | X (Twitter) | `TWITTER_CLIENT_ID` / `TWITTER_CLIENT_SECRET` — confidential-клиент; уточнить, что тариф X API включает write-доступ (с 2023 бесплатный не включает) |
+| Эфир с AI-аватаром | у пользователя — свой ключ LiveAvatar (app.liveavatar.com, отдельный от HeyGen API) и ключ трансляции Twitch; у нас — `STREAM_AGENT_TOKEN` и машина с агентом `stream_agent/`. Сессия LiveAvatar ≤20 мин (Essential) / ≤60 мин (Business) — агент ротирует их, 24/7 стоит у пользователя ≈$130/сутки кредитами LiveAvatar. Проверяется симулятором `devtools/liveavatar_simulator.py` |
 | Оплата | реальные ключи и планы PayPal |
 | Генерация | `GEMINI_API_KEY` (учтите: API проверяет геолокацию запроса) |
 | Длинные ролики | `FAL_KEY` (fal.ai) — без него «Полное авто» в студии генерирует через Veo, а не Seedance (CIN-144) |

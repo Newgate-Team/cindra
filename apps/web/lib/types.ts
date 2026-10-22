@@ -65,7 +65,7 @@ export interface SocialAccount {
   created_at: string;
 }
 
-export type IntegrationProvider = "heygen" | "google_drive";
+export type IntegrationProvider = "heygen" | "google_drive" | "liveavatar";
 
 export interface Integration {
   provider: IntegrationProvider;
@@ -343,4 +343,68 @@ export interface MontageJob {
 export interface MontageAgentsStatus {
   online: boolean;
   last_seen_at: string | null;
+}
+
+export type LiveStreamStatus = "draft" | "queued" | "live" | "ended" | "failed";
+
+export interface LiveStream {
+  id: string;
+  title: string;
+  platform: "twitch";
+  channel: string;
+  stream_key_set: boolean;
+  persona: string;
+  idle_topics: string;
+  blocked_terms: string[];
+  avatar_provider: string;
+  avatar: { avatar_id?: string; voice_id?: string | null };
+  min_reply_interval_seconds: number;
+  max_hours: number;
+  status: LiveStreamStatus;
+  stop_requested: boolean;
+  started_at: string | null;
+  ended_at: string | null;
+  heartbeat_at: string | null;
+  hours_billed: number;
+  stats: {
+    chat_messages?: number;
+    replies?: number;
+    skipped?: number;
+    stage_restarts?: number;
+    uptime_seconds?: number;
+  };
+  error_message: string | null;
+  created_at: string;
+}
+
+export interface StreamEvent {
+  id: string;
+  kind: "reply" | "idle" | "notice" | "blocked" | "system" | "error";
+  author: string | null;
+  message: string | null;
+  text: string;
+  emotion: string | null;
+  created_at: string;
+}
+
+export interface StreamProvider {
+  id: string;
+  label: string;
+  connected: boolean;
+}
+
+export interface LiveAvatarAvatar {
+  id: string;
+  name: string;
+  preview_url: string | null;
+  status: string;
+  type: string;
+  default_voice_name: string | null;
+  // false while the avatar is still training on LiveAvatar's side.
+  ready: boolean;
+}
+
+export interface StreamVoice {
+  id: string;
+  label: string;
 }
