@@ -39,6 +39,20 @@ class SocialPlatform(str, enum.Enum):
 class IntegrationProvider(str, enum.Enum):
     heygen = "heygen"
     google_drive = "google_drive"
+    # HeyGen's real-time avatar product: its own key and credits.
+    liveavatar = "liveavatar"
+
+
+class StreamPlatform(str, enum.Enum):
+    twitch = "twitch"
+
+
+class StreamStatus(str, enum.Enum):
+    draft = "draft"  # set up, never started
+    queued = "queued"  # start pressed, waiting for a stream agent
+    live = "live"  # an agent has it on air
+    ended = "ended"
+    failed = "failed"
 
 
 class DriveExportStatus(str, enum.Enum):
@@ -107,6 +121,10 @@ class UsageEventType(str, enum.Enum):
     # render machine -- one Resolve instance renders one job at a time,
     # so this bounds queue time for everyone, not AI spend.
     davinci_montage = "davinci_montage"
+    # One started hour on air of a live avatar stream: Cindra's stream
+    # machine encodes the video and Cindra pays for the chat replies
+    # (the avatar itself bills the user's own vendor account).
+    stream_hour = "stream_hour"
 
 
 class GenerationContentType(str, enum.Enum):
@@ -651,6 +669,103 @@ class DriveExport(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+
+
+class LiveStream(Base):
+    """A 24/7-capable live stream hosted by an AI avatar that reads the
+    channel's chat and answers out loud. Like MontageJob it's run by an
+    agent process on another machine (stream_agent/), which claims it,
+    heartbeats, and asks the API what the avatar should say."""
+
+    __tablename__ = "live_streams"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    platform: Mapped[StreamPlatform] = mapped_column(
+        Enum(StreamPlatform, name="stream_platform"), nullable=False
+    )
+    # Whose chat the avatar reads (the user's Twitch channel login).
+    channel: Mapped[str] = mapped_column(String(100), nullable=False)
+    # RTMP stream key: whoever has it can broadcast as the channel, so
+    # Fernet-encrypted and never returned to the client.
+    encrypted_stream_key: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    # Who the avatar is, what the channel is about, how it talks.
+    persona: Mapped[str] = mapped_column(String(4000), nullable=False)
+    # What to talk about when chat is quiet, one topic per line.
+    idle_topics: Mapped[str] = mapped_column(String(4000), nullable=False, default="")
+    # Words the avatar must never say (on top of the built-in list).
+    blocked_terms: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    avatar_provider: Mapped[str] = mapped_column(String(40), nullable=False)
+    # Provider-specific avatar/voice choice.
+    avatar: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    min_reply_interval_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=15)
+    max_hours: Mapped[int] = mapped_column(Integer, nullable=False, default=24)
+    status: Mapped[StreamStatus] = mapped_column(
+        Enum(StreamStatus, name="stream_status"),
+        nullable=False,
+        default=StreamStatus.draft,
+        index=True,
+    )
+    stop_requested: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    agent_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Started hours already counted against the plan for this run.
+    hours_billed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    stats: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    error_message: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+
+    @property
+    def stream_key_set(self) -> bool:
+        return bool(self.encrypted_stream_key)
+
+
+class StreamAgent(Base):
+    """Last check-in of each stream agent -- the UI says whether a
+    started stream will go live now or wait for a stream machine."""
+
+    __tablename__ = "stream_agents"
+
+    name: Mapped[str] = mapped_column(String(120), primary_key=True)
+    version: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class StreamEvent(Base):
+    """What happened on air: every line the avatar spoke (and to whom),
+    skipped/blocked messages, errors. The user's audit trail of what an
+    AI said on their channel -- and the live feed on the stream page."""
+
+    __tablename__ = "stream_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    stream_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("live_streams.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    # reply | idle | notice | blocked | system | error
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    author: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    message: Mapped[str | None] = mapped_column(String(600), nullable=True)
+    text: Mapped[str] = mapped_column(String(2000), nullable=False)
+    emotion: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), index=True
     )
 
 

@@ -22,7 +22,10 @@ def _clean_tables() -> None:
         # otherwise one test's stored previews leak into the next.
         # montage_agents (DaVinci render agents) isn't user-owned either.
         session.execute(
-            text("TRUNCATE TABLE users, image_template_previews, montage_agents CASCADE")
+            text(
+                "TRUNCATE TABLE users, image_template_previews, montage_agents, "
+                "stream_agents CASCADE"
+            )
         )
         session.commit()
 

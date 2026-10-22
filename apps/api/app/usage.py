@@ -29,6 +29,8 @@ def _kind_label(
         return "аватар-видео HeyGen"
     if event_type is UsageEventType.davinci_montage:
         return "монтажей в DaVinci"
+    if event_type is UsageEventType.stream_hour:
+        return "часов эфира"
     if content_type is None:
         return event_type.value
     return f"{content_type.value} {event_type.value}"
@@ -205,6 +207,7 @@ _USAGE_KINDS: list[tuple[UsageEventType, GenerationContentType | None]] = [
     (UsageEventType.layout_render, None),
     (UsageEventType.byo_avatar_video, None),
     (UsageEventType.davinci_montage, None),
+    (UsageEventType.stream_hour, None),
 ]
 
 

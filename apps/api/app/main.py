@@ -15,10 +15,12 @@ from app.routers import (
     feed,
     google_drive,
     integrations,
+    liveavatar,
     metrics,
     montage,
     posts,
     social_accounts,
+    streams,
     team,
     video_projects,
 )
@@ -46,7 +48,9 @@ app.include_router(ab_tests.router)
 app.include_router(team.router)
 app.include_router(integrations.router)
 app.include_router(google_drive.router)
+app.include_router(liveavatar.router)
 app.include_router(montage.router)
+app.include_router(streams.router)
 
 if get_settings().media_local_dir:
     # Dev-only counterpart of media_storage's local-dir mode.
