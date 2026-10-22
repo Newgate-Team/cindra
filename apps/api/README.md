@@ -56,6 +56,9 @@ TIKTOK_REDIRECT_URI          # https://<домен фронтенда на Verce
 YOUTUBE_CLIENT_ID            # отдельный OAuth-клиент от GOOGLE_CLIENT_ID -- см. .env.example
 YOUTUBE_CLIENT_SECRET
 YOUTUBE_REDIRECT_URI         # https://<домен фронтенда на Vercel>/oauth/youtube/callback
+GOOGLE_DRIVE_CLIENT_ID       # можно тот же OAuth-клиент, что YouTube (+ включить Drive API) -- см. .env.example
+GOOGLE_DRIVE_CLIENT_SECRET
+GOOGLE_DRIVE_REDIRECT_URI    # https://<домен фронтенда на Vercel>/oauth/google-drive/callback; экран согласия -- «In production», иначе токены живут 7 дней
 LINKEDIN_CLIENT_ID
 LINKEDIN_CLIENT_SECRET
 LINKEDIN_REDIRECT_URI        # https://<домен фронтенда на Vercel>/oauth/linkedin/callback

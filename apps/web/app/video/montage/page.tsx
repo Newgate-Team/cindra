@@ -15,6 +15,7 @@ import type {
 
 import { RequireAuth } from "../../components/RequireAuth";
 import { ReviewAndPublish } from "../../components/ReviewAndPublish";
+import { SaveToDriveButton } from "../../components/SaveToDriveButton";
 
 const POLL_MS = 5_000;
 const MAX_CLIPS = 20;
@@ -290,7 +291,10 @@ function MontageCard({ job, accounts }: { job: MontageJob; accounts: SocialAccou
       {job.result_video_url && !publishing && (
         <>
           <video src={job.result_video_url} controls playsInline preload="metadata" style={{ width: "100%", maxHeight: 420 }} />
-          <button type="button" onClick={() => setPublishing(true)}>Опубликовать</button>
+          <div className="list-row-actions">
+            <button type="button" onClick={() => setPublishing(true)}>Опубликовать</button>
+            <SaveToDriveButton url={job.result_video_url} title={job.title} />
+          </div>
         </>
       )}
       {publishing && job.result_video_url && (

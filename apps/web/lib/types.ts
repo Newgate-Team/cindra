@@ -65,7 +65,7 @@ export interface SocialAccount {
   created_at: string;
 }
 
-export type IntegrationProvider = "heygen";
+export type IntegrationProvider = "heygen" | "google_drive";
 
 export interface Integration {
   provider: IntegrationProvider;
@@ -73,6 +73,22 @@ export interface Integration {
   created_at: string;
   // false = a teammate's connection; generations bill their account.
   is_own: boolean;
+  // Google Drive only.
+  folder_url: string | null;
+  auto_save: boolean | null;
+}
+
+export type DriveExportStatus = "queued" | "processing" | "completed" | "failed";
+
+export interface DriveExport {
+  id: string;
+  file_name: string;
+  origin: "generation" | "montage" | "manual";
+  status: DriveExportStatus;
+  web_view_link: string | null;
+  error_message: string | null;
+  created_at: string;
+  completed_at: string | null;
 }
 
 export interface HeyGenAccount {

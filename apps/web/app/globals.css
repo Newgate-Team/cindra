@@ -309,6 +309,7 @@ main {
 
 .list-row-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
@@ -966,4 +967,43 @@ a.list-row {
   height: 100%;
   background: var(--gradient-ember);
   border-radius: 999px;
+}
+
+/* Google Drive: recent saves on the Инструменты card */
+.drive-exports {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 12px;
+  display: grid;
+  gap: 4px;
+  font-size: 14px;
+}
+
+.drive-exports li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: baseline;
+  min-width: 0;
+}
+
+.drive-export-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.drive-save {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.drive-link {
+  align-self: center;
+  font-size: 14px;
+  white-space: nowrap;
 }

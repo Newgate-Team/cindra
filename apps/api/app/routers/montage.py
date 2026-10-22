@@ -8,6 +8,7 @@ MONTAGE_AGENT_TOKEN. Users only ever touch /montage/jobs.
 """
 
 import hmac
+import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -29,6 +30,7 @@ from app.content_pipeline.attachments import AttachmentTooLargeError, read_uploa
 from app.content_pipeline.media_storage import upload_bytes
 from app.db import get_db
 from app.deps import get_current_user
+from app.drive_exports import queue_export
 from app.models import (
     MontageAgent,
     MontageJob,
@@ -53,6 +55,7 @@ from app.teams import visible_user_ids
 from app.usage import check_usage_limit
 
 router = APIRouter(prefix="/montage", tags=["montage"])
+log = logging.getLogger(__name__)
 
 _SIZES = {"9:16": (1080, 1920), "16:9": (1920, 1080), "1:1": (1080, 1080)}
 _FPS = 25
@@ -357,6 +360,20 @@ async def agent_result(
     job.stage = "Готово"
     job.completed_at = _now()
     db.commit()
+    owner = db.get(User, job.user_id)
+    if owner is not None:
+        try:
+            queue_export(
+                db,
+                owner,
+                url=url,
+                label="Монтаж",
+                title=job.title,
+                origin="montage",
+            )
+        except Exception:  # the montage is done; only the Drive copy is lost
+            db.rollback()
+            log.exception("drive auto-save failed to queue for montage %s", job.id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
