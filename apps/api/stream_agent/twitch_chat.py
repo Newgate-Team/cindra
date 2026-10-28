@@ -242,12 +242,15 @@ class ChatReader:
     def _session(self) -> None:
         self._sock = self._connect()
         self._sock.settimeout(1.0)
+        # Silence counts from the connect, not from after the login lines:
+        # read later, the clock could already include time Twitch had to
+        # answer (the cause of a flaky CI test, seen on #194 and #196).
+        last_heard = self._clock()
         self._send("CAP REQ :twitch.tv/tags twitch.tv/commands")
         self._send("PASS SCHMOOPIIE")  # any password: anonymous login
         self._send(f"NICK justinfan{random.randint(10000, 99999)}")
         self._send(f"JOIN #{self.channel}")
         buffer = b""
-        last_heard = self._clock()
         while not self._stop.is_set():
             try:
                 chunk = self._sock.recv(65536)
