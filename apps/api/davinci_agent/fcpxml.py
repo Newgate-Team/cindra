@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import math
 import xml.etree.ElementTree as ET
+from collections.abc import Callable
 from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
@@ -66,7 +67,11 @@ def build_fcpxml(
     fps: int,
     clips: list[Clip],
     music: Music | None = None,
+    media_src: Callable[[Path], str] | None = None,
 ) -> str:
+    """`media_src` turns a file into the asset's src; by default its
+    absolute file:// URL (the agent imports right where it downloaded)."""
+    src = media_src or (lambda path: path.resolve().as_uri())
     if not clips:
         raise ValueError("Монтаж без клипов")
 
@@ -121,7 +126,7 @@ def build_fcpxml(
                 "asset",
                 id=asset_id,
                 name=clip.name,
-                src=clip.path.resolve().as_uri(),
+                src=src(clip.path),
                 start="0s",
                 duration="0s",
                 hasVideo="1",
@@ -140,7 +145,7 @@ def build_fcpxml(
             attrs = {
                 "id": asset_id,
                 "name": clip.name,
-                "src": clip.path.resolve().as_uri(),
+                "src": src(clip.path),
                 "start": "0s",
                 "duration": _rational(clip.info.duration),
                 "hasVideo": "1" if clip.info.has_video else "0",
@@ -172,7 +177,7 @@ def build_fcpxml(
             "asset",
             id="asset_music",
             name="Музыка",
-            src=music.path.resolve().as_uri(),
+            src=src(music.path),
             start="0s",
             duration=_rational(music.info.duration),
             hasAudio="1",

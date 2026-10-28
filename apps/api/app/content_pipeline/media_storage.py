@@ -1,3 +1,4 @@
+import shutil
 import uuid
 from pathlib import Path
 
@@ -45,4 +46,24 @@ def upload_bytes(data: bytes, content_type: str, extension: str) -> str:
         Body=data,
         ContentType=content_type,
     )
+    return f"{settings.r2_public_url_base}/{key}"
+
+
+def upload_file(
+    path: Path, content_type: str, extension: str, *, download_name: str | None = None
+) -> str:
+    """upload_bytes for files too big to hold in memory (a montage
+    package runs to gigabytes): boto3 streams it from disk in parts.
+    `download_name` (ASCII) is what the browser saves it as."""
+    settings = get_settings()
+    key = f"{uuid.uuid4()}.{extension}"
+    if settings.media_local_dir:
+        directory = Path(settings.media_local_dir)
+        directory.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(path, directory / key)
+        return f"{settings.r2_public_url_base.rstrip('/')}/{key}"
+    extra = {"ContentType": content_type}
+    if download_name:
+        extra["ContentDisposition"] = f'attachment; filename="{download_name}"'
+    _client().upload_file(str(path), settings.r2_bucket_name, key, ExtraArgs=extra)
     return f"{settings.r2_public_url_base}/{key}"

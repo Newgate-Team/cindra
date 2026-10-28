@@ -811,6 +811,8 @@ class MontageCreate(BaseModel):
     subtitles_language: Literal["auto", "russian", "english"] = "auto"
     aspect_ratio: Literal["9:16", "16:9", "1:1"] = "9:16"
     title: str | None = Field(default=None, max_length=200)
+    # False: only the downloadable timeline, to edit in one's own DaVinci.
+    render: bool = True
 
 
 class MontageJobOut(BaseModel):
@@ -824,6 +826,10 @@ class MontageJobOut(BaseModel):
     error_message: str | None
     created_at: datetime
     completed_at: datetime | None
+    render: bool
+    package_status: str | None
+    package_url: str | None
+    package_error: str | None
 
     model_config = {"from_attributes": True}
 

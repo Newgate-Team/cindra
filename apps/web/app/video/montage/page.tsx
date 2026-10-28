@@ -132,6 +132,10 @@ function MontageBuilder({ onCreated }: { onCreated: (job: MontageJob) => void })
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
+    await create(true);
+  }
+
+  async function create(render: boolean) {
     setError(null);
     setSubmitting(true);
     try {
@@ -149,6 +153,7 @@ function MontageBuilder({ onCreated }: { onCreated: (job: MontageJob) => void })
           subtitles_language: language,
           aspect_ratio: aspectRatio,
           title: title || null,
+          render,
         },
         token
       );
@@ -264,20 +269,83 @@ function MontageBuilder({ onCreated }: { onCreated: (job: MontageJob) => void })
 
       {uploading && <p className="muted">Загружаем файл…</p>}
       {error && <p className="error">{error}</p>}
-      <button type="submit" disabled={submitting || uploading || clips.length === 0}>
-        {submitting ? "Отправляем…" : "Смонтировать в DaVinci"}
-      </button>
+      <div className="list-row-actions">
+        <button type="submit" disabled={submitting || uploading || clips.length === 0}>
+          {submitting ? "Отправляем…" : "Смонтировать в DaVinci"}
+        </button>
+        <button
+          type="button"
+          className="secondary"
+          disabled={submitting || uploading || clips.length === 0}
+          onClick={() => create(false)}
+        >
+          Только монтажный лист
+        </button>
+      </div>
+      <p className="muted">
+        «Только монтажный лист» — архив с таймлайном и всеми материалами, чтобы смонтировать самому в своём
+        DaVinci Resolve, даже бесплатном. Субтитры в него не входят — их делает DaVinci при рендере.
+      </p>
     </form>
   );
 }
 
-function MontageCard({ job, accounts }: { job: MontageJob; accounts: SocialAccount[] }) {
+function PackageControls({ job, onUpdated }: { job: MontageJob; onUpdated: (job: MontageJob) => void }) {
+  const { token } = useAuth();
+  const [error, setError] = useState<string | null>(null);
+
+  async function request() {
+    setError(null);
+    try {
+      onUpdated(await api.post<MontageJob>(`/montage/jobs/${job.id}/package`, {}, token));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Не удалось собрать архив");
+    }
+  }
+
+  if (job.package_status === "building") {
+    return <p className="muted">Собираем архив с монтажным листом и материалами…</p>;
+  }
+  if (job.package_status === "ready" && job.package_url) {
+    const url = job.package_url;
+    return (
+      <>
+        <button type="button" className="secondary" onClick={() => window.location.assign(url)}>
+          Скачать монтажный лист (.zip)
+        </button>
+        <p className="muted">
+          В DaVinci: File → Import → Timeline… → timeline.fcpxml из архива; когда DaVinci спросит, где клипы, —
+          укажите распакованную папку. Подробно — в инструкции внутри архива.
+        </p>
+      </>
+    );
+  }
+  return (
+    <>
+      {job.package_status === "failed" && <p className="error">{job.package_error ?? "Архив не собрался"}</p>}
+      {error && <p className="error">{error}</p>}
+      <button type="button" className="secondary" onClick={request}>
+        {job.package_status === "failed" ? "Собрать архив заново" : "Скачать монтажный лист для DaVinci"}
+      </button>
+    </>
+  );
+}
+
+function MontageCard({
+  job,
+  accounts,
+  onUpdated,
+}: {
+  job: MontageJob;
+  accounts: SocialAccount[];
+  onUpdated: (job: MontageJob) => void;
+}) {
   const [publishing, setPublishing] = useState(false);
   return (
     <div className="card">
       <p>
         <strong>{job.title ?? `Монтаж из ${job.spec.clips.length} клипов`}</strong>{" "}
-        <span className={`badge ${job.status}`}>{STATUS_LABELS[job.status]}</span>
+        <span className={`badge ${job.status}`}>{job.render ? STATUS_LABELS[job.status] : "монтажный лист"}</span>
       </p>
       {(job.status === "queued" || job.status === "processing") && (
         <>
@@ -306,6 +374,7 @@ function MontageCard({ job, accounts }: { job: MontageJob; accounts: SocialAccou
           targetAccountIds={[]}
         />
       )}
+      {!publishing && <PackageControls job={job} onUpdated={onUpdated} />}
     </div>
   );
 }
@@ -327,7 +396,14 @@ function MontageStudio() {
     api.get<SocialAccount[]>("/social-accounts", token).then(setAccounts).catch(() => setAccounts([]));
   }, [token]);
 
-  const active = jobs?.some((job) => job.status === "queued" || job.status === "processing") ?? false;
+  const active =
+    jobs?.some(
+      (job) => job.status === "queued" || job.status === "processing" || job.package_status === "building"
+    ) ?? false;
+  const replace = useCallback(
+    (updated: MontageJob) => setJobs((current) => current?.map((job) => (job.id === updated.id ? updated : job)) ?? null),
+    []
+  );
   useEffect(() => {
     if (!active) return;
     const timer = setInterval(reload, POLL_MS);
@@ -354,7 +430,7 @@ function MontageStudio() {
       {jobs === null && <p className="muted">Загрузка…</p>}
       {jobs?.length === 0 && <p className="muted">Пока ничего не смонтировано.</p>}
       <div className="variant-grid">
-        {jobs?.map((job) => <MontageCard key={job.id} job={job} accounts={accounts} />)}
+        {jobs?.map((job) => <MontageCard key={job.id} job={job} accounts={accounts} onUpdated={replace} />)}
       </div>
     </>
   );

@@ -338,6 +338,11 @@ export interface MontageJob {
   error_message: string | null;
   created_at: string;
   completed_at: string | null;
+  // false: only the timeline package, edited in the user's own DaVinci.
+  render: boolean;
+  package_status: "building" | "ready" | "failed" | null;
+  package_url: string | null;
+  package_error: string | null;
 }
 
 export interface MontageAgentsStatus {

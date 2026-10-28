@@ -814,6 +814,20 @@ class MontageJob(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
+    # False: "only the timeline" -- the user edits in their own DaVinci
+    # (the free one can import it, it just can't be scripted), so no
+    # agent ever renders it; the job is born completed.
+    render: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true"
+    )
+    # The downloadable package (timeline + media), built once per job by
+    # app.montage_packages: None | "building" | "ready" | "failed".
+    package_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    package_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    package_error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    package_requested_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class MontageAgent(Base):

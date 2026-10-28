@@ -44,7 +44,7 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["app*"]
+include = ["app*", "davinci_agent*"]
 
 [tool.ruff]
 extend-exclude = ["migrations/versions"]
