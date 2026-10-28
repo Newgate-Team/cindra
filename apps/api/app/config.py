@@ -121,6 +121,16 @@ class Settings(BaseSettings):
     twitter_client_id: str = ""
     twitter_client_secret: str = ""
     twitter_redirect_uri: str = "https://cindra-chi.vercel.app/oauth/twitter/callback"
+    # Twitch (dev.twitch.tv console): the streamer connects their account
+    # so the live-stream agent reads chat over EventSub (Twitch's
+    # documented way) instead of anonymous IRC, and can post the avatar's
+    # replies in chat. Redirect URI must be registered verbatim.
+    twitch_client_id: str = ""
+    twitch_client_secret: str = ""
+    twitch_redirect_uri: str = "https://cindra-chi.vercel.app/oauth/twitch/callback"
+    # Dev-only: one base URL standing in for id.twitch.tv and
+    # api.twitch.tv (devtools/twitch_simulator.py). Empty = Twitch.
+    twitch_base_url: str = ""
     # Google Drive (Инструменты): finished images/videos are copied into
     # a "Cindra" folder in the user's own Drive. Scope drive.file only --
     # the app sees just the files it created itself, and it's a

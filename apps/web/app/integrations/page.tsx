@@ -503,6 +503,75 @@ function AvatarVendorSection({
   );
 }
 
+function TwitchSection({ integration, onChanged }: { integration: Integration | null; onChanged: () => void }) {
+  const { token } = useAuth();
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function connect() {
+    setError(null);
+    setBusy(true);
+    try {
+      const { authorization_url } = await api.post<{ authorization_url: string }>(
+        "/integrations/twitch/start",
+        undefined,
+        token
+      );
+      window.location.href = authorization_url;
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Не удалось начать подключение");
+      setBusy(false);
+    }
+  }
+
+  async function disconnect() {
+    setBusy(true);
+    try {
+      await api.delete("/integrations/twitch", token);
+      onChanged();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Не удалось отключить Twitch");
+      setBusy(false);
+    }
+  }
+
+  if (!integration) {
+    return (
+      <>
+        <p className="muted">
+          Аккаунт Twitch, от имени которого эфир читает чат через официальный API Twitch (надёжнее
+          анонимного чтения) и может дублировать ответы аватара сообщениями в чат.
+        </p>
+        {error && <p className="error">{error}</p>}
+        <button type="button" onClick={connect} disabled={busy}>
+          {busy ? "Открываем Twitch…" : "Подключить Twitch"}
+        </button>
+      </>
+    );
+  }
+  return (
+    <>
+      <p>
+        Подключён: <strong>{integration.account_label ?? "аккаунт Twitch"}</strong> · <Link href="/streams">Эфиры →</Link>
+      </p>
+      {!integration.is_own && (
+        <p className="muted">Этот Twitch подключил участник вашей команды — чат читается от его имени.</p>
+      )}
+      {error && <p className="error">{error}</p>}
+      <div className="list-row-actions">
+        <button type="button" className="secondary" onClick={connect} disabled={busy}>
+          Подключить другой аккаунт
+        </button>
+        {integration.is_own && (
+          <button type="button" className="secondary" onClick={disconnect} disabled={busy}>
+            Отключить
+          </button>
+        )}
+      </div>
+    </>
+  );
+}
+
 function IntegrationsManager() {
   const { token } = useAuth();
   const [integrations, setIntegrations] = useState<Integration[] | null>(null);
@@ -563,6 +632,14 @@ function IntegrationsManager() {
               </div>
             </div>
           ))}
+
+          <h2>Twitch — чат эфира</h2>
+          <div className="card">
+            <TwitchSection
+              integration={integrations.find((item) => item.provider === "twitch") ?? null}
+              onChanged={reload}
+            />
+          </div>
 
           <h2>Google Drive — хранилище</h2>
           <div className="card">

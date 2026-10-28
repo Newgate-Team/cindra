@@ -78,6 +78,9 @@ R2_PUBLIC_URL_BASE
 BACKUP_ENCRYPTION_KEY        # см. CIN-160 ниже -- без него ежедневный бэкап падает явно
 MONTAGE_AGENT_TOKEN          # секрет агента DaVinci (davinci_agent/); пусто = монтажи ждут в очереди
 STREAM_AGENT_TOKEN           # секрет агента эфиров (stream_agent/), отдельный от DaVinci; пусто = эфиры ждут в очереди
+TWITCH_CLIENT_ID             # приложение dev.twitch.tv (Confidential) -- чат эфира через EventSub; пусто = чат читается анонимно, ответы в чат не пишутся
+TWITCH_CLIENT_SECRET
+TWITCH_REDIRECT_URI          # https://<домен фронтенда на Vercel>/oauth/twitch/callback
 GEMINI_TTS_MODEL             # голос аватара в эфире; по умолчанию gemini-3.8-flash-lite-tts (сверить со списком моделей Gemini TTS перед деплоем)
 PAYPAL_CLIENT_ID             # live, не sandbox
 PAYPAL_CLIENT_SECRET         # live
@@ -92,6 +95,8 @@ Redirect URI каждой соцсети должен быть зарегист�
 ## Агент эфиров (stream_agent)
 
 Эфир с AI-аватаром (LiveAvatar или Simli — по ключу пользователя) ведёт отдельный процесс на машине, которая кодирует видео (720p30 H.264 ≈ 2–4 ядра CPU на эфир), — не Railway. Он сам забирает запущенные эфиры из API (`/streams/agent/*`, секрет `STREAM_AGENT_TOKEN`), держит сессии LiveAvatar (меняет их до истечения лимита плана — 20/60 мин — в паузе между репликами), читает чат Twitch и шлёт RTMP на `ingest.global-contribute.live-video.net`.
+
+Чат: если стример подключил Twitch в «Инструментах», агент читает его через EventSub WebSocket (`eventsub.wss.twitch.tv`, подписки, рейды, модерация) и, если в эфире включено «Дублировать ответы…», пишет ответы аватара в чат от имени этого аккаунта (`POST /helix/chat/messages`; свои же сообщения, которые Twitch возвращает в ленту, агент не слышит). Токен доступа агент берёт у API (`/streams/agent/{id}/twitch-token`) — refresh-токен остаётся в БД. Без подключения, при отозванном доступе или если EventSub не отвечает несколько минут — чат читается анонимно по IRC, эфир не прерывается.
 
 ```bash
 pip install -e ".[stream-agent]"          # livekit, PyAV (FFmpeg внутри), numpy, aiohttp
@@ -112,7 +117,7 @@ ffmpeg -listen 1 -i rtmp://127.0.0.1:1935/live/<ключ эфира> -c copy rec
 python -m stream_agent --api http://localhost:8000 --token dev --rtmp-url "rtmp://127.0.0.1:1935/live/{key}" --liveavatar-url http://localhost:8767
 ```
 
-Для Simli — `devtools.simli_simulator` на порту 8769 и `--simli-url http://localhost:8769` у агента (ключ `simli_sim_любой`). Дальше в приложении: «Инструменты» → LiveAvatar с ключом `la_sim_любой` → «Эфир» → создать и запустить. Сессии по 2 минуты — смена аватара видна по цвету фона. **Не запускать pytest во время такого прогона**: тесты чистят ту же локальную БД.
+Для Simli — `devtools.simli_simulator` на порту 8769 и `--simli-url http://localhost:8769` у агента (ключ `simli_sim_любой`). Для чата через EventSub — `devtools.twitch_simulator` на порту 8770: API с `TWITCH_BASE_URL=http://localhost:8770 TWITCH_CLIENT_ID=sim-twitch-client TWITCH_CLIENT_SECRET=sim-twitch-secret TWITCH_REDIRECT_URI=http://localhost:3000/oauth/twitch/callback`, агент с `TWITCH_EVENTSUB_URL=ws://localhost:8770/ws TWITCH_HELIX_URL=http://localhost:8770`; сообщения зрителей, рейды и переподключение сессии — `POST /sim/chat`, `/sim/notice`, `/sim/reconnect`, что агент написал в чат — `GET /sim/sent`. Дальше в приложении: «Инструменты» → LiveAvatar с ключом `la_sim_любой` → «Эфир» → создать и запустить. Сессии по 2 минуты — смена аватара видна по цвету фона. **Стенду — своя база** (`createdb cindra_e2e && DATABASE_URL=…/cindra_e2e alembic upgrade head`): каждый тест pytest начинается с `TRUNCATE users … CASCADE`, и прогон тестов на той же базе посреди эфира стирает пользователя и эфир — агент получает 409 и останавливается.
 
 ## Бэкапы
 

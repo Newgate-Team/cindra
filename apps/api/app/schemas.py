@@ -455,6 +455,25 @@ class IntegrationOut(BaseModel):
     auto_save: bool | None = None
 
 
+class TwitchStartOut(BaseModel):
+    authorization_url: str
+
+
+class TwitchConnectRequest(BaseModel):
+    code: str = Field(min_length=1, max_length=2048)
+    state: str = Field(min_length=1, max_length=4096)
+
+
+class StreamTwitchTokenOut(BaseModel):
+    access_token: str
+    client_id: str
+    user_id: str
+    login: str
+    broadcaster_id: str
+    broadcaster_login: str
+    expires_in: int
+
+
 class GoogleDriveStartOut(BaseModel):
     authorization_url: str
 
@@ -894,6 +913,7 @@ class LiveStreamCreate(_StreamFields):
     avatar: StreamAvatarIn
     min_reply_interval_seconds: int = Field(default=15, ge=5, le=300)
     max_hours: int = Field(default=24, ge=1, le=72)
+    post_replies_to_chat: bool = False
 
 
 class LiveStreamUpdate(_StreamFields):
@@ -906,6 +926,7 @@ class LiveStreamUpdate(_StreamFields):
     avatar: StreamAvatarIn | None = None
     min_reply_interval_seconds: int | None = Field(default=None, ge=5, le=300)
     max_hours: int | None = Field(default=None, ge=1, le=72)
+    post_replies_to_chat: bool | None = None
 
 
 class LiveStreamOut(BaseModel):
@@ -923,6 +944,7 @@ class LiveStreamOut(BaseModel):
     avatar: dict[str, Any]
     min_reply_interval_seconds: int
     max_hours: int
+    post_replies_to_chat: bool
     status: str
     stop_requested: bool
     started_at: datetime | None
@@ -980,6 +1002,10 @@ class StreamAgentJobOut(BaseModel):
     min_reply_interval_seconds: int
     max_hours: int
     started_at: datetime
+    # The owner connected Twitch: read chat over EventSub (token via
+    # /streams/agent/{id}/twitch-token), else anonymous IRC.
+    twitch_chat: bool = False
+    post_replies_to_chat: bool = False
 
 
 class StreamAgentHeartbeat(BaseModel):

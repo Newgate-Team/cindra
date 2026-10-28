@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import os
 import queue
 import threading
 import time
@@ -23,6 +24,7 @@ from typing import Any, Protocol
 from stream_agent.api_client import ApiError, StreamApi, StreamLost, TemporaryApiError
 from stream_agent.brain import ChatBrain, Pick
 from stream_agent.twitch_chat import ChatReader
+from stream_agent.twitch_eventsub import EVENTSUB_URL, HELIX_URL, EventSubChatReader
 
 log = logging.getLogger("stream_agent")
 
@@ -85,7 +87,7 @@ class StreamSession:
         self.job = job
         self.id = str(job["id"])
         self._make_stage = make_stage
-        self.chat = chat or ChatReader(job["channel"])
+        self.chat = chat or self._chat_reader(job)
         self.brain = brain or ChatBrain(clock=clock)
         self._clock = clock
         self._heartbeat_seconds = heartbeat_seconds
@@ -156,6 +158,35 @@ class StreamSession:
 
     # -- the loop ---------------------------------------------------------
 
+    def _chat_reader(self, job: dict[str, Any]):
+        if not job.get("twitch_chat"):
+            return ChatReader(job["channel"])
+        return EventSubChatReader(
+            job["channel"],
+            self._twitch_token,
+            ws_url=os.environ.get("TWITCH_EVENTSUB_URL", EVENTSUB_URL),
+            helix_url=os.environ.get("TWITCH_HELIX_URL", HELIX_URL),
+        )
+
+    def _twitch_token(self) -> dict[str, Any]:
+        try:
+            return self.api.twitch_token(self.id)
+        except TemporaryApiError as exc:
+            # Our API or Twitch hiccuped (5xx, network): the reader retries
+            # with backoff instead of giving the chat up for the whole stream.
+            raise ConnectionError(str(exc)) from exc
+
+    def _check_chat(self) -> None:
+        """EventSub gave up (grant revoked, Twitch down for minutes): keep
+        hearing the chat anonymously rather than going deaf."""
+        reason = getattr(self.chat, "failed", None)
+        if not reason:
+            return
+        self._report("error", f"{reason} — чат читается анонимно")
+        self.chat.stop()
+        self.chat = ChatReader(self.job["channel"])
+        self.chat.start()
+
     def _tick(self) -> None:
         now = self._clock()
         if now - self._last_beat >= self._heartbeat_seconds:
@@ -172,6 +203,7 @@ class StreamSession:
                 self.stats.chat_messages += 1
             self.brain.observe(event)
         self.stats.chat_reconnects = self.chat.reconnects
+        self._check_chat()
 
         stage = self._stage
         if stage is None:
@@ -251,6 +283,18 @@ class StreamSession:
         )
         audio = base64.b64decode(reply["audio_b64"]) if reply.get("audio_b64") else None
         stage.speak(reply["say"], reply.get("emotion") or "neutral", audio)
+        # Only answers and thanks go to chat: the idle monologue in a quiet
+        # channel would be a bot line every few seconds -- spam to viewers.
+        if (
+            pick.mode != "idle"
+            and self.job.get("post_replies_to_chat")
+            and hasattr(self.chat, "send")
+        ):
+            # @login, not the display name: an anonymous gift has no user
+            # ("аноним" would ping nobody) and a localized display name
+            # (Japanese, Korean...) doesn't resolve as a mention.
+            mention = f"@{event.user} " if event is not None and event.user else ""
+            self.chat.send(f"{mention}{reply['say']}")
         self._was_speaking = True
         self.stats.replies += 1
 
