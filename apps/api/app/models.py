@@ -43,6 +43,8 @@ class IntegrationProvider(str, enum.Enum):
     liveavatar = "liveavatar"
     # Real-time avatars too, ~10x cheaper per minute than LiveAvatar.
     simli = "simli"
+    # The streamer's own Twitch account: reads chat for live streams.
+    twitch = "twitch"
 
 
 class StreamPlatform(str, enum.Enum):
@@ -708,6 +710,11 @@ class LiveStream(Base):
     avatar: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     min_reply_interval_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=15)
     max_hours: Mapped[int] = mapped_column(Integer, nullable=False, default=24)
+    # Also post each spoken reply as a chat message (needs Twitch
+    # connected) -- viewers who watch muted still see the answer.
+    post_replies_to_chat: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
     status: Mapped[StreamStatus] = mapped_column(
         Enum(StreamStatus, name="stream_status"),
         nullable=False,

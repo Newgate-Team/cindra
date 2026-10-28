@@ -65,7 +65,7 @@ export interface SocialAccount {
   created_at: string;
 }
 
-export type IntegrationProvider = "heygen" | "google_drive" | "liveavatar" | "simli";
+export type IntegrationProvider = "heygen" | "google_drive" | "liveavatar" | "simli" | "twitch";
 
 export interface Integration {
   provider: IntegrationProvider;
@@ -360,6 +360,7 @@ export interface LiveStream {
   avatar: { avatar_id?: string; voice_id?: string | null };
   min_reply_interval_seconds: number;
   max_hours: number;
+  post_replies_to_chat: boolean;
   status: LiveStreamStatus;
   stop_requested: boolean;
   started_at: string | null;

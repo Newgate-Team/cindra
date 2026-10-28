@@ -136,6 +136,14 @@ def test_silent_connection_is_treated_as_dead() -> None:
     twitch = _FakeTwitch()
     now = [0.0]
     reader = ChatReader("cindra", connect=twitch.connect, clock=lambda: now[0], silence_limit=10)
+    send = reader._send
+
+    def send_then_get_preempted(text: str) -> None:
+        send(text)
+        if text.startswith("JOIN"):
+            time.sleep(0.3)  # a busy CI box parks the thread right here
+
+    reader._send = send_then_get_preempted
     reader.start()
     try:
         conn = twitch.accept()

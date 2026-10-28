@@ -64,6 +64,7 @@ interface FormState {
   blocked_terms: string;
   min_reply_interval_seconds: number;
   max_hours: number;
+  post_replies_to_chat: boolean;
 }
 
 function emptyForm(provider: string): FormState {
@@ -79,6 +80,7 @@ function emptyForm(provider: string): FormState {
     blocked_terms: "",
     min_reply_interval_seconds: 15,
     max_hours: 24,
+    post_replies_to_chat: false,
   };
 }
 
@@ -95,6 +97,7 @@ function formFrom(stream: LiveStream): FormState {
     blocked_terms: stream.blocked_terms.join(", "),
     min_reply_interval_seconds: stream.min_reply_interval_seconds,
     max_hours: stream.max_hours,
+    post_replies_to_chat: stream.post_replies_to_chat,
   };
 }
 
@@ -197,11 +200,13 @@ function StreamForm({
   stream,
   providers,
   voices,
+  twitchConnected,
   onSaved,
 }: {
   stream: LiveStream | null;
   providers: StreamProvider[];
   voices: StreamVoice[];
+  twitchConnected: boolean;
   onSaved: (stream: LiveStream) => void;
 }) {
   const { token } = useAuth();
@@ -237,6 +242,7 @@ function StreamForm({
     const offAir = {
       channel: form.channel,
       avatar: { avatar_id: form.avatar_id, voice_id: form.voice_id || null },
+      post_replies_to_chat: form.post_replies_to_chat,
       ...(form.stream_key ? { stream_key: form.stream_key } : {}),
     };
     try {
@@ -379,6 +385,20 @@ function StreamForm({
           />
         </label>
       </div>
+      <label>
+        <input
+          type="checkbox"
+          disabled={onAir || !twitchConnected}
+          checked={form.post_replies_to_chat && twitchConnected}
+          onChange={(e) => set("post_replies_to_chat", e.target.checked)}
+        />
+        Дублировать ответы аватара сообщениями в чат Twitch
+      </label>
+      <p className="muted">
+        {twitchConnected
+          ? "Чат читается через подключённый аккаунт Twitch (официальный API)."
+          : "Чат читается анонимно. Подключите Twitch на странице «Инструменты» — чтение станет надёжнее, и аватар сможет писать в чат."}
+      </p>
       {onAir && (
         <p className="muted">
           В эфире можно менять персону, темы, запрещённые слова и паузу — применится к следующему ответу.
@@ -437,11 +457,13 @@ function StreamCard({
   stream,
   providers,
   voices,
+  twitchConnected,
   onChanged,
 }: {
   stream: LiveStream;
   providers: StreamProvider[];
   voices: StreamVoice[];
+  twitchConnected: boolean;
   onChanged: (stream: LiveStream | null) => void;
 }) {
   const { token } = useAuth();
@@ -515,6 +537,7 @@ function StreamCard({
           stream={stream}
           providers={providers}
           voices={voices}
+          twitchConnected={twitchConnected}
           onSaved={(saved) => {
             setEditing(false);
             onChanged(saved);
@@ -532,6 +555,7 @@ function StreamsManager() {
   const [streams, setStreams] = useState<LiveStream[] | null>(null);
   const [providers, setProviders] = useState<StreamProvider[]>([]);
   const [voices, setVoices] = useState<StreamVoice[]>([]);
+  const [twitchConnected, setTwitchConnected] = useState(false);
   const [agentOnline, setAgentOnline] = useState<boolean | null>(null);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -551,6 +575,10 @@ function StreamsManager() {
     reload();
     api.get<StreamProvider[]>("/streams/providers", token).then(setProviders).catch(() => undefined);
     api.get<StreamVoice[]>("/streams/voices", token).then(setVoices).catch(() => undefined);
+    api
+      .get<{ provider: string }[]>("/integrations", token)
+      .then((items) => setTwitchConnected(items.some((item) => item.provider === "twitch")))
+      .catch(() => undefined);
   }, [reload, token]);
 
   // Status, uptime and counters move while a stream is on air.
@@ -600,6 +628,7 @@ function StreamsManager() {
                 stream={null}
                 providers={providers}
                 voices={voices}
+                twitchConnected={twitchConnected}
                 onSaved={(stream) => {
                   setCreating(false);
                   setStreams((current) => [stream, ...(current ?? [])]);
@@ -617,6 +646,7 @@ function StreamsManager() {
               stream={stream}
               providers={providers}
               voices={voices}
+              twitchConnected={twitchConnected}
               onChanged={(next) => replace(stream.id, next)}
             />
           ))}
