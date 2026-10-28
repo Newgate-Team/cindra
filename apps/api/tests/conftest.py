@@ -6,15 +6,32 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.celery_app import celery_app
-from app.db import SessionLocal
+from app.db import SessionLocal, engine
 from app.main import app
 from app.models import Subscription, User
 
 celery_app.conf.update(task_always_eager=True, task_eager_propagates=True)
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _test_database_only() -> None:
+    # Every test starts by truncating users. Without DATABASE_URL in the
+    # environment that hits the dev database from .env -- a pytest run in
+    # the middle of a live check wiped the user and the running stream
+    # (2026-10-22, 2026-10-28). Stop before the first TRUNCATE instead.
+    name = engine.url.database or ""
+    if "test" not in name:
+        pytest.exit(
+            f"pytest очищает таблицы перед каждым тестом, а DATABASE_URL указывает на «{name}». "
+            "Нужна отдельная база с «test» в имени, например: "
+            "createdb cindra_test && DATABASE_URL=postgresql+psycopg://cindra:cindra@localhost:5433/"
+            "cindra_test alembic upgrade head, затем тот же DATABASE_URL=… pytest",
+            returncode=4,
+        )
+
+
 @pytest.fixture(autouse=True)
-def _clean_tables() -> None:
+def _clean_tables(_test_database_only: None) -> None:
     with SessionLocal() as session:
         # Everything user-owned goes with the cascade. image_template
         # _previews (CIN-150) is keyed by template id and has no FK to

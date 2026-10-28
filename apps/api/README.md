@@ -16,7 +16,12 @@ Health-check: `GET /health`.
 
 ## Тесты и линт
 
+Тесты чистят таблицы перед каждым тестом, поэтому идут на отдельной базе — с `test` в имени, иначе pytest остановится сам, не тронув данные (dev-база из `.env` им не подходит):
+
 ```bash
+docker compose -f ../../infra/docker-compose.yml exec postgres createdb -U cindra cindra_test   # один раз
+export DATABASE_URL=postgresql+psycopg://cindra:cindra@localhost:5433/cindra_test
+alembic upgrade head   # после каждой новой миграции
 pytest
 ruff check .
 ```

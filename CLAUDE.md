@@ -39,11 +39,11 @@ cd apps/web && npm ci && npm run dev
 ## Проверки перед коммитом
 
 ```bash
-cd apps/api && ruff check . && pytest
+cd apps/api && ruff check . && DATABASE_URL=postgresql+psycopg://cindra:cindra@localhost:5433/cindra_test pytest
 cd apps/web && npm run lint && npm run build
 ```
 
-Тесты требуют поднятого Postgres. Если 5433 занят другим проектом, поднимите контейнер на свободном порту и передайте `DATABASE_URL` переменной окружения — весь набор тестов от этого не зависит.
+Тесты требуют поднятого Postgres и **отдельной базы с `test` в имени** (`createdb cindra_test` + `alembic upgrade head` с тем же `DATABASE_URL`): каждый тест начинается с `TRUNCATE users … CASCADE`, и на dev-базе из `.env` conftest остановит прогон сам. Если 5433 занят другим проектом, поднимите контейнер на свободном порту и передайте `DATABASE_URL` переменной окружения — весь набор тестов от этого не зависит.
 
 ## Как здесь принято работать
 
