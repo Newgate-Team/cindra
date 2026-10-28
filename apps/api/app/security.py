@@ -230,6 +230,33 @@ def decode_youtube_oauth_state(token: str) -> uuid.UUID:
     return uuid.UUID(payload["sub"])
 
 
+TWITCH_OAUTH_STATE_EXPIRE_MINUTES = 10
+_TWITCH_OAUTH_STATE_TYPE = "twitch_oauth_state"
+
+
+def create_twitch_oauth_state(user_id: uuid.UUID) -> str:
+    """Same CSRF reasoning as create_tiktok_oauth_state: without it a
+    victim could be handed someone else's code and stream with *their*
+    chat connection."""
+    settings = get_settings()
+    expire = datetime.now(UTC) + timedelta(minutes=TWITCH_OAUTH_STATE_EXPIRE_MINUTES)
+    payload = {
+        "sub": str(user_id),
+        "nonce": uuid.uuid4().hex,
+        "exp": expire,
+        "typ": _TWITCH_OAUTH_STATE_TYPE,
+    }
+    return jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
+
+
+def decode_twitch_oauth_state(token: str) -> uuid.UUID:
+    settings = get_settings()
+    payload = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
+    if payload.get("typ") != _TWITCH_OAUTH_STATE_TYPE:
+        raise jwt.InvalidTokenError("not a twitch_oauth_state token")
+    return uuid.UUID(payload["sub"])
+
+
 GOOGLE_DRIVE_OAUTH_STATE_EXPIRE_MINUTES = 10
 _GOOGLE_DRIVE_OAUTH_STATE_TYPE = "google_drive_oauth_state"
 

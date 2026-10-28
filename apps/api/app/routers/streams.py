@@ -33,6 +33,8 @@ from app.db import get_db
 from app.deps import get_current_user
 from app.integrations import find_integration, get_secret
 from app.models import (
+    Integration,
+    IntegrationProvider,
     LiveStream,
     StreamAgent,
     StreamEvent,
@@ -56,10 +58,12 @@ from app.schemas import (
     StreamProviderOut,
     StreamReplyOut,
     StreamReplyRequest,
+    StreamTwitchTokenOut,
     StreamVoiceOut,
 )
 from app.teams import visible_user_ids
 from app.token_crypto import decrypt_token, encrypt_token
+from app.tool_integrations import twitch
 from app.usage import check_usage_limit
 
 router = APIRouter(prefix="/streams", tags=["streams"])
@@ -123,6 +127,7 @@ def create_stream(
         avatar=payload.avatar.model_dump(),
         min_reply_interval_seconds=payload.min_reply_interval_seconds,
         max_hours=payload.max_hours,
+        post_replies_to_chat=payload.post_replies_to_chat,
         stats={},
     )
     db.add(stream)
@@ -405,6 +410,8 @@ def agent_claim(
             min_reply_interval_seconds=stream.min_reply_interval_seconds,
             max_hours=stream.max_hours,
             started_at=stream.started_at,
+            twitch_chat=find_integration(db, owner, IntegrationProvider.twitch) is not None,
+            post_replies_to_chat=stream.post_replies_to_chat,
         )
 
 
@@ -569,6 +576,59 @@ def agent_reply(
         reaction=reply.reaction,
         audio_b64=base64.b64encode(audio).decode("ascii"),
         sample_rate=SPEECH_SAMPLE_RATE,
+    )
+
+
+@router.post("/agent/{stream_id}/twitch-token", response_model=StreamTwitchTokenOut)
+def agent_twitch_token(
+    stream_id: uuid.UUID,
+    hello: StreamAgentHello,
+    _: None = Depends(require_stream_agent),
+    db: Session = Depends(get_db),
+) -> StreamTwitchTokenOut:
+    """A fresh user access token for reading (and posting to) chat. The
+    refresh token never leaves the API; Twitch may rotate it on every
+    refresh, so the row is locked and the new one saved."""
+    stream = _agents_stream(db, stream_id, hello.agent_name)
+    channel = stream.channel
+    owner = db.get(User, stream.user_id)
+    found = find_integration(db, owner, IntegrationProvider.twitch)
+    if found is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Twitch не подключён")
+    integration = db.get(Integration, found.id, with_for_update=True, populate_existing=True)
+    try:
+        token = twitch.refresh(get_secret(integration))
+        if token.get("refresh_token") and token["refresh_token"] != get_secret(integration):
+            integration.encrypted_secret = encrypt_token(token["refresh_token"])
+        db.commit()
+        # Twitch requires validating tokens at start and hourly; the agent
+        # asks for a new one at least hourly, so validating here covers it.
+        twitch.validate(token["access_token"])
+        broadcaster = twitch.get_user(token["access_token"], channel)
+    except twitch.TwitchAuthError:
+        db.rollback()
+        _log_failure(db, stream_id, hello.agent_name,
+                     "Twitch отозвал доступ к чату — подключите Twitch заново; пока чат "
+                     "читается анонимно")
+        # 403, not 409: the agent reads 409 as "this stream went to
+        # another agent" and would stop broadcasting.
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Twitch отозвал доступ") from None
+    except twitch.TwitchError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                            detail=str(exc)) from exc
+    if broadcaster is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail=f"Канал Twitch «{channel}» не найден")
+    return StreamTwitchTokenOut(
+        access_token=token["access_token"],
+        client_id=get_settings().twitch_client_id,
+        user_id=integration.settings.get("user_id", ""),
+        login=integration.settings.get("login", ""),
+        broadcaster_id=broadcaster["id"],
+        broadcaster_login=broadcaster["login"],
+        expires_in=int(token.get("expires_in") or 0),
     )
 
 

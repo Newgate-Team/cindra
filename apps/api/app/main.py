@@ -23,6 +23,7 @@ from app.routers import (
     social_accounts,
     streams,
     team,
+    twitch,
     video_projects,
 )
 
@@ -51,6 +52,7 @@ app.include_router(integrations.router)
 app.include_router(google_drive.router)
 app.include_router(liveavatar.router)
 app.include_router(simli.router)
+app.include_router(twitch.router)
 app.include_router(montage.router)
 app.include_router(streams.router)
 

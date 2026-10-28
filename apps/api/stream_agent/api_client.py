@@ -111,6 +111,15 @@ class StreamApi:
             {"agent_name": self.agent_name, "kind": kind, "text": text[:2000]},
         )
 
+    def twitch_token(self, stream_id: str) -> dict[str, Any]:
+        """A fresh Twitch user token for this stream's chat (the API keeps
+        the refresh token). ApiError when Twitch isn't (or no longer is)
+        connected."""
+        return self._call(
+            "POST", f"/streams/agent/{stream_id}/twitch-token",
+            {"agent_name": self.agent_name, "version": self._version},
+        )
+
     def finish(self, stream_id: str, error: str | None = None) -> None:
         self._call(
             "POST", f"/streams/agent/{stream_id}/finish",

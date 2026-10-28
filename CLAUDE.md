@@ -73,6 +73,7 @@ cd apps/web && npm run lint && npm run build
 | Reddit | `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` (тип «web app») из reddit.com/prefs/apps |
 | X (Twitter) | `TWITTER_CLIENT_ID` / `TWITTER_CLIENT_SECRET` — confidential-клиент; уточнить, что тариф X API включает write-доступ (с 2023 бесплатный не включает) |
 | Эфир с AI-аватаром | у пользователя — свой ключ LiveAvatar (app.liveavatar.com, отдельный от HeyGen API) **или Simli** (app.simli.com, ≈$13/сутки 24/7 против ≈$130 у LiveAvatar) и ключ трансляции Twitch; у нас — `STREAM_AGENT_TOKEN` и машина с агентом `stream_agent/`. Сессия LiveAvatar ≤20 мин (Essential) / ≤60 мин (Business) — агент ротирует их, 24/7 стоит у пользователя ≈$130/сутки кредитами LiveAvatar. Голос — Gemini TTS (`GEMINI_TTS_MODEL`, нужен `GEMINI_API_KEY`). Проверяется симуляторами `devtools/liveavatar_simulator.py` и `devtools/simli_simulator.py` (+ LiveKit в Docker для видео, см. apps/api/README «Агент эфиров») |
+| Чат эфира через официальный API Twitch | `TWITCH_CLIENT_ID` / `TWITCH_CLIENT_SECRET` — приложение на dev.twitch.tv (Confidential, redirect `…/oauth/twitch/callback`). Без него чат читается анонимно по IRC (подписки и рейды тоже видны), но аватар не может писать ответы в чат. Проверяется симулятором `devtools/twitch_simulator.py` |
 | Оплата | реальные ключи и планы PayPal |
 | Генерация | `GEMINI_API_KEY` (учтите: API проверяет геолокацию запроса) |
 | Длинные ролики | `FAL_KEY` (fal.ai) — без него «Полное авто» в студии генерирует через Veo, а не Seedance (CIN-144) |
