@@ -8,6 +8,8 @@ media), WAV, MP3, and PNG/JPEG/WebP stills.
 
 from __future__ import annotations
 
+import mmap
+import os
 import struct
 from dataclasses import dataclass
 from fractions import Fraction
@@ -28,7 +30,17 @@ class MediaInfo:
 
 
 def probe(path: Path) -> MediaInfo:
-    data = path.read_bytes()
+    # Mapped, not read whole: the API's timeline package probes clips of
+    # up to hundreds of MB too, and only headers (and MP3 frame headers)
+    # are ever touched.
+    with path.open("rb") as handle:
+        if os.fstat(handle.fileno()).st_size == 0:
+            raise UnsupportedMediaError(f"{path.name}: неподдерживаемый формат файла")
+        with mmap.mmap(handle.fileno(), 0, access=mmap.ACCESS_READ) as data:
+            return _probe(path, data)
+
+
+def _probe(path: Path, data) -> MediaInfo:
     head = data[:16]
     if head[4:8] in (b"ftyp", b"moov", b"mdat", b"free", b"wide", b"skip"):
         return _probe_isobmff(data)

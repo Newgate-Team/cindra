@@ -25,6 +25,7 @@ from fastapi import (
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
+from app import montage_packages
 from app.config import get_settings
 from app.content_pipeline.attachments import AttachmentTooLargeError, read_upload_capped
 from app.content_pipeline.media_storage import upload_bytes
@@ -125,17 +126,34 @@ def create_montage(
     # usage row and the job commit together (CIN-158 lock only spans
     # local DB work).
     check_usage_limit(db, current_user, UsageEventType.davinci_montage, for_update=True)
-    job = MontageJob(
-        user_id=current_user.id,
-        status=MontageStatus.queued,
-        title=payload.title,
-        spec=spec,
-        stage="В очереди на монтаж",
-    )
+    if payload.render:
+        job = MontageJob(
+            user_id=current_user.id,
+            status=MontageStatus.queued,
+            title=payload.title,
+            spec=spec,
+            stage="В очереди на монтаж",
+        )
+    else:
+        # Nothing for an agent to render -- born completed, so no agent
+        # ever claims it; the package below is the whole result.
+        job = MontageJob(
+            user_id=current_user.id,
+            status=MontageStatus.completed,
+            title=payload.title,
+            spec=spec,
+            stage="Монтажный лист",
+            progress=100,
+            render=False,
+            completed_at=_now(),
+        )
     db.add(job)
     db.add(UsageEvent(user_id=current_user.id, event_type=UsageEventType.davinci_montage))
     db.commit()
     db.refresh(job)
+    if not payload.render:
+        montage_packages.request(db, job)
+        db.refresh(job)
     return job
 
 
@@ -208,6 +226,20 @@ def get_montage(
     db: Session = Depends(get_db),
 ) -> MontageJob:
     return _visible_job(db, job_id, current_user)
+
+
+@router.post("/jobs/{job_id}/package", response_model=MontageJobOut)
+def request_package(
+    job_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> MontageJob:
+    """The timeline + media as a zip to finish in one's own DaVinci.
+    Free: the montage itself was already paid for; built once per job."""
+    job = _visible_job(db, job_id, current_user)
+    montage_packages.request(db, job)
+    db.refresh(job)
+    return job
 
 
 @router.get("/agents/status", response_model=MontageAgentsStatusOut)

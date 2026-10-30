@@ -33,7 +33,7 @@ ruff check .
 | Сервис | Root directory | Start Command | Примечание |
 |---|---|---|---|
 | API | `apps/api` | (по умолчанию из `Dockerfile`/`railway.toml`) | `alembic upgrade head` + uvicorn. **Healthcheck Path `/health` -- задать вручную в Settings этого сервиса** (Dashboard-оверрайд, не в `railway.toml`, см. CIN-92: файл общий для всех трёх сервисов, worker/beat не слушают HTTP и падают на healthcheck, если он задан в файле) |
-| Worker | `apps/api` | `celery -A app.celery_app worker --loglevel=info` | тот же образ, Custom Start Command в Dashboard, healthcheck НЕ задавать |
+| Worker | `apps/api` | `celery -A app.celery_app worker --loglevel=info` | тот же образ, Custom Start Command в Dashboard, healthcheck НЕ задавать. Собирает в т.ч. архивы «Монтажный лист для DaVinci» (`app/montage_packages.py`) во временной папке — до ~2 ГБ диска на архив, пока он собирается |
 | Beat | `apps/api` | `celery -A app.celery_app beat --loglevel=info` | тот же образ, Custom Start Command в Dashboard, healthcheck НЕ задавать; **не может быть на засыпающем тарифе** -- отвечает за запланированные публикации и ежедневный бэкап БД (см. "Бэкапы" ниже) |
 
 Плюс managed-аддоны Postgres и Redis (Railway создаёт `DATABASE_URL`/`REDIS_URL`-совместимые переменные автоматически при подключении аддона -- сверить с именами, которые ждёт `config.py`, при необходимости смэпить вручную).

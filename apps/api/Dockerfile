@@ -6,6 +6,9 @@ WORKDIR /app
 # image -- no build-essential/libpq-dev needed, keeps the image small.
 COPY pyproject.toml ./
 COPY app ./app
+# The timeline package (app/montage_packages.py) builds its FCPXML with
+# the render agent's own code -- one builder for both, stdlib only.
+COPY davinci_agent ./davinci_agent
 COPY migrations ./migrations
 COPY alembic.ini ./
 
