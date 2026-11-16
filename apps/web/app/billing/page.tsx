@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ApiError, api } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
+import { TIER_FEATURES, TIER_NAME, TIER_ORDER, TIER_PRICE } from "@/lib/plans";
 import type { Subscription, SubscriptionTier, Team } from "@/lib/types";
 
 import { RequireAuth } from "../components/RequireAuth";
@@ -12,27 +13,6 @@ const TIER_LABELS: Record<string, string> = {
   free: "Free",
   pro: "Pro ($19/мес)",
   business: "Business ($100/мес)",
-};
-
-// Grid rendering for the tier-comparison cards below -- kept as
-// separate lookup tables (rather than reusing/reparsing TIER_LABELS)
-// so the numbers stay a direct, readable mirror of app/plans.py's
-// real PLAN_LIMITS (free: 20 text/3 image/0 video, 10 publications,
-// 1 account; pro/business already matched what the upgrade copy
-// below said before this page was restyled).
-const TIER_ORDER: SubscriptionTier[] = ["free", "pro", "business"];
-const TIER_NAME: Record<SubscriptionTier, string> = { free: "Free", pro: "Pro", business: "Business" };
-const TIER_PRICE: Record<SubscriptionTier, string> = { free: "0 $", pro: "19 $", business: "100 $" };
-const TIER_FEATURES: Record<SubscriptionTier, string[]> = {
-  free: ["20 текстов, 3 фото в месяц", "10 публикаций в месяц", "1 подключённый аккаунт"],
-  pro: ["300 текстов, 60 фото, 6 видео в месяц", "Без лимита публикаций", "Без лимита аккаунтов"],
-  business: [
-    "600 текстов, 150 фото, 55 видео в месяц",
-    // CIN-146: the long-clip counter is separate from the video quota
-    "3 длинных AI-ролика со звуком в месяц",
-    "Без лимита публикаций",
-    "Без лимита аккаунтов",
-  ],
 };
 
 const PAYPAL_CLIENT_ID = process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID ?? "";

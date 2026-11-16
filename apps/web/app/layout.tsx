@@ -7,17 +7,22 @@
 // Each weight file below already includes latin + cyrillic (and other)
 // unicode-range subsets in one file -- the browser only fetches the
 // subset it actually needs per character on the page.
-import "@fontsource/ibm-plex-sans/400.css";
-import "@fontsource/ibm-plex-sans/500.css";
-import "@fontsource/ibm-plex-sans/600.css";
-import "@fontsource/ibm-plex-sans/700.css";
+// Inter for text, Manrope for headings and numbers (the redesign).
+import "@fontsource/inter/400.css";
+import "@fontsource/inter/500.css";
+import "@fontsource/inter/600.css";
+import "@fontsource/inter/700.css";
+import "@fontsource/manrope/600.css";
+import "@fontsource/manrope/700.css";
+import "@fontsource/manrope/800.css";
 import "./globals.css";
 
 import { AuthProvider } from "@/lib/auth-context";
 
+import { AppShell } from "./components/AppShell";
 import { EmailVerificationBanner } from "./components/EmailVerificationBanner";
 import { Footer } from "./components/Footer";
-import { NavBar } from "./components/NavBar";
+
 
 export const metadata = {
   title: "Cindra",
@@ -33,14 +38,11 @@ export default function RootLayout({
     <html lang="ru">
       <body>
         <AuthProvider>
-          <div className="app-shell">
-            <NavBar />
-            <div className="app-content">
-              <EmailVerificationBanner />
-              <main>{children}</main>
-              <Footer />
-            </div>
-          </div>
+          <AppShell>
+            <EmailVerificationBanner />
+            <main>{children}</main>
+            <Footer />
+          </AppShell>
         </AuthProvider>
       </body>
     </html>

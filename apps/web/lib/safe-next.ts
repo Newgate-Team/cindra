@@ -9,7 +9,7 @@
  * to //evil.example, which Next.js then navigates to as an external URL. */
 const BASE = "http://cindra.invalid";
 
-export function safeNext(next: string | null, fallback = "/generate"): string {
+export function safeNext(next: string | null, fallback = "/"): string {
   if (!next) return fallback;
   let url: URL;
   try {

@@ -186,6 +186,22 @@ export function GenerationForm({
     api.get<SocialAccount[]>("/social-accounts", token).then(setAccounts);
   }, [token]);
 
+  // The dashboard's "Что создадим сегодня?" box hands over its idea as
+  // ?topic= (and ?format=image for the picture chip). Read once: a ref
+  // guards against the effect re-running with a fresh excludeContentTypes
+  // array each render and overwriting what the user has typed since.
+  const prefilled = useRef(false);
+  useEffect(() => {
+    if (prefilled.current) return;
+    prefilled.current = true;
+    const params = new URLSearchParams(window.location.search);
+    const idea = params.get("topic");
+    if (idea) setTopic(idea.slice(0, 5000));
+    if (params.get("format") === "image" && !lockedContentType && !excludeContentTypes?.includes("image")) {
+      setContentType("image");
+    }
+  }, [lockedContentType, excludeContentTypes]);
+
   useEffect(() => {
     // Best-effort: if the catalog fails to load, the select simply
     // stays hidden and generation works template-less as before.
