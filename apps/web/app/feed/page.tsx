@@ -1,5 +1,7 @@
 "use client";
 
+import { Sparkles } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { ApiError, api } from "@/lib/api";
@@ -41,29 +43,49 @@ function FeedList() {
     <>
       <div className="page-header">
         <div>
-          <h1>Лента</h1>
-          {items !== null && (
-            <p className="muted">{total > 0 ? `${total} публикаций от всех пользователей` : "Пока никто ничего не сгенерировал"}</p>
-          )}
+          <h1>Создано с Cindra</h1>
+          <p className="muted">
+            {items !== null && total > 0
+              ? `Идеи сообщества, которые вдохновляют · ${total}`
+              : "Идеи сообщества, которые вдохновляют."}
+          </p>
         </div>
       </div>
       {error && <p className="error">{error}</p>}
-      {items === null && !error && <p className="muted">Загрузка…</p>}
+      {items === null && !error && (
+        <div className="grid three" aria-busy="true">
+          <div className="skeleton" />
+          <div className="skeleton" />
+          <div className="skeleton" />
+        </div>
+      )}
+      {items && items.length === 0 && (
+        <section className="panel empty">
+          <span className="tile" aria-hidden="true">
+            <Sparkles size={26} />
+          </span>
+          <h2>Пока здесь пусто</h2>
+          <p className="muted">Когда участники сообщества сделают первые работы, они появятся в ленте.</p>
+        </section>
+      )}
       {items && items.length > 0 && (
         <>
           <div className="feed-grid">
             {items.map((item) => (
-              <div key={item.id} className="card">
+              <article key={item.id} className="work feed-item">
                 {item.image_url && (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={item.image_url} alt={item.caption} style={{ maxWidth: "100%", borderRadius: 8 }} />
+                  <img src={item.image_url} alt={item.caption} className="post-media" />
                 )}
-                {item.video_url && (
-                  <video src={item.video_url} controls style={{ maxWidth: "100%", borderRadius: 8 }} />
-                )}
-                <p>{item.caption}</p>
-                <p className="muted">{formatDate(item.created_at)}</p>
-              </div>
+                {item.video_url && <video src={item.video_url} controls className="post-media" />}
+                <div className="work-meta feed-meta">
+                  <p>{item.caption}</p>
+                  <small>{formatDate(item.created_at)}</small>
+                  <Link className="button-link secondary" href={`/generate?topic=${encodeURIComponent(item.caption.slice(0, 500))}`}>
+                    Сделать похожее
+                  </Link>
+                </div>
+              </article>
             ))}
           </div>
           <div className="pagination">

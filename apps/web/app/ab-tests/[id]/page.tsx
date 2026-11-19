@@ -1,5 +1,6 @@
 "use client";
 
+import { Trophy } from "lucide-react";
 import { useParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
@@ -81,61 +82,67 @@ function ABTestView() {
   }
 
   if (error) return <p className="error">{error}</p>;
-  if (!test) return <p className="muted">Загрузка…</p>;
+  if (!test) return <div className="skeleton" aria-busy="true" />;
 
   const winner = test.variants.find((v) => v.id === test.winner_generation_job_id) ?? null;
+
+  const letters = "ABCDEFGH";
 
   return (
     <>
       <div className="page-header">
         <div>
-          <h1>A/B тест</h1>
+          <h1>Найдите сильную идею</h1>
           <p className="muted">{test.topic}</p>
         </div>
       </div>
 
-      <div className="tile-grid">
+      <div className={`variant-cols n${test.variants.length}`}>
         {test.variants.map((variant, index) => {
           const isWinner = variant.id === test.winner_generation_job_id;
           return (
-            <div key={variant.id} className={`card${isWinner ? " tier-card current" : ""}`}>
-              <div className="tile-header">
-                <div className="tile-header-body">
-                  <strong>Вариант {index + 1}</strong>
-                </div>
-                <span className={`badge ${variant.status}`}>
-                  {STATUS_LABELS[variant.status] ?? variant.status}
+            <section key={variant.id} className={`panel variant${isWinner ? " winner" : ""}`}>
+              <div className="section-head">
+                <span className="variant-letter" aria-hidden="true">
+                  {letters[index] ?? index + 1}
                 </span>
+                {isWinner ? (
+                  <span className="tag green">
+                    <Trophy size={12} aria-hidden="true" /> Победитель
+                  </span>
+                ) : (
+                  <span className={`badge ${variant.status}`}>{STATUS_LABELS[variant.status] ?? variant.status}</span>
+                )}
               </div>
               {variant.status === "completed" && (
                 <>
-                  <p>{variant.output_payload?.text}</p>
-                  {isWinner ? (
-                    <span className="badge active">Выбран как победитель</span>
-                  ) : (
+                  <p className="variant-text">{variant.output_payload?.text}</p>
+                  {!isWinner && (
                     <button
+                      type="button"
                       className="secondary"
                       onClick={() => pickWinner(variant.id)}
                       disabled={settingWinner !== null}
                     >
-                      {settingWinner === variant.id ? "Выбираем…" : "Выбрать этот вариант"}
+                      {settingWinner === variant.id ? "Выбираем…" : `Выбрать вариант ${letters[index] ?? index + 1}`}
                     </button>
                   )}
                 </>
               )}
+              {(variant.status === "queued" || variant.status === "processing") && (
+                <div className="skeleton" aria-busy="true" />
+              )}
               {(variant.status === "failed" || variant.status === "flagged") && (
                 <p className="error">{variant.error_message}</p>
               )}
-            </div>
+            </section>
           );
         })}
       </div>
 
       {winner && winner.output_payload?.text && (
-        <div className="card">
-          <div className="tile-header-body">
-            <strong>Публикация победителя</strong>
-          </div>
+        <section className="panel section">
+          <h2>Опубликовать победителя</h2>
           <ReviewAndPublish
             generatedText={winner.output_payload.text}
             generationJobId={winner.id}
@@ -144,7 +151,7 @@ function ABTestView() {
             accounts={accounts}
             targetAccountIds={[]}
           />
-        </div>
+        </section>
       )}
     </>
   );

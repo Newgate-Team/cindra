@@ -15,11 +15,13 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState, type CSSProperties, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
-import type { AnalyticsSummary, Page, Post, SocialAccount, SocialPlatform, UsageLimitStat } from "@/lib/types";
+import type { AnalyticsSummary, Page, Post, SocialAccount, SocialPlatform } from "@/lib/types";
+
+import { Metric, Ring, usageColor } from "./Widgets";
 
 const PLATFORM_NAMES: Record<SocialPlatform, string> = {
   telegram: "Telegram",
@@ -48,14 +50,6 @@ const FORMATS: FormatChip[] = [
   { id: "montage", label: "Монтаж", icon: Clapperboard, href: "/video/montage" },
 ];
 
-// A ring's colour follows what it counts, the same colours the sections wear.
-function usageColor(stat: UsageLimitStat): string {
-  if (stat.content_type === "image") return "#ed4c88";
-  if (stat.content_type === "video") return "#ef9651";
-  if (stat.content_type === "text") return "#7c5cff";
-  return "#14a995";
-}
-
 function greeting(): string {
   const hour = new Date().getHours();
   if (hour < 5) return "Доброй ночи";
@@ -78,30 +72,6 @@ function whenLabel(iso: string): string {
 function snippet(text: string, max = 70): string {
   const clean = text.replace(/\s+/g, " ").trim();
   return clean.length > max ? `${clean.slice(0, max - 1)}…` : clean || "Без текста";
-}
-
-function Ring({ value, of, color }: { value: number; of: number; color: string }) {
-  const percent = of > 0 ? Math.min(100, Math.round((value / of) * 100)) : 0;
-  // Amber from 80% and red at the limit: the colour warns before the 402 does.
-  const tone = percent >= 100 ? "#e5484d" : percent >= 80 ? "#f59e0b" : color;
-  return (
-    <span className="ring" style={{ "--p": percent, "--t": tone } as CSSProperties} role="img" aria-label={`${percent}% лимита`}>
-      <b>{value}</b>
-    </span>
-  );
-}
-
-function Metric({ icon: Icon, label, value, note, tint }: { icon: LucideIcon; label: string; value: string; note: string; tint: string }) {
-  return (
-    <div className="metric" style={{ "--soft": tint } as CSSProperties}>
-      <div className="metric-top">
-        <Icon size={16} aria-hidden="true" />
-        {label}
-      </div>
-      <strong className="number">{value}</strong>
-      <span className="metric-note">{note}</span>
-    </div>
-  );
 }
 
 function FirstSteps({ emailVerified, hasAccount, hasPost, hasScheduled }: { emailVerified: boolean; hasAccount: boolean; hasPost: boolean; hasScheduled: boolean }) {
