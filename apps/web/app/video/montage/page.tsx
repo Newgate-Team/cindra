@@ -1,5 +1,6 @@
 "use client";
 
+import { ChevronDown, ChevronUp, Film, Image as ImageIcon, Music, Scissors, Upload, X } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useState, type ChangeEvent, type FormEvent } from "react";
 
@@ -15,6 +16,7 @@ import type {
 
 import { RequireAuth } from "../../components/RequireAuth";
 import { ReviewAndPublish } from "../../components/ReviewAndPublish";
+import { ChipSelect } from "../../components/Studio";
 import { SaveToDriveButton } from "../../components/SaveToDriveButton";
 
 const POLL_MS = 5_000;
@@ -49,10 +51,14 @@ function DaVinciStatus() {
 
   if (!status) return null;
   return status.online ? (
-    <p className="muted">DaVinci-сервер на связи — монтаж начнётся сразу.</p>
+    <p className="status-line">
+      <span className="tag green">DaVinci на связи</span>
+      <span className="muted">Монтаж начнётся сразу.</span>
+    </p>
   ) : (
-    <p className="muted">
-      DaVinci-сервер сейчас не на связи — монтаж встанет в очередь и начнётся, когда он подключится.
+    <p className="status-line">
+      <span className="tag">DaVinci не на связи</span>
+      <span className="muted">Монтаж встанет в очередь и начнётся, когда он подключится.</span>
     </p>
   );
 }
@@ -174,44 +180,83 @@ function MontageBuilder({ onCreated }: { onCreated: (job: MontageJob) => void })
   }
 
   return (
-    <form onSubmit={handleSubmit} className="card">
-      <label>
-        Название (необязательно)
+    <form onSubmit={handleSubmit} className="panel montage-form">
+      <label className="field-block">
+        <span className="field-label">Название (необязательно)</span>
         <input value={title} maxLength={200} onChange={(e) => setTitle(e.target.value)} />
       </label>
 
-      <p>Клипы — в том порядке, в каком пойдут в ролике</p>
-      {clips.length === 0 && <p className="muted">Пока пусто — добавьте аватар-видео или загрузите файл.</p>}
-      {clips.map((clip, index) => (
-        <div key={clip.key} className="list-row-actions" style={{ alignItems: "center", marginBottom: 6 }}>
-          <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {index + 1}. {clip.type === "image" ? "Картинка" : "Видео"}: {clip.name}
-          </span>
-          {clip.type === "image" && (
-            <input
-              type="number"
-              min={0.5}
-              max={30}
-              step={0.5}
-              value={clip.duration_seconds}
-              aria-label="Длительность картинки, сек"
-              style={{ width: 70 }}
-              onChange={(e) =>
-                setClips((current) =>
-                  current.map((c) => (c.key === clip.key ? { ...c, duration_seconds: Number(e.target.value) } : c))
-                )
-              }
-            />
-          )}
-          <button type="button" className="secondary" onClick={() => move(index, -1)} disabled={index === 0} aria-label="Выше">↑</button>
-          <button type="button" className="secondary" onClick={() => move(index, 1)} disabled={index === clips.length - 1} aria-label="Ниже">↓</button>
-          <button type="button" className="secondary" onClick={() => setClips((c) => c.filter((x) => x.key !== clip.key))} aria-label="Убрать">✕</button>
-        </div>
-      ))}
+      <ChipSelect
+        label="Формат"
+        value={aspectRatio}
+        options={[
+          { value: "9:16", label: "9:16 · Reels, Shorts, TikTok" },
+          { value: "16:9", label: "16:9 · YouTube" },
+          { value: "1:1", label: "1:1 · лента" },
+        ]}
+        onChange={setAspectRatio}
+      />
+
+      <div className="field-block">
+        <span className="field-label">Таймлайн — клипы идут в этом порядке</span>
+        {clips.length === 0 ? (
+          <p className="timeline-empty muted">Пока пусто — добавьте аватар-видео или загрузите файл ниже.</p>
+        ) : (
+          <ol className="timeline">
+            {clips.map((clip, index) => (
+              <li key={clip.key} className={`clip ${clip.type}`}>
+                <span className="clip-icon" aria-hidden="true">
+                  {clip.type === "image" ? <ImageIcon size={18} /> : <Film size={18} />}
+                </span>
+                <span className="clip-name">
+                  <b>{String(index + 1).padStart(2, "0")} · {clip.type === "image" ? "Картинка" : "Видео"}</b>
+                  <small title={clip.name}>{clip.name}</small>
+                </span>
+                {clip.type === "image" && (
+                  <input
+                    type="number"
+                    min={0.5}
+                    max={30}
+                    step={0.5}
+                    value={clip.duration_seconds}
+                    aria-label="Длительность картинки, сек"
+                    className="clip-seconds"
+                    onChange={(e) =>
+                      setClips((current) =>
+                        current.map((c) => (c.key === clip.key ? { ...c, duration_seconds: Number(e.target.value) } : c))
+                      )
+                    }
+                  />
+                )}
+                <span className="clip-actions">
+                  <button type="button" className="ghost" onClick={() => move(index, -1)} disabled={index === 0} aria-label="Выше">
+                    <ChevronUp size={16} />
+                  </button>
+                  <button type="button" className="ghost" onClick={() => move(index, 1)} disabled={index === clips.length - 1} aria-label="Ниже">
+                    <ChevronDown size={16} />
+                  </button>
+                  <button type="button" className="ghost" onClick={() => setClips((c) => c.filter((x) => x.key !== clip.key))} aria-label="Убрать">
+                    <X size={16} />
+                  </button>
+                </span>
+              </li>
+            ))}
+          </ol>
+        )}
+        {music && (
+          <div className="music">
+            <Music size={16} aria-hidden="true" />
+            <span>Музыка · {music.name}</span>
+            <button type="button" className="ghost" onClick={() => setMusic(null)} aria-label="Убрать музыку">
+              <X size={16} />
+            </button>
+          </div>
+        )}
+      </div>
 
       {avatarVideos.length > 0 && (
-        <label>
-          Добавить аватар-видео
+        <label className="field-block">
+          <span className="field-label">Добавить аватар-видео</span>
           <select
             value=""
             onChange={(e) => {
@@ -228,50 +273,41 @@ function MontageBuilder({ onCreated }: { onCreated: (job: MontageJob) => void })
           </select>
         </label>
       )}
-      <label>
-        Загрузить клип (видео MP4/MOV или картинка PNG/JPEG/WebP)
-        <input type="file" accept="video/mp4,video/quicktime,image/png,image/jpeg,image/webp" onChange={handleClipFile} disabled={uploading} />
-      </label>
+      <div className="form-row">
+        <label className="drop">
+          <Upload size={16} aria-hidden="true" /> Добавить клип
+          <small>видео MP4/MOV или картинка PNG/JPEG/WebP</small>
+          <input type="file" accept="video/mp4,video/quicktime,image/png,image/jpeg,image/webp" onChange={handleClipFile} disabled={uploading} />
+        </label>
+        <label className="drop">
+          <Music size={16} aria-hidden="true" /> Фоновая музыка
+          <small>MP3, WAV или M4A, необязательно</small>
+          <input type="file" accept="audio/mpeg,audio/wav,audio/mp4,.m4a" onChange={handleMusicFile} disabled={uploading} />
+        </label>
+      </div>
 
       <label>
-        Фоновая музыка (MP3/WAV/M4A, необязательно)
-        <input type="file" accept="audio/mpeg,audio/wav,audio/mp4,.m4a" onChange={handleMusicFile} disabled={uploading} />
-      </label>
-      {music && (
-        <p className="muted">
-          Музыка: {music.name}{" "}
-          <button type="button" className="secondary" onClick={() => setMusic(null)}>убрать</button>
-        </p>
-      )}
-
-      <label>
-        Формат
-        <select value={aspectRatio} onChange={(e) => setAspectRatio(e.target.value)}>
-          <option value="9:16">9:16 — Reels, Shorts, TikTok</option>
-          <option value="16:9">16:9 — YouTube</option>
-          <option value="1:1">1:1 — лента</option>
-        </select>
-      </label>
-      <label>
-        <input type="checkbox" checked={subtitles} onChange={(e) => setSubtitles(e.target.checked)} /> Субтитры (DaVinci
-        распознает речь и вшьёт их в видео)
+        <input type="checkbox" checked={subtitles} onChange={(e) => setSubtitles(e.target.checked)} /> Добавить субтитры
+        (DaVinci распознает речь и вшьёт их в видео)
       </label>
       {subtitles && (
-        <label>
-          Язык речи
-          <select value={language} onChange={(e) => setLanguage(e.target.value)}>
-            <option value="auto">определить автоматически</option>
-            <option value="russian">русский</option>
-            <option value="english">английский</option>
-          </select>
-        </label>
+        <ChipSelect
+          label="Язык речи"
+          value={language}
+          options={[
+            { value: "auto", label: "Определить автоматически" },
+            { value: "russian", label: "Русский" },
+            { value: "english", label: "Английский" },
+          ]}
+          onChange={setLanguage}
+        />
       )}
 
       {uploading && <p className="muted">Загружаем файл…</p>}
       {error && <p className="error">{error}</p>}
       <div className="list-row-actions">
         <button type="submit" disabled={submitting || uploading || clips.length === 0}>
-          {submitting ? "Отправляем…" : "Смонтировать в DaVinci"}
+          <Scissors size={16} aria-hidden="true" /> {submitting ? "Отправляем…" : "Смонтировать в DaVinci"}
         </button>
         <button
           type="button"
@@ -282,7 +318,7 @@ function MontageBuilder({ onCreated }: { onCreated: (job: MontageJob) => void })
           Только монтажный лист
         </button>
       </div>
-      <p className="muted">
+      <p className="muted hint">
         «Только монтажный лист» — архив с таймлайном и всеми материалами, чтобы смонтировать самому в своём
         DaVinci Resolve, даже бесплатном. Субтитры в него не входят — их делает DaVinci при рендере.
       </p>
@@ -342,7 +378,7 @@ function MontageCard({
 }) {
   const [publishing, setPublishing] = useState(false);
   return (
-    <div className="card">
+    <div className="panel">
       <p>
         <strong>{job.title ?? `Монтаж из ${job.spec.clips.length} клипов`}</strong>{" "}
         <span className={`badge ${job.status}`}>{job.render ? STATUS_LABELS[job.status] : "монтажный лист"}</span>
@@ -350,8 +386,8 @@ function MontageCard({
       {(job.status === "queued" || job.status === "processing") && (
         <>
           <p className="muted">{job.stage}</p>
-          <div style={{ height: 6, background: "var(--muted)", borderRadius: 3 }}>
-            <div style={{ width: `${job.progress}%`, height: 6, background: "var(--ember)", borderRadius: 3 }} />
+          <div className="progress" role="progressbar" aria-valuenow={job.progress} aria-valuemin={0} aria-valuemax={100}>
+            <span style={{ width: `${job.progress}%` }} />
           </div>
         </>
       )}
@@ -415,10 +451,7 @@ function MontageStudio() {
       <div className="page-header">
         <div>
           <h1>Монтаж</h1>
-          <p className="muted">
-            Соберите ролик из аватар-видео, своих клипов и музыки — DaVinci смонтирует его, добавит субтитры и
-            отрендерит.
-          </p>
+          <p className="muted">Соберите историю из клипов, музыки и субтитров — DaVinci смонтирует и отрендерит.</p>
         </div>
       </div>
       <DaVinciStatus />
@@ -426,8 +459,10 @@ function MontageStudio() {
         <MontageBuilder onCreated={(job) => setJobs((current) => [job, ...(current ?? [])])} />
       </Suspense>
 
-      <h2>Ваши монтажи</h2>
-      {jobs === null && <p className="muted">Загрузка…</p>}
+      <div className="section-head section">
+        <h2>Ваши монтажи</h2>
+      </div>
+      {jobs === null && <div className="skeleton" aria-busy="true" />}
       {jobs?.length === 0 && <p className="muted">Пока ничего не смонтировано.</p>}
       <div className="variant-grid">
         {jobs?.map((job) => <MontageCard key={job.id} job={job} accounts={accounts} onUpdated={replace} />)}

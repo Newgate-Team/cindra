@@ -1,8 +1,9 @@
 "use client";
 
+import { ArrowRight, ArrowUpRight, Clapperboard, Scissors, UserRound } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, type CSSProperties, type FormEvent } from "react";
 
 import { RequireAuth } from "../components/RequireAuth";
 import { ApiError, api } from "@/lib/api";
@@ -54,53 +55,96 @@ function VideoProjectsPage() {
     }
   }
 
+  const TONES = ["violet", "sun", "leaf"] as const;
+  const ENTRIES = [
+    {
+      href: "/video/avatar",
+      icon: UserRound,
+      title: "Аватар-видео",
+      text: "Ваш голос и цифровой ведущий: ролик по сценарию, сразу в нескольких вариантах (HeyGen).",
+    },
+    {
+      href: "/video/montage",
+      icon: Scissors,
+      title: "Монтаж в DaVinci",
+      text: "Клипы, музыка и субтитры — в одном проекте, остаётся только дожать.",
+    },
+  ];
+
   return (
     <>
-      <h1>Видео</h1>
-      <p className="muted">
-        Студия: опишите продукт или идею — получите сценарий, выберите стиль и заберите
-        производственный бриф. Готовый ролик можно загрузить обратно и опубликовать.
-      </p>
-      <p>
-        <Link href="/video/avatar">Аватар-видео через HeyGen →</Link>{" "}
-        <span className="muted">готовый ролик с вашим аватаром по сценарию, сразу в нескольких вариантах</span>
-      </p>
-      <p>
-        <Link href="/video/montage">Монтаж в DaVinci →</Link>{" "}
-        <span className="muted">склейка клипов, музыка и субтитры одним кликом</span>
-      </p>
-      <form onSubmit={handleCreate}>
-        <label>
-          О чём видео
-          <textarea
+      <div className="page-header">
+        <div>
+          <h1>Видео, в которых есть идея</h1>
+          <p className="muted">От сценария до финального кадра — в вашей студии.</p>
+        </div>
+      </div>
+
+      <form onSubmit={handleCreate} className="hero compact">
+        <div className="eyebrow">Новый проект</div>
+        <h2>О чём будет ролик?</h2>
+        <div className="prompt">
+          <input
             required
-            rows={3}
+            aria-label="О чём видео"
             placeholder="Продукт, идея или промпт — из этого соберём сценарий"
             value={topic}
             onChange={(e) => setTopic(e.target.value)}
           />
-        </label>
+          <button type="submit" disabled={creating} aria-label="Создать проект">
+            <ArrowUpRight size={20} aria-hidden="true" />
+          </button>
+        </div>
         {error && <p className="error">{error}</p>}
-        <button type="submit" disabled={creating}>
-          {creating ? "Создаём…" : "Новый проект"}
-        </button>
       </form>
+
+      <div className="grid two">
+        {ENTRIES.map(({ href, icon: Icon, title, text }) => (
+          <Link key={href} href={href} className="panel entry">
+            <span className="tile" style={{ "--t": "#ed4c88" } as CSSProperties} aria-hidden="true">
+              <Icon size={17} />
+            </span>
+            <h3>{title}</h3>
+            <p className="muted">{text}</p>
+            <span className="entry-go">
+              Начать <ArrowRight size={14} aria-hidden="true" />
+            </span>
+          </Link>
+        ))}
+      </div>
+
+      <div className="section-head section">
+        <h2>Ваши проекты</h2>
+        {projects && projects.length > 0 && <span className="tag">{projects.length} шт.</span>}
+      </div>
       {projects === null ? (
-        <p className="muted">Загружаем…</p>
+        <div className="grid three" aria-busy="true">
+          <div className="skeleton" />
+          <div className="skeleton" />
+          <div className="skeleton" />
+        </div>
       ) : projects.length === 0 ? (
-        <p className="muted">Проектов пока нет — создайте первый.</p>
+        <section className="panel empty">
+          <span className="tile" aria-hidden="true">
+            <Clapperboard size={26} />
+          </span>
+          <h3>Здесь начнётся ваша история</h3>
+          <p className="muted">Опишите идею выше — первый проект появится в этом списке.</p>
+        </section>
       ) : (
-        <div>
-          {projects.map((project) => (
-            <Link key={project.id} href={`/video/${project.id}`} className="card list-row">
-              <div className="list-row-body">
-                <strong>{project.topic.length > 120 ? `${project.topic.slice(0, 120)}…` : project.topic}</strong>
-                <p className="muted list-row-meta">
-                  <span>{new Date(project.created_at).toLocaleString("ru-RU")}</span>
-                </p>
+        <div className="grid three">
+          {projects.map((project, index) => (
+            <Link key={project.id} href={`/video/${project.id}`} className="work">
+              <div className={`poster ${TONES[index % TONES.length]}`}>
+                <small>{STATUS_LABELS[project.status].toUpperCase()}</small>
+                <b>{project.topic.length > 54 ? `${project.topic.slice(0, 54)}…` : project.topic}</b>
+                <small>{new Date(project.created_at).toLocaleDateString("ru-RU")}</small>
               </div>
-              <div className="list-row-side">
-                <span className={`badge ${project.status}`}>{STATUS_LABELS[project.status]}</span>
+              <div className="work-meta">
+                <b>{project.topic.length > 40 ? `${project.topic.slice(0, 40)}…` : project.topic}</b>
+                <small>
+                  <span className={`badge ${project.status}`}>{STATUS_LABELS[project.status]}</span>
+                </small>
               </div>
             </Link>
           ))}

@@ -1,5 +1,6 @@
 "use client";
 
+import { Paperclip, Sparkles } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 
 import { ApiError, api } from "@/lib/api";
@@ -14,7 +15,9 @@ import type {
   SocialPlatform,
 } from "@/lib/types";
 
+import { Poster } from "./Brand";
 import { ReviewAndPublish } from "./ReviewAndPublish";
+import { ChipSelect, PostCard, platformLabel } from "./Studio";
 
 const TERMINAL_STATUSES = new Set(["completed", "failed", "flagged"]);
 
@@ -27,6 +30,14 @@ const TONE_OPTIONS = [
   { value: "storytelling", label: "Сторителлинг" },
 ];
 const POLL_INTERVAL_MS = 2000;
+
+const JOB_STATUS_LABELS: Record<string, string> = {
+  queued: "В очереди",
+  processing: "Генерируем",
+  completed: "Готово",
+  failed: "Ошибка",
+  flagged: "Отклонено",
+};
 
 // No target account chosen yet means no platform to constrain the
 // choice by -- these are the unconstrained fallbacks, mirroring the
@@ -342,6 +353,15 @@ export function GenerationForm({
     }
   }
 
+  // What the preview card pretends to be before there is a result: the
+  // first picked account's platform, else Telegram (every plan has it).
+  const previewPlatform = selectedPlatforms[0] ?? "telegram";
+  const previewAccount = accounts.find((a) => a.id === targetAccountIds[0]);
+  const jobDone =
+    job?.status === "completed" &&
+    (job.output_payload?.text || job.output_payload?.image_url || job.output_payload?.video_url);
+  const selectedTemplate = imageTemplates.find((t) => t.id === imageTemplate);
+
   return (
     <>
       <div className="page-header">
@@ -350,45 +370,37 @@ export function GenerationForm({
           <p className="muted">{subtitle}</p>
         </div>
       </div>
-      <form onSubmit={handleSubmit} className="card">
-        {/* Optional -- a connected account is only required at actual
-            publish time (ReviewAndPublish), not to generate. Narrows
-            Формат/Тип контента to what the picked account(s) can
-            actually publish when used, same as before; skipped
-            entirely when there's nothing to pick from yet. */}
-        {!hideTargetPicker && selectableAccounts.length > 0 && (
-          <fieldset className="chip-group">
-            <legend>Куда опубликовать (необязательно)</legend>
-            {selectableAccounts.map((a) => (
-              <label key={a.id}>
-                <input
-                  type="checkbox"
-                  checked={targetAccountIds.includes(a.id)}
-                  onChange={(e) => toggleTargetAccount(a.id, e.target.checked)}
-                />
-                {a.platform} — {a.display_name ?? a.external_account_id}
-              </label>
-            ))}
-          </fieldset>
-        )}
-        <label>
-          {topicLabel}
-          <textarea
-            required
-            rows={6}
-            maxLength={5000}
-            value={topic}
-            onChange={(e) => setTopic(e.target.value)}
-            placeholder={topicPlaceholder}
-          />
-        </label>
-        {!lockedContentType && (
-          <label>
-            Формат
-            <select
+      <div className="studio">
+        <form onSubmit={handleSubmit} className="panel studio-form">
+          <h2>Ваша идея</h2>
+          {/* Optional -- a connected account is only required at actual
+              publish time (ReviewAndPublish), not to generate. Narrows
+              Формат/Тип контента to what the picked account(s) can
+              actually publish when used, same as before; skipped
+              entirely when there's nothing to pick from yet. */}
+          {!hideTargetPicker && selectableAccounts.length > 0 && (
+            <fieldset className="field-block plain">
+              <legend className="field-label">Куда опубликовать (необязательно)</legend>
+              <div className="chip-group">
+                {selectableAccounts.map((a) => (
+                  <label key={a.id}>
+                    <input
+                      type="checkbox"
+                      checked={targetAccountIds.includes(a.id)}
+                      onChange={(e) => toggleTargetAccount(a.id, e.target.checked)}
+                    />
+                    {platformLabel(a.platform)} — {a.display_name ?? a.external_account_id}
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+          )}
+          {!lockedContentType && allowedContentTypes.length > 1 && (
+            <ChipSelect
+              label="Формат"
               value={contentType}
-              onChange={(e) => {
-                const nextContentType = e.target.value as GenerationContentType;
+              options={allowedContentTypes.map((value) => ({ value, label: CONTENT_TYPE_LABELS[value] }))}
+              onChange={(nextContentType) => {
                 setContentType(nextContentType);
                 const available = (
                   selectedPlatforms.length > 0
@@ -397,113 +409,118 @@ export function GenerationForm({
                 ).filter((kind) => !excludeContentKinds?.includes(kind));
                 if (!available.includes(contentKind)) setContentKind(available[0] ?? "post");
               }}
-            >
-              {allowedContentTypes.map((value) => (
-                <option key={value} value={value}>
-                  {CONTENT_TYPE_LABELS[value]}
-                </option>
-              ))}
-            </select>
+            />
+          )}
+          {!lockedContentKind && allowedContentKinds.length > 1 && (
+            <ChipSelect
+              label="Тип контента"
+              value={contentKind}
+              options={allowedContentKinds.map((value) => ({ value, label: CONTENT_KIND_LABELS[value] ?? value }))}
+              onChange={setContentKind}
+            />
+          )}
+          <label className="field-block">
+            <span className="field-label">{topicLabel}</span>
+            <textarea
+              required
+              rows={6}
+              maxLength={5000}
+              value={topic}
+              onChange={(e) => setTopic(e.target.value)}
+              placeholder={topicPlaceholder}
+            />
           </label>
-        )}
-        {!lockedContentKind && (
-          <label>
-            Тип контента
-            <select value={contentKind} onChange={(e) => setContentKind(e.target.value)}>
-              {allowedContentKinds.map((value) => (
-                <option key={value} value={value}>
-                  {CONTENT_KIND_LABELS[value] ?? value}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
-        {contentType === "image" && imageTemplates.length > 0 && (
-          <label>
-            Шаблон (необязательно)
-            <select value={imageTemplate} onChange={(e) => setImageTemplate(e.target.value)}>
-              <option value="">По умолчанию</option>
-              {imageTemplates.map((t) => (
-                <option key={t.id} value={t.id} title={t.description}>
-                  {t.title}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
-        {/* CIN-150: an example of the selected template, once staff
-            have generated one -- the select alone doesn't convey what
-            "Лайфстайл-сцена" actually looks like. */}
-        {contentType === "image" &&
-          (() => {
-            const selected = imageTemplates.find((t) => t.id === imageTemplate);
-            if (!selected?.preview_url) return null;
-            return (
-              <figure className="template-example">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={selected.preview_url} alt={`Пример: ${selected.title}`} />
-                <figcaption className="muted">
-                  Пример шаблона «{selected.title}». Ваше изображение будет на вашу тему.
-                </figcaption>
-              </figure>
-            );
-          })()}
-        <label>
-          Тон (необязательно)
-          <select value={tone} onChange={(e) => setTone(e.target.value)}>
-            {TONE_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Бренд-гайд (необязательно)
-          <textarea
-            rows={3}
-            value={brandGuide}
-            onChange={(e) => setBrandGuide(e.target.value)}
-            placeholder="тон и стиль, которых нужно придерживаться"
-          />
-        </label>
-        <label>
-          Прикрепить файлы (необязательно, до {MAX_TOTAL_ATTACHMENTS}: видео и аудио — не больше 1 каждого)
-          <input
-            type="file"
-            accept={ATTACHMENT_ACCEPT}
-            onChange={handleAttachmentChange}
-            disabled={uploadingAttachment || attachments.length >= MAX_TOTAL_ATTACHMENTS}
-          />
-        </label>
-        {uploadingAttachment && <p className="muted">Загружаем файл…</p>}
-        {attachmentError && <p className="error">{attachmentError}</p>}
-        {attachments.length > 0 && (
-          <ul>
-            {attachments.map((a, index) => (
-              <li key={`${a.url}-${index}`} className="muted">
-                {a.name} ({ATTACHMENT_TYPE_LABELS[a.attachment_type]}){" "}
-                <button type="button" className="secondary" onClick={() => removeAttachment(index)}>
-                  Убрать
+          <ChipSelect label="Тон" value={tone} options={TONE_OPTIONS} onChange={setTone} />
+          {contentType === "image" && imageTemplates.length > 0 && (
+            <div className="field-block" role="group" aria-label="Шаблон изображения">
+              <span className="field-label">Шаблон изображения (необязательно)</span>
+              <div className="template-grid">
+                <button
+                  type="button"
+                  className={`template-pick${imageTemplate === "" ? " selected" : ""}`}
+                  aria-pressed={imageTemplate === ""}
+                  onClick={() => setImageTemplate("")}
+                >
+                  <span className="template-pick-art default" aria-hidden="true" />
+                  <b>По умолчанию</b>
                 </button>
-              </li>
-            ))}
-          </ul>
-        )}
-        {error && <p className="error">{error}</p>}
-        <button type="submit" disabled={submitting || uploadingAttachment}>
-          {submitting ? "Запускаем…" : "Сгенерировать"}
-        </button>
-      </form>
+                {imageTemplates.map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    className={`template-pick${imageTemplate === t.id ? " selected" : ""}`}
+                    aria-pressed={imageTemplate === t.id}
+                    title={t.description}
+                    onClick={() => setImageTemplate(t.id)}
+                  >
+                    {t.preview_url ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={t.preview_url} alt="" className="template-pick-art" />
+                    ) : (
+                      <span className="template-pick-art" aria-hidden="true" />
+                    )}
+                    <b>{t.title}</b>
+                  </button>
+                ))}
+              </div>
+              {selectedTemplate && (
+                <p className="muted hint">{selectedTemplate.description}</p>
+              )}
+            </div>
+          )}
+          <details className="field-block">
+            <summary>Бренд-гайд</summary>
+            <label>
+              <span className="visually-hidden">Бренд-гайд</span>
+              <textarea
+                rows={3}
+                value={brandGuide}
+                onChange={(e) => setBrandGuide(e.target.value)}
+                placeholder="тон и стиль, которых нужно придерживаться"
+              />
+            </label>
+          </details>
+          <label className="drop">
+            <Paperclip size={16} aria-hidden="true" /> Прикрепить файлы
+            <small>до {MAX_TOTAL_ATTACHMENTS}: видео и аудио — не больше 1 каждого</small>
+            <input
+              type="file"
+              accept={ATTACHMENT_ACCEPT}
+              onChange={handleAttachmentChange}
+              disabled={uploadingAttachment || attachments.length >= MAX_TOTAL_ATTACHMENTS}
+            />
+          </label>
+          {uploadingAttachment && <p className="muted">Загружаем файл…</p>}
+          {attachmentError && <p className="error">{attachmentError}</p>}
+          {attachments.length > 0 && (
+            <ul className="attachment-list">
+              {attachments.map((a, index) => (
+                <li key={`${a.url}-${index}`} className="muted">
+                  {a.name} ({ATTACHMENT_TYPE_LABELS[a.attachment_type]}){" "}
+                  <button type="button" className="secondary" onClick={() => removeAttachment(index)}>
+                    Убрать
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          {error && <p className="error">{error}</p>}
+          <button type="submit" disabled={submitting || uploadingAttachment}>
+            <Sparkles size={16} aria-hidden="true" /> {submitting ? "Запускаем…" : "Сгенерировать"}
+          </button>
+        </form>
 
-      {job && (
-        <div className="card" style={{ marginTop: 24 }}>
-          <p>
-            Статус генерации: <span className={`badge ${job.status}`}>{job.status}</span>
-          </p>
-          {job.status === "completed" &&
-            (job.output_payload?.text || job.output_payload?.image_url || job.output_payload?.video_url) &&
-            (postGenerationAction === "download" ? (
+        <section className="panel studio-preview" aria-live="polite">
+          <div className="section-head">
+            <h2>Предпросмотр</h2>
+            {job ? (
+              <span className={`badge ${job.status}`}>{JOB_STATUS_LABELS[job.status] ?? job.status}</span>
+            ) : (
+              <span className="tag purple">Пример</span>
+            )}
+          </div>
+          {jobDone && job ? (
+            postGenerationAction === "download" ? (
               <ReviewAndDownload job={job} initialCaption={topic} />
             ) : (
               <ReviewAndPublish
@@ -516,16 +533,35 @@ export function GenerationForm({
                 accounts={accounts}
                 targetAccountIds={targetAccountIds}
               />
-            ))}
-          {job.status === "failed" && <p className="error">{job.error_message}</p>}
-          {job.status === "flagged" && (
-            <p className="error">Отклонено модерацией: {job.error_message}</p>
+            )
+          ) : (
+            <>
+              <PostCard
+                platform={previewPlatform}
+                author={previewAccount?.display_name ?? previewAccount?.external_account_id ?? "Ваш аккаунт"}
+                media={
+                  contentType !== "text" && (
+                    <Poster title={topic.trim().slice(0, 48) || "Хорошие идеи зажигают."} tone="violet" />
+                  )
+                }
+              >
+                <p className="post-caption placeholder">
+                  {job?.status === "queued" || job?.status === "processing"
+                    ? "Генерируем… можно продолжать работу — результат появится здесь."
+                    : topic.trim() || "Здесь появится ваш пост. Опишите идею слева и нажмите «Сгенерировать»."}
+                </p>
+              </PostCard>
+              {(job?.status === "queued" || job?.status === "processing") && (
+                <div className="progress" aria-hidden="true">
+                  <span className="indeterminate" />
+                </div>
+              )}
+              {job?.status === "failed" && <p className="error">{job.error_message}</p>}
+              {job?.status === "flagged" && <p className="error">Отклонено модерацией: {job.error_message}</p>}
+            </>
           )}
-          {(job.status === "queued" || job.status === "processing") && (
-            <p className="muted">Генерируем…</p>
-          )}
-        </div>
-      )}
+        </section>
+      </div>
     </>
   );
 }

@@ -1,9 +1,11 @@
 "use client";
 
+import { ArrowRight } from "lucide-react";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 
 import { RequireAuth } from "../../components/RequireAuth";
+import { platformLabel } from "../../components/Studio";
 import {
   TikTokPublishFields,
   useTikTokPublishOptions,
@@ -14,6 +16,13 @@ import { allowedContentTypesFor } from "@/lib/publish-matrix";
 import type { Post, SocialAccount, VideoProject, VideoStyle } from "@/lib/types";
 
 const VIDEO_POLL_INTERVAL_MS = 5000;
+
+const PROJECT_STATUS_LABELS: Record<VideoProject["status"], string> = {
+  draft: "Черновик",
+  script_ready: "Сценарий готов",
+  brief_ready: "Бриф готов",
+  video_ready: "Видео готово",
+};
 
 function minDatetimeLocal(): string {
   return new Date().toISOString().slice(0, 16);
@@ -119,7 +128,7 @@ function PublishBlock({ project }: { project: VideoProject }) {
               checked={selectedIds.includes(account.id)}
               onChange={(e) => toggleAccount(account.id, e.target.checked)}
             />
-            {account.platform} — {account.display_name ?? account.external_account_id}
+            {platformLabel(account.platform)} — {account.display_name ?? account.external_account_id}
           </label>
         ))}
       </fieldset>
@@ -157,7 +166,7 @@ function PublishBlock({ project }: { project: VideoProject }) {
           {posts.map((post) => (
             <div key={post.id} className="card list-row">
               <div className="list-row-body">
-                <strong>{post.platform}</strong>
+                <strong>{platformLabel(post.platform)}</strong>
                 <p className="muted list-row-meta">
                   <span>{post.account_label}</span>
                 </p>
@@ -184,6 +193,7 @@ function VideoProjectWizard() {
   const [scriptDraft, setScriptDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [step, setStep] = useState<number | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -292,13 +302,53 @@ function VideoProjectWizard() {
   const veoInFlight =
     project.video_status === "queued" || project.video_status === "processing";
 
+  // One step on screen at a time (the redesign's stepper) instead of a
+  // four-card scroll. A step opens once what it needs exists; the
+  // default is the furthest one the project has reached, so coming back
+  // to a half-finished project lands where the work left off.
+  const hasScript = project.script !== null;
+  const reached = project.video_url ? 3 : selectedStyle ? 2 : hasScript ? 1 : 0;
+  const available = [true, hasScript, hasScript && !!selectedStyle, hasScript];
+  const current = step !== null && available[step] ? step : reached;
+  const stepNames = ["Сценарий", "Стиль", selectedStyle?.produces === "clip" ? "Ролик" : "Бриф", "Видео"];
+  const nextButton = (to: number, label: string) => (
+    <div className="step-next">
+      <button type="button" onClick={() => setStep(to)}>
+        {label} <ArrowRight size={16} aria-hidden="true" />
+      </button>
+    </div>
+  );
+
   return (
     <>
-      <h1>Видео-проект</h1>
-      <p className="muted">{project.topic}</p>
+      <div className="page-header">
+        <div>
+          <h1>{project.topic.length > 80 ? `${project.topic.slice(0, 80)}…` : project.topic}</h1>
+          <p className="muted">
+            Видео-проект · <span className={`badge ${project.status}`}>{PROJECT_STATUS_LABELS[project.status]}</span>
+          </p>
+        </div>
+      </div>
+      <ol className="stepper" aria-label="Шаги проекта">
+        {stepNames.map((name, index) => (
+          <li key={name}>
+            <button
+              type="button"
+              className={index === current ? "current" : index < reached ? "done" : ""}
+              aria-current={index === current ? "step" : undefined}
+              disabled={!available[index]}
+              onClick={() => setStep(index)}
+            >
+              <span className="step-num">{index < reached && index !== current ? "✓" : index + 1}</span>
+              {name}
+            </button>
+          </li>
+        ))}
+      </ol>
 
-      <section className="card">
-        <h2>1. Сценарий</h2>
+      {current === 0 && (
+      <section className="panel">
+        <h2>Сценарий</h2>
         {project.script === null ? (
           <button type="button" onClick={generateScript} disabled={busy !== null}>
             {busy === "script" ? "Генерируем…" : "Сгенерировать сценарий"}
@@ -325,38 +375,39 @@ function VideoProjectWizard() {
                 {busy === "script" ? "Генерируем…" : "Перегенерировать"}
               </button>
             </div>
+            {nextButton(1, "К выбору стиля")}
           </>
         )}
       </section>
+      )}
 
-      {project.script !== null && (
-        <section className="card">
-          <h2>2. Стиль</h2>
-          <div>
+      {current === 1 && (
+        <section className="panel">
+          <h2>Стиль</h2>
+          <div className="style-grid">
             {styles.map((style) => (
-              <label key={style.id} className="card list-row">
-                <div className="list-row-body">
-                  <input
-                    type="radio"
-                    name="style"
-                    checked={project.style === style.id}
-                    onChange={() => chooseStyle(style.id)}
-                    disabled={busy !== null}
-                  />
-                  <strong> {style.title}</strong>
-                  <p className="muted list-row-meta">
-                    <span>{style.description}</span>
-                  </p>
-                </div>
+              <label key={style.id} className={`style-pick${project.style === style.id ? " selected" : ""}`}>
+                <input
+                  type="radio"
+                  name="style"
+                  checked={project.style === style.id}
+                  onChange={() => chooseStyle(style.id)}
+                  disabled={busy !== null}
+                />
+                <span>
+                  <b>{style.title}</b>
+                  <small className="muted">{style.description}</small>
+                </span>
               </label>
             ))}
           </div>
+          {selectedStyle && nextButton(2, selectedStyle.produces === "clip" ? "К ролику" : "К брифу")}
         </section>
       )}
 
-      {project.script !== null && selectedStyle && selectedStyle.produces === "brief" && (
-        <section className="card">
-          <h2>3. Производственный бриф</h2>
+      {current === 2 && selectedStyle && selectedStyle.produces === "brief" && (
+        <section className="panel">
+          <h2>Производственный бриф</h2>
           {project.brief_files === null ? (
             <button type="button" onClick={generateBrief} disabled={busy !== null}>
               {busy === "brief" ? "Собираем бриф…" : "Сгенерировать бриф"}
@@ -364,7 +415,7 @@ function VideoProjectWizard() {
           ) : (
             <>
               {project.brief_files.map((file) => (
-                <div key={file.filename} className="card">
+                <div key={file.filename} className="panel brief-file">
                   <div className="list-row">
                     <div className="list-row-body">
                       <strong>{file.title}</strong>
@@ -438,14 +489,15 @@ function VideoProjectWizard() {
                   )}
                 </div>
               )}
+              {nextButton(3, "К готовому видео")}
             </>
           )}
         </section>
       )}
 
-      {project.script !== null && selectedStyle && selectedStyle.produces === "clip" && (
-        <section className="card">
-          <h2>3. Генерация ролика</h2>
+      {current === 2 && selectedStyle && selectedStyle.produces === "clip" && (
+        <section className="panel">
+          <h2>Генерация ролика</h2>
           {project.video_url === null && !veoInFlight && (
             <button type="button" onClick={generateVeo} disabled={busy !== null}>
               {busy === "veo" ? "Запускаем…" : "Сгенерировать ролик (Veo)"}
@@ -455,14 +507,15 @@ function VideoProjectWizard() {
           {project.video_status === "failed" && (
             <p className="error">{project.video_error ?? "Генерация не удалась"}</p>
           )}
+          {nextButton(3, "К готовому видео")}
         </section>
       )}
 
-      {project.script !== null && (
-        <section className="card">
-          <h2>{selectedStyle ? "4" : "3"}. Готовое видео</h2>
+      {current === 3 && (
+        <section className="panel">
+          <h2>Готовое видео</h2>
           {project.video_url ? (
-            <video src={project.video_url} controls style={{ maxWidth: "100%", borderRadius: 8 }} />
+            <video src={project.video_url} controls className="project-video" />
           ) : (
             <p className="muted">
               Смонтируйте ролик по брифу и загрузите готовый файл — или сгенерируйте его

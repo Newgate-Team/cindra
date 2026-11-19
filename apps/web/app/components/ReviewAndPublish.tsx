@@ -8,6 +8,7 @@ import { allowedContentKindsFor, allowedContentTypesFor } from "@/lib/publish-ma
 import type { GenerationContentType, Post, SocialAccount } from "@/lib/types";
 
 import { SaveToDriveButton } from "./SaveToDriveButton";
+import { PostCard, platformLabel } from "./Studio";
 import { TikTokPublishFields, useTikTokPublishOptions } from "./TikTokPublishFields";
 
 // datetime-local reads and writes LOCAL time, so the `min` guard has
@@ -135,21 +136,36 @@ export function ReviewAndPublish({
   }
 
   return (
-    <form onSubmit={handlePublish}>
-      {imageUrl && (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={imageUrl} alt="Изображение для публикации" style={{ maxWidth: "100%", borderRadius: 8 }} />
-      )}
-      {videoUrl && <video src={videoUrl} controls style={{ maxWidth: "100%", borderRadius: 8 }} />}
+    <form onSubmit={handlePublish} className="review">
+      {/* The draft is drawn as the post it will become -- author row,
+          media, caption -- and the caption is edited right in the card. */}
+      <PostCard
+        platform={targetAccounts[0]?.platform ?? "telegram"}
+        author={targetAccounts[0]?.display_name ?? targetAccounts[0]?.external_account_id ?? "Ваш аккаунт"}
+        media={
+          <>
+            {imageUrl && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={imageUrl} alt="Изображение для публикации" className="post-media" />
+            )}
+            {videoUrl && <video src={videoUrl} controls className="post-media" />}
+          </>
+        }
+      >
+        <textarea
+          className="post-caption"
+          rows={6}
+          aria-label={imageUrl || videoUrl ? "Подпись к публикации" : "Текст публикации"}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+        />
+      </PostCard>
+      <p className="muted hint">Нажмите на текст в карточке, чтобы отредактировать его перед публикацией.</p>
       {(videoUrl || imageUrl) && (
         <div className="list-row-actions">
           <SaveToDriveButton url={(videoUrl || imageUrl) as string} />
         </div>
       )}
-      <label>
-        {imageUrl || videoUrl ? "Подпись (можно отредактировать перед публикацией)" : "Текст (можно отредактировать перед публикацией)"}
-        <textarea rows={6} value={text} onChange={(e) => setText(e.target.value)} />
-      </label>
       {needsOwnPicker ? (
         eligibleAccounts.length === 0 ? (
           <p className="muted">
@@ -172,7 +188,7 @@ export function ReviewAndPublish({
                     )
                   }
                 />
-                {a.platform} — {a.display_name ?? a.external_account_id}
+                {platformLabel(a.platform)} — {a.display_name ?? a.external_account_id}
               </label>
             ))}
           </fieldset>
@@ -180,7 +196,7 @@ export function ReviewAndPublish({
       ) : (
         <p>
           Куда опубликовать:{" "}
-          {targetAccounts.map((a) => `${a.platform} — ${a.display_name ?? a.external_account_id}`).join(", ")}
+          {targetAccounts.map((a) => `${platformLabel(a.platform)} — ${a.display_name ?? a.external_account_id}`).join(", ")}
         </p>
       )}
       <TikTokPublishFields
@@ -213,7 +229,7 @@ export function ReviewAndPublish({
           {posts.map((post) => (
             <div key={post.id} className="card list-row">
               <div className="list-row-body">
-                <strong>{post.platform}</strong>
+                <strong>{platformLabel(post.platform)}</strong>
                 <p className="muted list-row-meta">
                   <span>{post.account_label}</span>
                 </p>

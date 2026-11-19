@@ -1,5 +1,6 @@
 "use client";
 
+import { Sparkles, UserRound } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 
@@ -16,6 +17,7 @@ import type {
 } from "@/lib/types";
 
 import { RequireAuth } from "../../components/RequireAuth";
+import { ChipSelect } from "../../components/Studio";
 import { ReviewAndPublish } from "../../components/ReviewAndPublish";
 import { SaveToDriveButton } from "../../components/SaveToDriveButton";
 
@@ -23,9 +25,9 @@ const MAX_VARIANTS = 4;
 const POLL_MS = 10_000;
 
 const ASPECT_RATIOS = [
-  { value: "9:16", label: "9:16 — Reels, Shorts, TikTok" },
-  { value: "16:9", label: "16:9 — YouTube" },
-  { value: "1:1", label: "1:1 — лента" },
+  { value: "9:16", label: "9:16 · Reels, Shorts, TikTok" },
+  { value: "16:9", label: "16:9 · YouTube" },
+  { value: "1:1", label: "1:1 · лента" },
 ];
 
 const VOICE_LANGUAGES = ["Russian", "English"];
@@ -97,17 +99,19 @@ function AvatarPicker({
 
   return (
     <>
-      <div className="tab-row">
+      <div className="chip-row" role="group" aria-label="Чьи аватары показывать">
         <button
           type="button"
-          className={ownership === "private" ? undefined : "secondary"}
+          className={`chip${ownership === "private" ? " selected" : ""}`}
+          aria-pressed={ownership === "private"}
           onClick={() => setOwnership("private")}
         >
-          Мои аватары
+          Мои
         </button>
         <button
           type="button"
-          className={ownership === "public" ? undefined : "secondary"}
+          className={`chip${ownership === "public" ? " selected" : ""}`}
+          aria-pressed={ownership === "public"}
           onClick={() => setOwnership("public")}
         >
           Публичные HeyGen
@@ -175,8 +179,8 @@ function VoicePicker({ value, onChange }: { value: string; onChange: (voiceId: s
 
   return (
     <>
-      <label>
-        Голоса
+      <label className="field-block">
+        <span className="field-label">Голоса</span>
         <select
           value={voiceType}
           onChange={(e) => {
@@ -189,8 +193,8 @@ function VoicePicker({ value, onChange }: { value: string; onChange: (voiceId: s
         </select>
       </label>
       {voiceType === "public" && (
-        <label>
-          Язык голоса
+        <label className="field-block">
+          <span className="field-label">Язык голоса</span>
           <select value={language} onChange={(e) => setLanguage(e.target.value)}>
             {VOICE_LANGUAGES.map((lang) => (
               <option key={lang} value={lang}>
@@ -200,8 +204,8 @@ function VoicePicker({ value, onChange }: { value: string; onChange: (voiceId: s
           </select>
         </label>
       )}
-      <label>
-        Голос
+      <label className="field-block">
+        <span className="field-label">Голос</span>
         <select value={value} onChange={(e) => onChange(e.target.value)}>
           <option value="">Голос аватара по умолчанию</option>
           {voices.map((voice) => (
@@ -360,74 +364,87 @@ function AvatarVideoStudio({ integration }: { integration: Integration }) {
           с его кошелька.
         </p>
       )}
-      <form onSubmit={handleSubmit} className="card">
-        <label>
-          Сценарий — что скажет аватар
-          <textarea
-            required
-            rows={6}
-            maxLength={5000}
-            value={script}
-            onChange={(e) => setScript(e.target.value)}
-            placeholder="Текст, который аватар произнесёт в кадре"
-          />
-        </label>
-        <label>
-          Формат
-          <select value={aspectRatio} onChange={(e) => setAspectRatio(e.target.value)}>
-            {ASPECT_RATIOS.map((ratio) => (
-              <option key={ratio.value} value={ratio.value}>
-                {ratio.label}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <p>
-          Аватары — каждый выбранный станет отдельным вариантом ролика (до {MAX_VARIANTS}).
-          {selected.length > 0 && <span className="muted"> Выбрано: {selected.length}</span>}
-        </p>
-        <AvatarPicker
-          selected={selected.map((a) => a.id)}
-          onToggle={toggleAvatar}
-          onLoaded={rememberAvatars}
-        />
-        <VoicePicker value={voiceOverride} onChange={setVoiceOverride} />
-
-        <p className="muted">
-          Каждый вариант — отдельный рендер, оплачивается с кошелька HeyGen API.
-        </p>
-        {error && <p className="error">{error}</p>}
-        <button type="submit" disabled={submitting || selected.length === 0 || !script.trim()}>
-          {submitting
-            ? "Запускаем…"
-            : selected.length > 1
-              ? `Сгенерировать ${selected.length} варианта`
-              : "Сгенерировать видео"}
-        </button>
-      </form>
-
-      <h2>Ваши аватар-видео</h2>
-      {jobs === null && <p className="muted">Загрузка…</p>}
-      {jobs !== null && jobs.length === 0 && <p className="muted">Пока ничего не сгенерировано.</p>}
-      {batches.map((batch) => (
-        <div key={batch[0].batch_id}>
-          <p className="muted">
-            {new Date(batch[0].created_at).toLocaleString("ru-RU")} ·{" "}
-            {batch[0].script.length > 120 ? `${batch[0].script.slice(0, 120)}…` : batch[0].script}
+      <div className="studio">
+        <form onSubmit={handleSubmit} className="panel studio-form">
+          <h2>Выберите аватара</h2>
+          <p className="muted hint">
+            Каждый выбранный станет отдельным вариантом ролика (до {MAX_VARIANTS}).
+            {selected.length > 0 && <strong> Выбрано: {selected.length}</strong>}
           </p>
-          <div className="variant-grid">
-            {batch.map((job) => (
-              <VariantCard
-                key={job.id}
-                job={job}
-                avatarName={knownAvatars[job.avatar_id]?.name ?? "Аватар"}
-                accounts={accounts}
-              />
-            ))}
+          <AvatarPicker
+            selected={selected.map((a) => a.id)}
+            onToggle={toggleAvatar}
+            onLoaded={rememberAvatars}
+          />
+          <VoicePicker value={voiceOverride} onChange={setVoiceOverride} />
+          <ChipSelect
+            label="Формат"
+            value={aspectRatio}
+            options={ASPECT_RATIOS}
+            onChange={setAspectRatio}
+          />
+          <label className="field-block">
+            <span className="field-label">Сценарий — что скажет аватар</span>
+            <textarea
+              required
+              rows={6}
+              maxLength={5000}
+              value={script}
+              onChange={(e) => setScript(e.target.value)}
+              placeholder="Текст, который аватар произнесёт в кадре"
+            />
+          </label>
+          <p className="muted hint">
+            Каждый вариант — отдельный рендер, оплачивается с кошелька HeyGen API.
+          </p>
+          {error && <p className="error">{error}</p>}
+          <button type="submit" disabled={submitting || selected.length === 0 || !script.trim()}>
+            <Sparkles size={16} aria-hidden="true" />{" "}
+            {submitting
+              ? "Запускаем…"
+              : selected.length > 1
+                ? `Сгенерировать ${selected.length} варианта`
+                : "Сгенерировать видео"}
+          </button>
+        </form>
+
+        <section className="panel studio-preview">
+          <div className="section-head">
+            <h2>Ваши аватар-видео</h2>
+            {inFlight && <span className="badge processing">рендерится</span>}
           </div>
-        </div>
-      ))}
+          {jobs === null && (
+            <div className="skeleton" aria-busy="true" />
+          )}
+          {jobs !== null && jobs.length === 0 && (
+            <div className="empty">
+              <span className="tile" aria-hidden="true">
+                <UserRound size={26} />
+              </span>
+              <h3>Пока ничего не сгенерировано</h3>
+              <p className="muted">Выберите аватара, напишите сценарий — готовые варианты появятся здесь.</p>
+            </div>
+          )}
+          {batches.map((batch) => (
+            <div key={batch[0].batch_id} className="batch">
+              <p className="muted hint">
+                {new Date(batch[0].created_at).toLocaleString("ru-RU")} ·{" "}
+                {batch[0].script.length > 120 ? `${batch[0].script.slice(0, 120)}…` : batch[0].script}
+              </p>
+              <div className="variant-grid">
+                {batch.map((job) => (
+                  <VariantCard
+                    key={job.id}
+                    job={job}
+                    avatarName={knownAvatars[job.avatar_id]?.name ?? "Аватар"}
+                    accounts={accounts}
+                  />
+                ))}
+              </div>
+            </div>
+          ))}
+        </section>
+      </div>
     </>
   );
 }
@@ -448,18 +465,21 @@ function AvatarVideoPage() {
       <div className="page-header">
         <div>
           <h1>Аватар-видео</h1>
-          <p className="muted">
-            Ролик с AI-аватаром HeyGen по вашему сценарию — сразу в нескольких вариантах, лучший
-            публикуется в подключённые соцсети.
-          </p>
+          <p className="muted">Ваш ведущий для каждой истории: несколько вариантов ролика сразу, лучший — в соцсети.</p>
         </div>
       </div>
-      {integration === undefined && <p className="muted">Загрузка…</p>}
+      {integration === undefined && <div className="skeleton" aria-busy="true" />}
       {integration === null && (
-        <div className="card">
-          <p>Сначала подключите свой аккаунт HeyGen.</p>
-          <Link href="/integrations">Перейти в «Инструменты» →</Link>
-        </div>
+        <section className="panel empty">
+          <span className="tile" aria-hidden="true">
+            <UserRound size={26} />
+          </span>
+          <h2>Сначала подключите HeyGen</h2>
+          <p className="muted">Видео рендерится на вашем аккаунте HeyGen — ключ добавляется в «Инструментах».</p>
+          <Link className="button-link" href="/integrations">
+            Перейти в «Инструменты»
+          </Link>
+        </section>
       )}
       {integration && <AvatarVideoStudio integration={integration} />}
     </>
