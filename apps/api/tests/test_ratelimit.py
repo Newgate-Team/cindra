@@ -83,13 +83,16 @@ def test_disabled_limiter_never_counts(monkeypatch: pytest.MonkeyPatch, limits_o
     assert limits_on.counts == {}
 
 
-def test_client_ip_ignores_forwarded_header_by_default() -> None:
+def test_client_ip_ignores_forwarded_header_when_no_proxy_is_trusted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(get_settings(), "trusted_proxy_hops", 0)
     request = _request([(b"x-forwarded-for", b"1.2.3.4")])
     assert ratelimit.client_ip(request) == "10.0.0.9"
 
 
 def test_client_ip_takes_the_entry_our_proxy_appended(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(get_settings(), "trusted_proxy_hops", 1)
+    assert get_settings().trusted_proxy_hops == 1  # the default: Railway puts one proxy in front
     # The left entry is whatever the client claimed; only the last one is ours.
     request = _request([(b"x-forwarded-for", b"6.6.6.6, 203.0.113.7")])
     assert ratelimit.client_ip(request) == "203.0.113.7"
