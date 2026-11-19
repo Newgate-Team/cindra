@@ -105,6 +105,8 @@ class UserOut(BaseModel):
     share_generations_to_feed: bool
     has_password: bool
     email_verified: bool
+    brand_guide: str | None = None
+    default_tone: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -116,6 +118,31 @@ class UserUpdate(BaseModel):
     # (by role, see User model) that a plain role-only PATCH shouldn't
     # silently overwrite back to.
     share_generations_to_feed: bool | None = None
+    # Brand kit. Omitted = leave as is; an empty string clears it.
+    brand_guide: str | None = Field(default=None, max_length=5000)
+    default_tone: str | None = None
+
+    @field_validator("default_tone")
+    @classmethod
+    def _validate_default_tone(cls, value: str | None) -> str | None:
+        if value and value not in TONE_GUIDANCE:
+            raise ValueError(f"Неизвестный тон: {value}")
+        return value
+
+
+class IdeasRequest(BaseModel):
+    # What this week is about ("запуск осенней коллекции"), optional.
+    focus: str | None = Field(default=None, max_length=500)
+
+
+class ContentIdeaOut(BaseModel):
+    title: str
+    hook: str
+    format: str  # post | image | video
+
+
+class IdeasOut(BaseModel):
+    ideas: list[ContentIdeaOut]
 
 
 class SubscriptionOut(BaseModel):

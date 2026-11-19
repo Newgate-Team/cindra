@@ -4,6 +4,8 @@ locally without a Gemini key:
 
 - POST /v1beta/models/{model}:generateContent -> a structured reply
   ({"say", "emotion", "reaction"}) that quotes the viewer it answers;
+- the same endpoint, when the request asks for a JSON array (the
+  dashboard's content ideas), -> six canned ideas;
 - POST /v1beta/interactions -> speech for that line: real speech via
   macOS `say` + ffmpeg when available (voice Milena), else a tone.
 
@@ -44,10 +46,25 @@ def _speech(text: str) -> bytes:
     return (np.sin(2 * np.pi * 220 * t) * 6000).astype(np.int16).tobytes()
 
 
+def _ideas_reply() -> dict:
+    ideas = [
+        {"title": "Как мы выбираем зерно для осеннего кофе", "hook": "Мы отказались от 9 из 10 поставщиков.", "format": "video"},
+        {"title": "Три ошибки в утреннем ритуале", "hook": "Вы наверняка делаете вторую.", "format": "post"},
+        {"title": "Новая коллекция: за кадром", "hook": "Так выглядит наш рабочий стол за день до запуска.", "format": "image"},
+        {"title": "Вопрос недели: чай или кофе?", "hook": "Спорим, у вашей команды ответ неожиданный?", "format": "post"},
+        {"title": "60 секунд: от эскиза до витрины", "hook": "Весь путь продукта — быстрее, чем остывает чашка.", "format": "video"},
+        {"title": "Цитата клиента, которая нас растрогала", "hook": "«Это первое, что я открываю утром».", "format": "image"},
+    ]
+    return {"candidates": [{"content": {"parts": [{"text": json.dumps(ideas, ensure_ascii=False)}]},
+                            "finishReason": "STOP"}]}
+
+
 @app.post("/v1beta/models/{model_action}")
 async def generate(model_action: str, request: Request) -> dict:
     body = await request.json()
     prompt = body["contents"][0]["parts"][0]["text"]
+    if body.get("generationConfig", {}).get("responseSchema", {}).get("type") == "ARRAY":
+        return _ideas_reply()
     data = json.loads(prompt.split("\n", 2)[2])
     n = next(_turn)
     if "message" in data:

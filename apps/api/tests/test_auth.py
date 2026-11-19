@@ -101,6 +101,62 @@ def test_update_me_can_toggle_feed_sharing(client: TestClient) -> None:
     assert me_response.json()["share_generations_to_feed"] is False
 
 
+def _signed_in(client: TestClient) -> dict[str, str]:
+    payload = {"email": "ada@cindra.dev", "password": "supersecret1"}
+    client.post("/auth/register", json=payload)
+    token = client.post("/auth/login", json=payload).json()["access_token"]
+    return {"Authorization": f"Bearer {token}"}
+
+
+def test_brand_kit_is_saved_and_returned(client: TestClient) -> None:
+    headers = _signed_in(client)
+    assert client.get("/auth/me", headers=headers).json()["brand_guide"] is None
+
+    response = client.patch(
+        "/auth/me",
+        json={"role": "solo", "brand_guide": "  Короткие фразы. Без канцелярита.  ", "default_tone": "conversational"},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    body = client.get("/auth/me", headers=headers).json()
+    assert body["brand_guide"] == "Короткие фразы. Без канцелярита."
+    assert body["default_tone"] == "conversational"
+
+
+def test_brand_kit_is_untouched_by_a_patch_that_omits_it(client: TestClient) -> None:
+    headers = _signed_in(client)
+    client.patch(
+        "/auth/me", json={"role": "solo", "brand_guide": "Тон бренда", "default_tone": "expert"}, headers=headers
+    )
+    client.patch("/auth/me", json={"role": "agency"}, headers=headers)  # e.g. a role change
+    body = client.get("/auth/me", headers=headers).json()
+    assert body["brand_guide"] == "Тон бренда"
+    assert body["default_tone"] == "expert"
+
+
+def test_brand_kit_can_be_cleared_with_empty_values(client: TestClient) -> None:
+    headers = _signed_in(client)
+    client.patch(
+        "/auth/me", json={"role": "solo", "brand_guide": "Тон бренда", "default_tone": "expert"}, headers=headers
+    )
+    client.patch("/auth/me", json={"role": "solo", "brand_guide": "  ", "default_tone": ""}, headers=headers)
+    body = client.get("/auth/me", headers=headers).json()
+    assert body["brand_guide"] is None
+    assert body["default_tone"] is None
+
+
+def test_brand_kit_rejects_unknown_tone_and_oversized_guide(client: TestClient) -> None:
+    headers = _signed_in(client)
+    assert (
+        client.patch("/auth/me", json={"role": "solo", "default_tone": "sarcastic"}, headers=headers).status_code
+        == 422
+    )
+    assert (
+        client.patch("/auth/me", json={"role": "solo", "brand_guide": "я" * 5001}, headers=headers).status_code
+        == 422
+    )
+
+
 def test_register_duplicate_email_conflicts(client: TestClient) -> None:
     payload = {"email": "ada@cindra.dev", "password": "supersecret1"}
     assert client.post("/auth/register", json=payload).status_code == 201

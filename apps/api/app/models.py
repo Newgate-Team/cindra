@@ -191,6 +191,12 @@ class User(Base):
     share_generations_to_feed: Mapped[bool] = mapped_column(
         Boolean, default=True, nullable=False
     )
+    # Brand kit: written once in Settings, used as the default brand guide
+    # and tone everywhere content is generated, so nobody retypes "short
+    # sentences, no jargon" into every form. A tone is a key of
+    # prompts.TONE_GUIDANCE.
+    brand_guide: Mapped[str | None] = mapped_column(String(5000), nullable=True)
+    default_tone: Mapped[str | None] = mapped_column(String(20), nullable=True)
     # False until the address is confirmed via a mailed link, or the
     # account came from Google (which already proved ownership, same
     # reasoning as CIN-140's password-drop on Google sign-in). Informational

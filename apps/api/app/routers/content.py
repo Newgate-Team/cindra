@@ -15,6 +15,8 @@ from app.content_pipeline.attachments import (
     max_size_bytes_for_mime,
     read_upload_capped,
 )
+from app.content_pipeline.errors import TransientGenerationError
+from app.content_pipeline.ideas import generate_ideas
 from app.content_pipeline.image_generator import nano_banana_image_generator
 from app.content_pipeline.layout_renderer import (
     LayoutFontMissingError,
@@ -28,6 +30,7 @@ from app.content_pipeline.publish_matrix import (
     validate_generation_target,
 )
 from app.content_pipeline.tasks import run_generation_job
+from app.content_pipeline.video_studio import VideoStudioFailedError
 from app.db import get_db
 from app.deps import get_current_user, require_admin
 from app.image_templates import IMAGE_TEMPLATES
@@ -39,10 +42,13 @@ from app.models import (
     UsageEventType,
     User,
 )
+from app.ratelimit import hit
 from app.schemas import (
     AttachmentOut,
     GenerationJobOut,
     GenerationRequest,
+    IdeasOut,
+    IdeasRequest,
     ImageTemplateOut,
     ImageTemplatePreviewsOut,
     LayoutBackgroundOut,
@@ -266,6 +272,48 @@ async def upload_layout_background(
     except UnsupportedAttachmentError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
     return LayoutBackgroundOut(background_url=upload_bytes(data, mime_type, "jpg"))
+
+
+@router.post("/ideas", response_model=IdeasOut)
+def suggest_ideas(
+    payload: IdeasRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> IdeasOut:
+    """A handful of concrete content ideas for the week ("Идеи" on the dashboard).
+
+    One cheap text call, so it is not metered against the plan's
+    generation quota (that would punish exploring); a per-user rate
+    limit keeps it from becoming a free text API instead.
+    """
+    if not get_settings().gemini_api_key:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Генерация не настроена на сервере",
+        )
+    hit("ideas-hour", str(current_user.id), 6, 3600)
+    hit("ideas-day", str(current_user.id), 20, 86400)
+    recent = db.scalars(
+        select(GenerationJob.input_payload["topic"].astext)
+        .where(GenerationJob.user_id == current_user.id)
+        .order_by(GenerationJob.created_at.desc())
+        .limit(10)
+    ).all()
+    try:
+        ideas = generate_ideas(
+            current_user.brand_guide, [t for t in recent if t], payload.focus
+        )
+    except TransientGenerationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Сервис генерации сейчас перегружен — попробуйте через минуту",
+        ) from exc
+    except VideoStudioFailedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Не удалось придумать идеи — попробуйте ещё раз",
+        ) from exc
+    return IdeasOut(ideas=ideas)
 
 
 @router.post("/layout-render", response_model=LayoutRenderOut)

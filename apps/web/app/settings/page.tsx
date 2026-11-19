@@ -3,8 +3,10 @@
 import { useState, type FormEvent } from "react";
 
 import { RequireAuth } from "../components/RequireAuth";
+import { ChipSelect } from "../components/Studio";
 import { ApiError, api } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
+import { TONE_OPTIONS } from "@/lib/tones";
 import type { UserRole } from "@/lib/types";
 
 function SettingsForm() {
@@ -94,9 +96,76 @@ function SettingsForm() {
       {/* A Google-only account (has_password: false) has no password
           to change -- /auth/login already points it at "Войти через
           Google" instead, this form would just 400 every time. */}
+      <BrandKitForm />
       {user.has_password && <ChangePasswordForm />}
       </div>
     </>
+  );
+}
+
+// The brand kit: written once here, then pre-filled into every form that
+// generates content (Посты, A/B, Видео) -- still editable there per run.
+function BrandKitForm() {
+  const { user, token, refreshUser } = useAuth();
+  const [guide, setGuide] = useState(user?.brand_guide ?? "");
+  const [tone, setTone] = useState(user?.default_tone ?? "");
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSubmit(event: FormEvent) {
+    event.preventDefault();
+    if (!user) return;
+    setError(null);
+    setSaved(false);
+    setSaving(true);
+    try {
+      // role is required by PATCH /auth/me; sending the current one
+      // changes nothing.
+      await api.patch("/auth/me", { role: user.role, brand_guide: guide, default_tone: tone }, token);
+      await refreshUser();
+      setSaved(true);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Не удалось сохранить");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="panel settings-form">
+      <h2>Ваш бренд</h2>
+      <p className="muted">
+        Один раз опишите голос бренда — и он подставится во все формы генерации, не нужно печатать его заново.
+      </p>
+      <label className="field-block">
+        <span className="field-label">Бренд-гайд</span>
+        <textarea
+          rows={4}
+          maxLength={5000}
+          value={guide}
+          onChange={(e) => {
+            setGuide(e.target.value);
+            setSaved(false);
+          }}
+          placeholder="Короткие фразы. Без канцелярита. Обращаемся на «вы», иногда с юмором."
+        />
+      </label>
+      <ChipSelect
+        label="Тон по умолчанию"
+        value={tone}
+        options={TONE_OPTIONS}
+        onChange={(next) => {
+          setTone(next);
+          setSaved(false);
+        }}
+      />
+      {error && <p className="error">{error}</p>}
+      {saved && <p className="muted">Сохранено — теперь это подставляется при генерации.</p>}
+      <button type="submit" disabled={saving}>
+        {saving ? "Сохраняем…" : "Сохранить бренд"}
+      </button>
+    </form>
   );
 }
 

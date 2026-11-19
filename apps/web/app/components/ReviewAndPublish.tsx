@@ -4,11 +4,12 @@ import { useMemo, useState, type FormEvent } from "react";
 
 import { ApiError, api } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
+import { strictestLimit } from "@/lib/platform-limits";
 import { allowedContentKindsFor, allowedContentTypesFor } from "@/lib/publish-matrix";
 import type { GenerationContentType, Post, SocialAccount } from "@/lib/types";
 
 import { SaveToDriveButton } from "./SaveToDriveButton";
-import { PostCard, platformLabel } from "./Studio";
+import { CharCounter, PostCard, QuickTimes, platformLabel } from "./Studio";
 import { TikTokPublishFields, useTikTokPublishOptions } from "./TikTokPublishFields";
 
 // datetime-local reads and writes LOCAL time, so the `min` guard has
@@ -95,6 +96,13 @@ export function ReviewAndPublish({
     [targetAccounts]
   );
   const tiktok = useTikTokPublishOptions(targetTikTokAccounts, token, { aiGenerated });
+  // Strictest caption limit among the chosen platforms: better to stop
+  // here than to schedule a post that fails when it is due.
+  const limit = strictestLimit(
+    targetAccounts.map((account) => account.platform),
+    Boolean(imageUrl || videoUrl)
+  );
+  const tooLong = limit !== null && text.length > limit.limit;
 
   async function handlePublish(event: FormEvent) {
     event.preventDefault();
@@ -160,6 +168,7 @@ export function ReviewAndPublish({
           onChange={(e) => setText(e.target.value)}
         />
       </PostCard>
+      <CharCounter length={text.length} limit={limit?.limit ?? null} platform={limit?.platform} />
       <p className="muted hint">Нажмите на текст в карточке, чтобы отредактировать его перед публикацией.</p>
       {(videoUrl || imageUrl) && (
         <div className="list-row-actions">
@@ -217,10 +226,11 @@ export function ReviewAndPublish({
           onChange={(e) => setScheduledFor(e.target.value)}
         />
       </label>
+      <QuickTimes value={scheduledFor} onPick={setScheduledFor} />
       {error && <p className="error">{error}</p>}
       <button
         type="submit"
-        disabled={publishing || tiktok.loading || !tiktok.ready || effectiveAccountIds.length === 0}
+        disabled={publishing || tiktok.loading || !tiktok.ready || effectiveAccountIds.length === 0 || tooLong}
       >
         {publishing ? "Публикуем…" : scheduledFor ? "Запланировать" : "Опубликовать сейчас"}
       </button>

@@ -250,6 +250,11 @@ def update_me(
     current_user.role = payload.role
     if payload.share_generations_to_feed is not None:
         current_user.share_generations_to_feed = payload.share_generations_to_feed
+    # "" means "clear it", None means "not part of this request".
+    if payload.brand_guide is not None:
+        current_user.brand_guide = payload.brand_guide.strip() or None
+    if payload.default_tone is not None:
+        current_user.default_tone = payload.default_tone or None
     db.commit()
     db.refresh(current_user)
     return current_user

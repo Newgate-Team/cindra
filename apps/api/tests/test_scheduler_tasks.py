@@ -1,3 +1,4 @@
+import contextlib
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -64,6 +65,100 @@ def test_permanent_failure_marks_post_failed(db: Session, user: User) -> None:
     db.refresh(post)
     assert post.status == PostStatus.failed
     assert post.error_message == "бот не админ канала"
+
+
+@pytest.fixture
+def outbox(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str, str]]:
+    """SMTP "configured", with sent mail captured instead of delivered."""
+    from app.config import get_settings
+    from app.scheduler import tasks
+
+    sent: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(get_settings(), "smtp_host", "smtp.example.com")
+    monkeypatch.setattr(tasks, "send_email", lambda to, subject, body: sent.append((to, subject, body)))
+    return sent
+
+
+def test_author_is_emailed_when_a_post_fails_for_good(
+    db: Session, user: User, outbox: list[tuple[str, str, str]]
+) -> None:
+    def _forbidden(account, post):
+        raise PermanentPublishError("бот не админ канала")
+
+    register_publisher(SocialPlatform.telegram, _forbidden)
+    post = _make_post(db, user, text="Пост про кофе")
+
+    publish_post.apply(args=[str(post.id)])
+
+    assert len(outbox) == 1
+    to, subject, body = outbox[0]
+    assert to == user.email
+    assert "не вышла" in subject
+    assert "бот не админ канала" in body and "Пост про кофе" in body
+    assert body.rstrip().endswith("/calendar")
+
+
+def test_no_email_while_a_transient_failure_is_still_retrying(
+    db: Session, user: User, outbox: list[tuple[str, str, str]]
+) -> None:
+    from celery.exceptions import Retry
+
+    def _flaky(account, post):
+        raise TransientPublishError("flood control")
+
+    register_publisher(SocialPlatform.telegram, _flaky)
+    post = _make_post(db, user)
+    with pytest.raises(Retry):
+        publish_post.apply(args=[str(post.id)])
+    assert outbox == []
+
+    # ...but the last allowed attempt gives up, and that one is reported.
+    with pytest.raises(TransientPublishError):
+        publish_post.apply(args=[str(post.id)], retries=3)
+    assert len(outbox) == 1
+
+
+def test_a_broken_mail_relay_does_not_change_the_failed_post(
+    db: Session, user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.config import get_settings
+    from app.scheduler import tasks
+
+    monkeypatch.setattr(get_settings(), "smtp_host", "smtp.example.com")
+
+    def _relay_down(to, subject, body):
+        raise ConnectionError("relay down")
+
+    monkeypatch.setattr(tasks, "send_email", _relay_down)
+
+    def _forbidden(account, post):
+        raise PermanentPublishError("бот не админ канала")
+
+    register_publisher(SocialPlatform.telegram, _forbidden)
+    post = _make_post(db, user)
+
+    # Eager mode may surface the relay error; what matters is the post.
+    with contextlib.suppress(Exception):
+        publish_post.apply(args=[str(post.id)])
+    db.refresh(post)
+    assert post.status == PostStatus.failed
+    assert post.error_message == "бот не админ канала"
+
+
+def test_no_email_without_smtp(db: Session, user: User, monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.config import get_settings
+    from app.scheduler import tasks
+
+    monkeypatch.setattr(get_settings(), "smtp_host", "")
+    called: list[str] = []
+    monkeypatch.setattr(tasks, "send_email", lambda *a: called.append("sent"))
+
+    def _forbidden(account, post):
+        raise PermanentPublishError("бот не админ канала")
+
+    register_publisher(SocialPlatform.telegram, _forbidden)
+    publish_post.apply(args=[str(_make_post(db, user).id)])
+    assert called == []
 
 
 def test_transient_error_triggers_a_retry(db: Session, user: User) -> None:

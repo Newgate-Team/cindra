@@ -21,6 +21,7 @@ import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import type { AnalyticsSummary, Page, Post, SocialAccount, SocialPlatform } from "@/lib/types";
 
+import { Ideas } from "./Ideas";
 import { Metric, Ring, usageColor } from "./Widgets";
 
 const PLATFORM_NAMES: Record<SocialPlatform, string> = {
@@ -210,6 +211,8 @@ export function Dashboard() {
           })}
         </div>
       </section>
+
+      <Ideas />
 
       {failed && <p className="error">Часть данных не загрузилась — обновите страницу, если цифры выглядят неполными.</p>}
 

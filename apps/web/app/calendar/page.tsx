@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Plus } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Copy, Plus } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState, type DragEvent, type FormEvent } from "react";
 
 import { ApiError, api } from "@/lib/api";
@@ -18,7 +18,7 @@ import type { Page, Post, SocialAccount } from "@/lib/types";
 
 import { Dialog } from "../components/Dialog";
 import { RequireAuth } from "../components/RequireAuth";
-import { ChipSelect, platformLabel } from "../components/Studio";
+import { ChipSelect, QuickTimes, platformLabel } from "../components/Studio";
 
 type Mode = "week" | "month" | "list";
 
@@ -92,11 +92,19 @@ function PostMedia({ post, large = false }: { post: Post; large?: boolean }) {
 // Планирование публикации прямо здесь, без обязательного прохождения
 // генерации контента (CIN-76) -- POST /posts уже поддерживает пост
 // без generation_job_id, не хватало только формы.
-function CreatePostForm({ initialWhen, onCreated }: { initialWhen: string; onCreated: () => void }) {
+function CreatePostForm({
+  initialWhen,
+  initialText = "",
+  onCreated,
+}: {
+  initialWhen: string;
+  initialText?: string;
+  onCreated: () => void;
+}) {
   const { token } = useAuth();
   const [accounts, setAccounts] = useState<SocialAccount[]>([]);
   const [accountId, setAccountId] = useState("");
-  const [text, setText] = useState("");
+  const [text, setText] = useState(initialText);
   const [scheduledFor, setScheduledFor] = useState(initialWhen);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -178,6 +186,7 @@ function CreatePostForm({ initialWhen, onCreated }: { initialWhen: string; onCre
           onChange={(e) => setScheduledFor(e.target.value)}
         />
       </label>
+      <QuickTimes value={scheduledFor} onPick={setScheduledFor} />
       {error && <p className="error">{error}</p>}
       <button type="submit" disabled={submitting}>
         {submitting ? "Сохраняем…" : scheduledFor ? "Запланировать" : "Опубликовать сейчас"}
@@ -255,7 +264,15 @@ function PostActions({ post, onChanged }: { post: Post; onChanged: () => void })
   );
 }
 
-function PostDetail({ post, onChanged }: { post: Post; onChanged: () => void }) {
+function PostDetail({
+  post,
+  onChanged,
+  onDuplicate,
+}: {
+  post: Post;
+  onChanged: () => void;
+  onDuplicate: (post: Post) => void;
+}) {
   return (
     <div className="post-detail">
       <p className="muted">
@@ -266,6 +283,9 @@ function PostDetail({ post, onChanged }: { post: Post; onChanged: () => void }) 
       <p className="post-detail-text">{post.text}</p>
       {post.status === "failed" && post.error_message && <p className="error">{post.error_message}</p>}
       <PostActions post={post} onChanged={onChanged} />
+      <button type="button" className="secondary" onClick={() => onDuplicate(post)}>
+        <Copy size={15} aria-hidden="true" /> Запланировать ещё раз
+      </button>
     </div>
   );
 }
@@ -303,6 +323,8 @@ function CalendarBoard({ mode }: { mode: "week" | "month" }) {
   const [error, setError] = useState<string | null>(null);
   const [opened, setOpened] = useState<Post | null>(null);
   const [creatingFor, setCreatingFor] = useState<string | null>(null);
+  // Text carried over when a post is scheduled again ("ещё раз").
+  const [creatingText, setCreatingText] = useState("");
 
   const days = useMemo(() => {
     if (mode === "week") {
@@ -433,7 +455,10 @@ function CalendarBoard({ mode }: { mode: "week" | "month" }) {
                       type="button"
                       className="ghost day-add"
                       aria-label={`Запланировать на ${day.toLocaleDateString("ru-RU", { day: "numeric", month: "long" })}`}
-                      onClick={() => setCreatingFor(toLocalInputValue(new Date(day.getFullYear(), day.getMonth(), day.getDate(), 10, 0)))}
+                      onClick={() => {
+                        setCreatingText("");
+                        setCreatingFor(toLocalInputValue(new Date(day.getFullYear(), day.getMonth(), day.getDate(), 10, 0)));
+                      }}
                     >
                       <Plus size={14} />
                     </button>
@@ -467,15 +492,36 @@ function CalendarBoard({ mode }: { mode: "week" | "month" }) {
               setOpened(null);
               load();
             }}
+            onDuplicate={(post) => {
+              setOpened(null);
+              setCreatingText(post.text);
+              // Tomorrow at the same time of day is the usual "again".
+              const original = new Date(post.scheduled_for);
+              const now = new Date();
+              setCreatingFor(
+                toLocalInputValue(
+                  new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, original.getHours(), original.getMinutes())
+                )
+              );
+            }}
           />
         )}
       </Dialog>
-      <Dialog open={creatingFor !== null} title="Запланировать публикацию" onClose={() => setCreatingFor(null)}>
+      <Dialog
+        open={creatingFor !== null}
+        title="Запланировать публикацию"
+        onClose={() => {
+          setCreatingFor(null);
+          setCreatingText("");
+        }}
+      >
         {creatingFor !== null && (
           <CreatePostForm
             initialWhen={creatingFor}
+            initialText={creatingText}
             onCreated={() => {
               setCreatingFor(null);
+              setCreatingText("");
               load();
             }}
           />

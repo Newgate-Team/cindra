@@ -31,6 +31,10 @@ export interface User {
   // Google-created/-linked account. Informational only -- nothing in
   // the product is gated on this.
   email_verified: boolean;
+  // Brand kit (Settings): default brand guide and tone for every form
+  // that generates content.
+  brand_guide: string | null;
+  default_tone: string | null;
   created_at: string;
 }
 

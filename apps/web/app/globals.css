@@ -3758,3 +3758,89 @@ fieldset.plain > legend {
   width: 20px;
   height: 20px;
 }
+
+/* Caption length, quick schedule times */
+.char-counter {
+  margin: 0;
+  padding: 0 4px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+
+.char-counter.over {
+  color: var(--danger-text);
+  font-weight: 600;
+}
+
+.quick-times {
+  margin: -4px 0 4px;
+}
+
+/* Dashboard: weekly ideas */
+.ideas-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  max-width: none;
+  margin-bottom: 16px;
+}
+
+.ideas-form input {
+  flex: 1;
+  min-width: 220px;
+}
+
+.ideas-form button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.idea-grid {
+  display: grid;
+  gap: 12px;
+}
+
+@media (min-width: 720px) {
+  .idea-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+.idea {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: #fff;
+}
+
+.idea h3 {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.35;
+}
+
+.idea p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.idea .button-link {
+  margin-top: auto;
+}
+
+.idea-format {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}

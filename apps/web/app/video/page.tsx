@@ -3,7 +3,7 @@
 import { ArrowRight, ArrowUpRight, Clapperboard, Scissors, UserRound } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState, type CSSProperties, type FormEvent } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type FormEvent } from "react";
 
 import { RequireAuth } from "../components/RequireAuth";
 import { ApiError, api } from "@/lib/api";
@@ -25,10 +25,18 @@ const STATUS_LABELS: Record<VideoProject["status"], string> = {
 };
 
 function VideoProjectsPage() {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const router = useRouter();
   const [projects, setProjects] = useState<VideoProject[] | null>(null);
   const [topic, setTopic] = useState("");
+  // The dashboard's ideas hand a topic over as ?topic= (read once).
+  const prefilled = useRef(false);
+  useEffect(() => {
+    if (prefilled.current) return;
+    prefilled.current = true;
+    const idea = new URLSearchParams(window.location.search).get("topic");
+    if (idea) setTopic(idea.slice(0, 5000));
+  }, []);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
 
@@ -47,7 +55,11 @@ function VideoProjectsPage() {
     setError(null);
     setCreating(true);
     try {
-      const project = await api.post<VideoProject>("/video-projects", { topic }, token);
+      const project = await api.post<VideoProject>(
+        "/video-projects",
+        { topic, brand_guide: user?.brand_guide ?? null },
+        token
+      );
       router.push(`/video/${project.id}`);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Не удалось создать проект");
