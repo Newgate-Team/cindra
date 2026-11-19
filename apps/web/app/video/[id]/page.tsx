@@ -12,6 +12,7 @@ import {
 } from "../../components/TikTokPublishFields";
 import { ApiError, api } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
+import { minLocalInput } from "@/lib/datetime";
 import { allowedContentTypesFor } from "@/lib/publish-matrix";
 import type { Post, SocialAccount, VideoProject, VideoStyle } from "@/lib/types";
 
@@ -24,9 +25,8 @@ const PROJECT_STATUS_LABELS: Record<VideoProject["status"], string> = {
   video_ready: "Видео готово",
 };
 
-function minDatetimeLocal(): string {
-  return new Date().toISOString().slice(0, 16);
-}
+// Local time, not UTC -- see lib/datetime.ts.
+const minDatetimeLocal = minLocalInput;
 
 function downloadFile(filename: string, content: string) {
   const blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
@@ -112,7 +112,7 @@ function PublishBlock({ project }: { project: VideoProject }) {
     return (
       <p className="muted">
         Чтобы опубликовать ролик из Cindra, подключите аккаунт с поддержкой видео на
-        странице «Каналы».
+        странице «Соцсети».
       </p>
     );
   }

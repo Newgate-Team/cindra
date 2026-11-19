@@ -1,5 +1,6 @@
 "use client";
 
+import { MessageCircle, Play, Plus, Radio, Settings, Square } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 
@@ -14,6 +15,7 @@ import type {
   StreamVoice,
 } from "@/lib/types";
 
+import { Poster } from "../components/Brand";
 import { RequireAuth } from "../components/RequireAuth";
 
 const STATUS_LABELS: Record<LiveStreamStatus, string> = {
@@ -267,7 +269,7 @@ function StreamForm({
   }
 
   return (
-    <form onSubmit={handleSubmit}>
+    <form onSubmit={handleSubmit} className="dialog-form">
       <label>
         Название эфира
         <input required maxLength={200} value={form.title} onChange={(e) => set("title", e.target.value)} />
@@ -432,21 +434,33 @@ function StreamLog({ stream }: { stream: LiveStream }) {
     };
   }, [stream.id, stream.status, token]);
 
-  if (events.length === 0) return <p className="muted">В журнале эфира пока пусто.</p>;
+  if (events.length === 0) {
+    return (
+      <div className="empty compact">
+        <span className="tile" aria-hidden="true">
+          <MessageCircle size={22} />
+        </span>
+        <p className="muted">В журнале эфира пока пусто — ответы аватара и сообщения чата появятся здесь.</p>
+      </div>
+    );
+  }
+  // A chat, not a table: the viewer's line on the left, what the avatar
+  // said back on the right.
   return (
     <ul className="stream-log">
       {events.map((event) => (
         <li key={event.id} className={`stream-log-${event.kind}`}>
-          <span className="muted">
+          <span className="stream-log-meta muted">
             {new Date(event.created_at).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}{" "}
             · {EVENT_LABELS[event.kind]}
           </span>
           {event.author && event.message && (
-            <span className="stream-log-question">
-              <strong>{event.author}:</strong> {event.message}
+            <span className="bubble viewer">
+              <strong>{event.author}</strong>
+              {event.message}
             </span>
           )}
-          <span>{event.text}</span>
+          <span className="bubble avatar-said">{event.text}</span>
         </li>
       ))}
     </ul>
@@ -495,58 +509,82 @@ function StreamCard({
     }
   }
 
+  const stats = [
+    { value: stream.status === "live" ? formatUptime(stream.stats.uptime_seconds) : "—", label: "в эфире" },
+    { value: String(stream.stats.replies ?? 0), label: "ответов" },
+    { value: String(stream.stats.chat_messages ?? 0), label: "сообщений в чате" },
+  ];
+
   return (
-    <div className="card">
-      <p>
-        <strong>{stream.title}</strong>{" "}
-        <span className={`badge ${STATUS_BADGE[stream.status]}`}>{STATUS_LABELS[stream.status]}</span>
-      </p>
-      <p className="muted">
-        twitch.tv/{stream.channel}
-        {stream.status === "live" && (
-          <>
-            {" · "}в эфире {formatUptime(stream.stats.uptime_seconds)} · ответов {stream.stats.replies ?? 0} ·
-            сообщений в чате {stream.stats.chat_messages ?? 0}
-          </>
-        )}
-        {stream.stop_requested && " · останавливается…"}
-      </p>
-      {stream.error_message && <p className="error">{stream.error_message}</p>}
-      {error && <p className="error">{error}</p>}
-      <div className="list-row-actions">
-        {onAir ? (
-          <button type="button" onClick={() => action("stop")} disabled={busy || stream.stop_requested}>
-            Остановить эфир
-          </button>
-        ) : (
-          <button type="button" onClick={() => action("start")} disabled={busy}>
-            Запустить эфир
-          </button>
-        )}
-        <button type="button" className="secondary" onClick={() => setEditing((v) => !v)}>
-          {editing ? "Скрыть настройки" : "Настройки"}
-        </button>
-        {!onAir && (
-          <button type="button" className="secondary" onClick={remove} disabled={busy}>
-            Удалить
-          </button>
-        )}
+    <>
+      <div className="studio">
+        <section className="panel">
+          <Poster title={stream.title} tone={onAir ? "sun" : "violet"} />
+          <div className="section-head section">
+            <h2>{stream.title}</h2>
+            {stream.status === "live" ? (
+              <span className="tag red live">
+                <span className="live-dot" aria-hidden="true" /> LIVE
+              </span>
+            ) : (
+              <span className={`badge ${STATUS_BADGE[stream.status]}`}>{STATUS_LABELS[stream.status]}</span>
+            )}
+          </div>
+          <p className="muted">
+            twitch.tv/{stream.channel}
+            {stream.stop_requested && " · останавливается…"}
+          </p>
+          <div className="stat-row">
+            {stats.map((stat) => (
+              <div key={stat.label}>
+                <strong className="number">{stat.value}</strong>
+                <small className="muted">{stat.label}</small>
+              </div>
+            ))}
+          </div>
+          {stream.error_message && <p className="error">{stream.error_message}</p>}
+          {error && <p className="error">{error}</p>}
+          <div className="list-row-actions">
+            {onAir ? (
+              <button type="button" className="secondary" onClick={() => action("stop")} disabled={busy || stream.stop_requested}>
+                <Square size={15} aria-hidden="true" /> Остановить эфир
+              </button>
+            ) : (
+              <button type="button" onClick={() => action("start")} disabled={busy}>
+                <Play size={15} aria-hidden="true" /> Запустить эфир
+              </button>
+            )}
+            <button type="button" className="secondary" onClick={() => setEditing((v) => !v)}>
+              <Settings size={15} aria-hidden="true" /> {editing ? "Скрыть настройки" : "Настройки"}
+            </button>
+            {!onAir && (
+              <button type="button" className="ghost" onClick={remove} disabled={busy}>
+                Удалить
+              </button>
+            )}
+          </div>
+        </section>
+        <section className="panel">
+          <h2>Журнал эфира</h2>
+          <StreamLog stream={stream} />
+        </section>
       </div>
       {editing && (
-        <StreamForm
-          stream={stream}
-          providers={providers}
-          voices={voices}
-          twitchConnected={twitchConnected}
-          onSaved={(saved) => {
-            setEditing(false);
-            onChanged(saved);
-          }}
-        />
+        <section className="panel section">
+          <h2>Настройки эфира</h2>
+          <StreamForm
+            stream={stream}
+            providers={providers}
+            voices={voices}
+            twitchConnected={twitchConnected}
+            onSaved={(saved) => {
+              setEditing(false);
+              onChanged(saved);
+            }}
+          />
+        </section>
       )}
-      <h3>Журнал эфира</h3>
-      <StreamLog stream={stream} />
-    </div>
+    </>
   );
 }
 
@@ -599,21 +637,23 @@ function StreamsManager() {
     <>
       <div className="page-header">
         <div>
-          <h1>Эфир с AI-аватаром</h1>
+          <h1>Эфир, который всегда с вами</h1>
           <p className="muted">
-            Аватар ведёт трансляцию на Twitch круглосуточно: читает чат, отвечает голосом, приветствует
-            рейды и подписчиков, а когда чат молчит — сам говорит на ваши темы. Минуты аватара
-            оплачиваются с вашего аккаунта у сервиса аватара.
+            AI-ведущий на Twitch читает чат, отвечает голосом, приветствует рейды и подписчиков, а когда чат
+            молчит — сам говорит на ваши темы. Минуты аватара оплачиваются с вашего аккаунта у сервиса аватара.
           </p>
         </div>
       </div>
-      {agentOnline === false && (
-        <p className="muted">
-          Сервер эфира сейчас не подключён — запущенный эфир начнётся, как только он появится.
+      {agentOnline !== null && (
+        <p className="status-line">
+          <span className={`tag ${agentOnline ? "green" : ""}`}>
+            {agentOnline ? "Сервер эфира на связи" : "Сервер эфира не на связи"}
+          </span>
+          {!agentOnline && <span className="muted">Запущенный эфир начнётся, как только он появится.</span>}
         </p>
       )}
       {error && <p className="error">{error}</p>}
-      {streams === null && !error && <p className="muted">Загрузка…</p>}
+      {streams === null && !error && <div className="skeleton" aria-busy="true" />}
 
       {streams !== null && providers.length === 0 && (
         <p className="muted">Сервисы аватаров для эфира пока не настроены на сервере.</p>
@@ -622,7 +662,7 @@ function StreamsManager() {
       {streams !== null && providers.length > 0 && (
         <>
           {creating ? (
-            <div className="card">
+            <div className="panel">
               <h2>Новый эфир</h2>
               <StreamForm
                 stream={null}
@@ -636,9 +676,21 @@ function StreamsManager() {
               />
             </div>
           ) : (
-            <button type="button" onClick={() => setCreating(true)}>
-              Новый эфир
-            </button>
+            <div className="section-head">
+              <span />
+              <button type="button" onClick={() => setCreating(true)}>
+                <Plus size={16} aria-hidden="true" /> Новый эфир
+              </button>
+            </div>
+          )}
+          {streams.length === 0 && !creating && (
+            <section className="panel empty">
+              <span className="tile" aria-hidden="true">
+                <Radio size={26} />
+              </span>
+              <h2>Здесь начнётся ваш эфир</h2>
+              <p className="muted">Создайте эфир: канал Twitch, ведущий и тема — и аватар выйдет в прямую.</p>
+            </section>
           )}
           {streams.map((stream) => (
             <StreamCard

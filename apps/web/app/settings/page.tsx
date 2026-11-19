@@ -43,11 +43,20 @@ function SettingsForm() {
     <>
       <div className="page-header">
         <div>
-          <h1>Настройки</h1>
-          <p className="muted">{user.email}</p>
+          <h1>Ваша студия — ваши правила</h1>
+          <p className="muted">Профиль, безопасность и приватность.</p>
         </div>
       </div>
-      <form onSubmit={handleSubmit} className="card">
+      <div className="settings-stack">
+      <form onSubmit={handleSubmit} className="panel settings-form">
+        <h2>Профиль</h2>
+        <div className="list-line">
+          <div className="list-line-text">
+            <b>{user.email}</b>
+            <small>{user.email_verified ? "Email подтверждён" : "Email ещё не подтверждён"}</small>
+          </div>
+          <span className={`tag${user.email_verified ? " green" : ""}`}>{user.email_verified ? "Подтверждён" : "Ждёт подтверждения"}</span>
+        </div>
         {/* Only agency accounts have anything to decide about "Тип
             аккаунта" -- for solo there's nothing here worth surfacing
             (they registered as solo and stay solo; switching TO agency
@@ -61,18 +70,21 @@ function SettingsForm() {
             </select>
           </label>
         )}
-        <label>
+        <h2>Приватность</h2>
+        <label className="toggle-row">
+          <span>
+            <b>Показывать мои работы в общей Ленте</b>
+            <small className="muted">
+              Лента — общая витрина сгенерированного контента без указания автора. Если выключить, готовые
+              изображения и видео увидите только вы. Аватар-видео остаются приватными всегда.
+            </small>
+          </span>
           <input
             type="checkbox"
             checked={shareToFeed}
             onChange={(e) => setShareToFeed(e.target.checked)}
           />
-          {" "}Показывать мои готовые изображения и видео в общей Ленте
         </label>
-        <p className="muted">
-          Лента — общая витрина сгенерированного контента всех пользователей, без указания
-          автора. Если выключить, готовые изображения и видео останутся видны только вам.
-        </p>
         {error && <p className="error">{error}</p>}
         {saved && <p className="muted">Сохранено.</p>}
         <button type="submit" disabled={saving}>
@@ -83,6 +95,7 @@ function SettingsForm() {
           to change -- /auth/login already points it at "Войти через
           Google" instead, this form would just 400 every time. */}
       {user.has_password && <ChangePasswordForm />}
+      </div>
     </>
   );
 }
@@ -123,7 +136,7 @@ function ChangePasswordForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="card" style={{ marginTop: 24 }}>
+    <form onSubmit={handleSubmit} className="panel settings-form">
       <h2>Сменить пароль</h2>
       <label>
         Текущий пароль

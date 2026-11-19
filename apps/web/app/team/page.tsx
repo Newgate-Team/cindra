@@ -1,5 +1,6 @@
 "use client";
 
+import { Users } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState, type FormEvent } from "react";
 
@@ -17,7 +18,11 @@ function CreateTeamForm({ onCreated }: { onCreated: (team: Team) => void }) {
 
   if (user?.role !== "agency") {
     return (
-      <div className="card">
+      <div className="panel empty">
+        <span className="tile" aria-hidden="true">
+          <Users size={26} />
+        </span>
+        <h2>Команды — для агентств</h2>
         <p className="muted">
           Команды доступны только агентским аккаунтам. Смените тип аккаунта на{" "}
           <Link href="/settings">странице настроек</Link>, чтобы создать команду.
@@ -44,9 +49,10 @@ function CreateTeamForm({ onCreated }: { onCreated: (team: Team) => void }) {
   }
 
   return (
-    <div className="card">
-      <p className="muted">У вас пока нет команды.</p>
-      <form onSubmit={handleSubmit}>
+    <div className="panel settings-stack">
+      <h2>Создайте команду</h2>
+      <p className="muted">У вас пока нет команды — общие соцсети, публикации и генерации появятся после создания.</p>
+      <form onSubmit={handleSubmit} className="dialog-form">
         <label>
           Название команды
           <input
@@ -89,9 +95,9 @@ function InviteForm({ onInvited }: { onInvited: () => void }) {
   }
 
   return (
-    <form onSubmit={handleSubmit}>
-      <label>
-        Email участника
+    <form onSubmit={handleSubmit} className="dialog-form">
+      <label className="field-block">
+        <span className="field-label">Email участника</span>
         <input
           type="email"
           required
@@ -137,33 +143,39 @@ function TeamView({ team, onChanged }: { team: Team; onChanged: (team: Team) => 
 
   return (
     <>
-      <div className="card">
-        <div className="tile-header-body">
-          <strong>{team.name}</strong>
+      <section className="panel">
+        <div className="section-head">
+          <h2>{team.name}</h2>
+          <span className="tag">{team.members.length} уч.</span>
         </div>
         {error && <p className="error">{error}</p>}
         {team.members.map((member) => (
-          <div key={member.id} className="analytics-list-row">
-            <span>
-              {member.email}
-              {member.is_owner && <span className="badge active" style={{ marginLeft: 8 }}>Владелец</span>}
+          <div key={member.id} className="list-line">
+            <span className="avatar" aria-hidden="true">
+              {member.email.charAt(0).toUpperCase()}
             </span>
+            <div className="list-line-text">
+              <b>{member.email}</b>
+            </div>
+            {member.is_owner ? (
+              <span className="tag purple">Владелец</span>
+            ) : (
+              <span className="tag">Участник</span>
+            )}
             {isOwner && !member.is_owner && (
-              <button className="secondary" onClick={() => removeMember(member.id)}>
+              <button type="button" className="ghost" onClick={() => removeMember(member.id)}>
                 Удалить
               </button>
             )}
           </div>
         ))}
-      </div>
+      </section>
 
       {isOwner && (
-        <div className="card">
-          <div className="tile-header-body">
-            <strong>Пригласить участника</strong>
-          </div>
+        <section className="panel section">
+          <h2>Пригласить участника</h2>
           <InviteForm onInvited={refresh} />
-        </div>
+        </section>
       )}
     </>
   );
@@ -191,12 +203,12 @@ function TeamPageContent() {
     <>
       <div className="page-header">
         <div>
-          <h1>Команда</h1>
-          <p className="muted">Общие соцсети, публикации и генерации для агентства</p>
+          <h1>Создавать вместе</h1>
+          <p className="muted">Общие площадки, идеи и публикации вашей команды.</p>
         </div>
       </div>
       {error && <p className="error">{error}</p>}
-      {team === undefined && !error && <p className="muted">Загрузка…</p>}
+      {team === undefined && !error && <div className="skeleton" aria-busy="true" />}
       {team === null && <CreateTeamForm onCreated={setTeam} />}
       {team && <TeamView team={team} onChanged={setTeam} />}
     </>

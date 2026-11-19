@@ -1,5 +1,6 @@
 "use client";
 
+import { ImageUp, LayoutTemplate as LayoutIcon } from "lucide-react";
 import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from "react";
 
 import { ApiError, api } from "@/lib/api";
@@ -9,13 +10,14 @@ import type { LayoutTemplate, SocialAccount } from "@/lib/types";
 
 import { RequireAuth } from "../components/RequireAuth";
 import { ReviewAndPublish } from "../components/ReviewAndPublish";
+import { ChipSelect, platformLabel } from "../components/Studio";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 const FORMATS = [
-  { value: "square", label: "Квадрат — лента" },
-  { value: "story", label: "Вертикаль — сторис" },
-  { value: "landscape", label: "Горизонт — Telegram/Facebook" },
+  { value: "square", label: "Квадрат · лента" },
+  { value: "story", label: "Вертикаль · сторис" },
+  { value: "landscape", label: "Горизонт · Telegram, Facebook" },
 ];
 const THEMES = [
   { value: "dark", label: "Тёмная" },
@@ -82,7 +84,15 @@ function TemplateStudio() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    api.get<LayoutTemplate[]>("/content/layout-templates", token).then(setTemplates).catch(() => {});
+    api
+      .get<LayoutTemplate[]>("/content/layout-templates", token)
+      .then((list) => {
+        setTemplates(list);
+        // Open on the first layout so the right side shows a card
+        // right away instead of an empty frame.
+        setSelectedId((current) => current ?? list[0]?.id ?? null);
+      })
+      .catch(() => {});
     api.get<SocialAccount[]>("/social-accounts", token).then((list) => {
       setAccounts(list);
       setAccountsLoaded(true);
@@ -160,168 +170,172 @@ function TemplateStudio() {
     }
   }
 
+  const previewUrl = renderedUrl ?? (selected ? previews[selected.id] : undefined);
+
   return (
     <>
       <div className="page-header">
         <div>
-          <h1>Шаблоны</h1>
+          <h1>Шаблоны с вашим характером</h1>
           <p className="muted">
-            Карточки собираются по макету, а не рисуются моделью: текст встанет ровно так, как вы
-            его написали.
+            Карточки собираются по макету, а не рисуются моделью: текст встанет ровно так, как вы его написали.
           </p>
         </div>
       </div>
 
-      <div className="card">
-        <div className="grid-2">
-          <label>
-            Формат
-            <select value={canvasFormat} onChange={(e) => setCanvasFormat(e.target.value)}>
-              {FORMATS.map((f) => (
-                <option key={f.value} value={f.value}>
-                  {f.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Тема
-            <select value={theme} onChange={(e) => setTheme(e.target.value)}>
-              {THEMES.map((t) => (
-                <option key={t.value} value={t.value}>
-                  {t.label}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-
-        <fieldset className="template-gallery">
-          <legend>Макет</legend>
-          {templates.map((template) => (
-            <button
-              key={template.id}
-              type="button"
-              className={`template-card${template.id === selectedId ? " selected" : ""}`}
-              onClick={() => selectTemplate(template.id)}
-            >
-              {previews[template.id] ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={previews[template.id]} alt={template.title} />
-              ) : (
-                <span className="template-card-placeholder muted">Загружаем превью…</span>
-              )}
-              <strong>{template.title}</strong>
-              <span className="muted">{template.description}</span>
-            </button>
-          ))}
-        </fieldset>
-      </div>
-
-      {selected && (
-        <form onSubmit={handleRender} className="card" style={{ marginTop: 24 }}>
-          <h2>{selected.title}</h2>
-          {selected.slots.map((slot) => (
-            <label key={slot.name}>
-              {slot.label}
-              {!slot.required && " (необязательно)"}
-              <textarea
-                rows={slot.max_length > 100 ? 3 : 1}
-                maxLength={slot.max_length}
-                value={values[slot.name] ?? ""}
-                onChange={(e) => setValues({ ...values, [slot.name]: e.target.value })}
-              />
-            </label>
-          ))}
-          {selected.supports_image && (
-            <label>
-              Подложка — своё изображение
-              <input
-                type="file"
-                accept="image/*"
-                onChange={handleBackgroundChange}
-                disabled={uploadingBackground}
-              />
-              {uploadingBackground && <span className="muted">Загружаем…</span>}
-              {backgroundUrl && !uploadingBackground && (
-                <span className="muted">Подложка загружена</span>
-              )}
-            </label>
-          )}
-          <label>
-            Акцентный цвет (необязательно)
-            <input
-              type="color"
-              value={accent || "#DA2E2B"}
-              onChange={(e) => setAccent(e.target.value.toUpperCase())}
-            />
-          </label>
-          {accent && (
-            <button type="button" className="link-button" onClick={() => setAccent("")}>
-              Вернуть цвет темы
-            </button>
-          )}
-          {error && <p className="error">{error}</p>}
-          <button
-            type="submit"
-            disabled={rendering || uploadingBackground || (selected.supports_image && !backgroundUrl)}
-          >
-            {rendering ? "Собираем…" : "Собрать карточку"}
-          </button>
-          {selected.supports_image && !backgroundUrl && (
-            <p className="muted">Этот макет строится поверх изображения — загрузите подложку.</p>
-          )}
-        </form>
-      )}
-
-      {renderedUrl && (
-        <div className="card" style={{ marginTop: 24 }}>
-          <h2>Готовая карточка</h2>
-          {accountsLoaded && imageAccounts.length === 0 ? (
-            <>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={renderedUrl} alt="Карточка" style={{ maxWidth: "100%", borderRadius: 8 }} />
-              <p className="muted">
-                Чтобы опубликовать карточку, подключите соцсеть на странице «Соцсети».
-              </p>
-            </>
-          ) : (
-            <>
-              <fieldset className="chip-group">
-                <legend>Куда опубликовать</legend>
-                {imageAccounts.map((a) => (
-                  <label key={a.id}>
-                    <input
-                      type="checkbox"
-                      checked={targetAccountIds.includes(a.id)}
-                      onChange={(e) =>
-                        setTargetAccountIds(
-                          e.target.checked
-                            ? [...targetAccountIds, a.id]
-                            : targetAccountIds.filter((id) => id !== a.id)
-                        )
-                      }
-                    />
-                    {a.platform} — {a.display_name ?? a.external_account_id}
-                  </label>
+      <div className="studio">
+        <div className="studio-form-col">
+          <section className="panel studio-form">
+            <h2>Настройте карточку</h2>
+            <ChipSelect label="Формат" value={canvasFormat} options={FORMATS} onChange={setCanvasFormat} />
+            <ChipSelect label="Тема" value={theme} options={THEMES} onChange={setTheme} />
+            <div className="field-block" role="group" aria-label="Макет">
+              <span className="field-label">Макет</span>
+              <div className="template-grid">
+                {templates.map((template) => (
+                  <button
+                    key={template.id}
+                    type="button"
+                    className={`template-pick${template.id === selectedId ? " selected" : ""}`}
+                    aria-pressed={template.id === selectedId}
+                    title={template.description}
+                    onClick={() => selectTemplate(template.id)}
+                  >
+                    {previews[template.id] ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={previews[template.id]} alt="" className="template-pick-art" />
+                    ) : (
+                      <span className="template-pick-art" aria-hidden="true" />
+                    )}
+                    <b>{template.title}</b>
+                  </button>
                 ))}
-              </fieldset>
-              {targetAccountIds.length > 0 && (
-                <ReviewAndPublish
-                  imageUrl={renderedUrl}
-                  initialCaption=""
-                  contentKind="post"
-                  accounts={accounts}
-                  targetAccountIds={targetAccountIds}
-                  // Laid out by code from the user's own words -- not
-                  // AI-generated media (CIN-148).
-                  aiGenerated={false}
-                />
+              </div>
+              {selected && <p className="muted hint">{selected.description}</p>}
+            </div>
+          </section>
+
+          {selected && (
+            <form onSubmit={handleRender} className="panel studio-form">
+              <h2>{selected.title}</h2>
+              {selected.slots.map((slot) => (
+                <label key={slot.name} className="field-block">
+                  <span className="field-label">
+                    {slot.label}
+                    {!slot.required && " (необязательно)"}
+                  </span>
+                  <textarea
+                    rows={slot.max_length > 100 ? 3 : 1}
+                    maxLength={slot.max_length}
+                    value={values[slot.name] ?? ""}
+                    onChange={(e) => setValues({ ...values, [slot.name]: e.target.value })}
+                  />
+                </label>
+              ))}
+              {selected.supports_image && (
+                <label className="drop">
+                  <ImageUp size={16} aria-hidden="true" /> Подложка — своё изображение
+                  <small>
+                    {uploadingBackground
+                      ? "Загружаем…"
+                      : backgroundUrl
+                        ? "Подложка загружена"
+                        : "Этот макет строится поверх изображения — загрузите подложку."}
+                  </small>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handleBackgroundChange}
+                    disabled={uploadingBackground}
+                  />
+                </label>
               )}
-            </>
+              <div className="field-block">
+                <span className="field-label">Акцентный цвет (необязательно)</span>
+                <div className="color-row">
+                  <input
+                    type="color"
+                    aria-label="Акцентный цвет"
+                    value={accent || "#DA2E2B"}
+                    onChange={(e) => setAccent(e.target.value.toUpperCase())}
+                  />
+                  {accent && (
+                    <button type="button" className="ghost" onClick={() => setAccent("")}>
+                      Вернуть цвет темы
+                    </button>
+                  )}
+                </div>
+              </div>
+              {error && <p className="error">{error}</p>}
+              <button
+                type="submit"
+                disabled={rendering || uploadingBackground || (selected.supports_image && !backgroundUrl)}
+              >
+                <LayoutIcon size={16} aria-hidden="true" /> {rendering ? "Собираем…" : "Собрать карточку"}
+              </button>
+            </form>
           )}
         </div>
-      )}
+
+        <section className="panel studio-preview">
+          <div className="section-head">
+            <h2>{renderedUrl ? "Готовая карточка" : "Превью макета"}</h2>
+            <span className={`tag${renderedUrl ? " green" : " purple"}`}>{renderedUrl ? "Готово" : "Пример"}</span>
+          </div>
+          {previewUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={previewUrl} alt={renderedUrl ? "Карточка" : "Превью макета"} className="template-preview" />
+          ) : (
+            <div className="skeleton" aria-busy="true" />
+          )}
+          {!renderedUrl && (
+            <p className="muted hint">Заполните поля слева и нажмите «Собрать карточку» — здесь появится готовая карточка.</p>
+          )}
+          {renderedUrl && (
+            <div className="field-block publish-block">
+              {accountsLoaded && imageAccounts.length === 0 ? (
+                <p className="muted">Чтобы опубликовать карточку, подключите соцсеть на странице «Соцсети».</p>
+              ) : (
+                <>
+                  <fieldset className="field-block plain">
+                    <legend className="field-label">Куда опубликовать</legend>
+                    <div className="chip-group">
+                      {imageAccounts.map((a) => (
+                        <label key={a.id}>
+                          <input
+                            type="checkbox"
+                            checked={targetAccountIds.includes(a.id)}
+                            onChange={(e) =>
+                              setTargetAccountIds(
+                                e.target.checked
+                                  ? [...targetAccountIds, a.id]
+                                  : targetAccountIds.filter((id) => id !== a.id)
+                              )
+                            }
+                          />
+                          {platformLabel(a.platform)} — {a.display_name ?? a.external_account_id}
+                        </label>
+                      ))}
+                    </div>
+                  </fieldset>
+                  {targetAccountIds.length > 0 && (
+                    <ReviewAndPublish
+                      imageUrl={renderedUrl}
+                      initialCaption=""
+                      contentKind="post"
+                      accounts={accounts}
+                      targetAccountIds={targetAccountIds}
+                      // Laid out by code from the user's own words -- not
+                      // AI-generated media (CIN-148).
+                      aiGenerated={false}
+                    />
+                  )}
+                </>
+              )}
+            </div>
+          )}
+        </section>
+      </div>
     </>
   );
 }

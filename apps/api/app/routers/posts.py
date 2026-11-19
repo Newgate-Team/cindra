@@ -130,6 +130,11 @@ def _create_new_posts(
 def list_posts(
     limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
     offset: int = Query(0, ge=0),
+    # The calendar's week/month views ask for just the visible range
+    # (half-open: from <= scheduled_for < to) instead of paging through
+    # everything the user ever scheduled.
+    scheduled_from: datetime | None = Query(None, alias="from"),
+    scheduled_to: datetime | None = Query(None, alias="to"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> Page[PostOut]:
@@ -139,6 +144,10 @@ def list_posts(
         .where(Post.user_id.in_(visible_user_ids(db, current_user)))
         .order_by(Post.scheduled_for.desc())
     )
+    if scheduled_from is not None:
+        query = query.where(Post.scheduled_for >= scheduled_from)
+    if scheduled_to is not None:
+        query = query.where(Post.scheduled_for < scheduled_to)
     rows, total = paginate(db, query, limit, offset)
     items = [_post_out(post, account) for post, account in rows]
     return Page(items=items, total=total, limit=limit, offset=offset)

@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import (
@@ -278,6 +279,46 @@ def test_list_posts_scoped_to_owner(client: TestClient, db: Session) -> None:
     assert body["total"] == 1
     texts = [p["text"] for p in body["items"]]
     assert texts == ["мой пост"]
+
+
+def test_list_posts_filters_by_scheduled_range(client: TestClient, db: Session) -> None:
+    headers = _auth_headers(client)
+    account_id = _connected_account_id(client, headers, db)
+    user = db.scalars(select(User).where(User.email == "ada@cindra.dev")).one()
+    base = datetime(2030, 1, 10, 12, 0, tzinfo=UTC)
+    for day, label in ((0, "раньше"), (3, "внутри"), (7, "после")):
+        db.add(
+            Post(
+                user_id=user.id,
+                social_account_id=uuid.UUID(account_id),
+                text=label,
+                status=PostStatus.scheduled,
+                scheduled_for=base + timedelta(days=day),
+            )
+        )
+    db.commit()
+
+    response = client.get(
+        "/posts",
+        params={"from": "2030-01-11T00:00:00Z", "to": "2030-01-15T00:00:00Z"},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert [p["text"] for p in body["items"]] == ["внутри"]
+    assert body["total"] == 1
+
+    # `to` is exclusive: a post exactly at the boundary belongs to the next range.
+    boundary = client.get(
+        "/posts",
+        params={"from": "2030-01-10T00:00:00Z", "to": "2030-01-10T12:00:00Z"},
+        headers=headers,
+    )
+    assert boundary.json()["total"] == 0
+
+    # Only the lower bound: everything from then on.
+    open_ended = client.get("/posts", params={"from": "2030-01-11T00:00:00Z"}, headers=headers)
+    assert sorted(p["text"] for p in open_ended.json()["items"]) == ["внутри", "после"]
 
 
 def test_list_posts_requires_auth(client: TestClient) -> None:
