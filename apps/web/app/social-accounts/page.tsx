@@ -6,6 +6,7 @@ import { ApiError, api } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import type { SocialAccount } from "@/lib/types";
 
+import { Dialog } from "../components/Dialog";
 import { RequireAuth } from "../components/RequireAuth";
 
 // Real Meta OAuth redirect once a Meta App exists -- see gate ticket
@@ -13,17 +14,6 @@ import { RequireAuth } from "../components/RequireAuth";
 // why, instead of sending the user into a broken flow.
 const META_APP_ID = process.env.NEXT_PUBLIC_META_APP_ID;
 const META_REDIRECT_URI = process.env.NEXT_PUBLIC_META_REDIRECT_URI;
-
-const PLATFORM_LABELS: Record<string, string> = {
-  telegram: "Telegram",
-  instagram: "Instagram",
-  facebook: "Facebook-страница",
-  tiktok: "TikTok",
-  youtube: "YouTube",
-  linkedin: "LinkedIn",
-  reddit: "Reddit",
-  twitter: "X (Twitter)",
-};
 
 const PLATFORM_ICONS: Record<string, string> = {
   telegram: "/telegram-icon.png",
@@ -62,6 +52,8 @@ function SocialAccountsManager() {
   const [redditError, setRedditError] = useState<string | null>(null);
   const [connectingReddit, setConnectingReddit] = useState(false);
   const [twitterError, setTwitterError] = useState<string | null>(null);
+  const [telegramOpen, setTelegramOpen] = useState(false);
+  const [metaOpen, setMetaOpen] = useState(false);
   const [connectingTwitter, setConnectingTwitter] = useState(false);
 
   function reload() {
@@ -110,6 +102,7 @@ function SocialAccountsManager() {
       );
       setChatId("");
       setVerification(null);
+      setTelegramOpen(false);
       reload();
     } catch (err) {
       setConnectError(err instanceof ApiError ? err.message : "Не удалось подключить канал");
@@ -242,61 +235,170 @@ function SocialAccountsManager() {
     reload();
   }
 
+  interface PlatformCard {
+    id: string;
+    label: string;
+    note: string;
+    onConnect: () => void;
+    busy: boolean;
+    busyLabel: string;
+    error: string | null;
+    unavailable?: string;
+  }
+
+  // One card per platform: what it takes, who is connected, a button.
+  // Telegram and Meta need a few steps, so their buttons open a dialog;
+  // the rest go straight to the platform's own consent screen.
+  const platforms: PlatformCard[] = [
+    {
+      id: "telegram",
+      label: "Telegram",
+      note: "Текст, фото, видео — в ваш канал через бота.",
+      onConnect: () => setTelegramOpen(true),
+      busy: false,
+      busyLabel: "",
+      error: null,
+    },
+    {
+      id: "instagram",
+      label: "Instagram",
+      note: "Фото и видео. Нужен профессиональный аккаунт, привязанный к Facebook-странице.",
+      onConnect: () => setMetaOpen(true),
+      busy: connectingInstagram,
+      busyLabel: "Переходим в Meta…",
+      error: instagramError,
+      unavailable: META_APP_ID ? undefined : "Подключение пока недоступно — не настроено Meta App (CIN-52).",
+    },
+    {
+      id: "facebook",
+      label: "Facebook-страница",
+      note: "Текст, фото, видео. Подключается вместе с Instagram через Meta.",
+      onConnect: () => setMetaOpen(true),
+      busy: connectingInstagram,
+      busyLabel: "Переходим в Meta…",
+      error: null,
+      unavailable: META_APP_ID ? undefined : "Подключение пока недоступно — не настроено Meta App (CIN-52).",
+    },
+    {
+      id: "tiktok",
+      label: "TikTok",
+      note: "Только видео. Официальный TikTok Login Kit: профиль и публикация видео, больше ничего.",
+      onConnect: handleConnectTikTok,
+      busy: connectingTikTok,
+      busyLabel: "Открываем TikTok…",
+      error: tiktokError,
+    },
+    {
+      id: "youtube",
+      label: "YouTube",
+      note: "Только видео. Разрешение лишь на загрузку на канал, без доступа к остальному аккаунту Google.",
+      onConnect: handleConnectYouTube,
+      busy: connectingYouTube,
+      busyLabel: "Открываем YouTube…",
+      error: youtubeError,
+    },
+    {
+      id: "linkedin",
+      label: "LinkedIn",
+      note: "Текст и изображения (видео пока не поддерживается).",
+      onConnect: handleConnectLinkedIn,
+      busy: connectingLinkedIn,
+      busyLabel: "Открываем LinkedIn…",
+      error: linkedinError,
+    },
+    {
+      id: "reddit",
+      label: "Reddit",
+      note: "В ваш профиль (u/username). Текст — постом, изображение и видео — ссылкой на файл в Cindra.",
+      onConnect: handleConnectReddit,
+      busy: connectingReddit,
+      busyLabel: "Открываем Reddit…",
+      error: redditError,
+    },
+    {
+      id: "twitter",
+      label: "X (Twitter)",
+      note: "Только текст до 280 символов; изображения и видео пока не поддерживаются.",
+      onConnect: handleConnectTwitter,
+      busy: connectingTwitter,
+      busyLabel: "Открываем X…",
+      error: twitterError,
+    },
+  ];
+
   return (
     <>
       <div className="page-header">
         <div>
-          <h1>Каналы</h1>
-          {accounts !== null && (
-            <p className="muted">
-              {accounts.length > 0 ? `Подключено: ${accounts.length}` : "Пока ничего не подключено"}
-            </p>
-          )}
+          <h1>Ваши площадки</h1>
+          <p className="muted">
+            Один пост — несколько площадок.
+            {accounts !== null && (accounts.length > 0 ? ` Подключено: ${accounts.length}.` : " Пока ничего не подключено.")}
+          </p>
         </div>
       </div>
 
-      {accounts === null && <p className="muted">Загрузка…</p>}
-      {accounts && accounts.length > 0 && (
-        <div className="tile-grid">
-          {accounts.map((account) => {
-            const label = PLATFORM_LABELS[account.platform] ?? account.platform;
+      {accounts === null && (
+        <div className="grid two" aria-busy="true">
+          <div className="skeleton" />
+          <div className="skeleton" />
+        </div>
+      )}
+      {accounts !== null && (
+        <div className="grid two">
+          {platforms.map((platform) => {
+            const connected = accounts.filter((account) => account.platform === platform.id);
             return (
-              <div key={account.id} className="card">
-                <div className="tile-header">
+              <section key={platform.id} className="panel platform-card">
+                <div className="section-head">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={PLATFORM_ICONS[account.platform]} alt="" className="platform-icon" />
-                  <div className="tile-header-body">
-                    <strong>{label}</strong>
-                    <span className="muted">{account.display_name ?? account.external_account_id}</span>
-                  </div>
-                  <span className="badge active">Подключён</span>
+                  <img src={PLATFORM_ICONS[platform.id]} alt="" className="platform-icon" />
+                  <span className={`tag${connected.length > 0 ? " green" : ""}`}>
+                    {connected.length > 0 ? `Подключён · ${connected.length}` : "Не подключён"}
+                  </span>
                 </div>
-                <button className="secondary" onClick={() => handleDisconnect(account.id)}>
-                  Отключить
-                </button>
-              </div>
+                <h2>{platform.label}</h2>
+                <p className="muted">{platform.note}</p>
+                {connected.map((account) => (
+                  <div key={account.id} className="list-line account-line">
+                    <div className="list-line-text">
+                      <b>{account.display_name ?? account.external_account_id}</b>
+                    </div>
+                    <button type="button" className="ghost" onClick={() => handleDisconnect(account.id)}>
+                      Отключить
+                    </button>
+                  </div>
+                ))}
+                {platform.error && <p className="error">{platform.error}</p>}
+                {platform.unavailable ? (
+                  <p className="muted hint">{platform.unavailable}</p>
+                ) : (
+                  <button
+                    type="button"
+                    className={connected.length > 0 ? "secondary" : undefined}
+                    onClick={platform.onConnect}
+                    disabled={platform.busy}
+                  >
+                    {platform.busy ? platform.busyLabel : connected.length > 0 ? "Добавить ещё" : "Подключить"}
+                  </button>
+                )}
+              </section>
             );
           })}
         </div>
       )}
 
-      <h2>Подключить Telegram-канал</h2>
-      <div className="card">
+      <Dialog open={telegramOpen} title="Подключить Telegram-канал" onClose={() => { setTelegramOpen(false); handleCancelVerification(); }}>
         {!verification ? (
           <>
             <p className="muted">
-              Бот @CindraPublish_bot должен быть добавлен администратором канала. Введите
-              @username канала или его числовой chat_id.
+              Бот @CindraPublish_bot должен быть добавлен администратором канала. Введите @username канала или его
+              числовой chat_id.
             </p>
-            <form onSubmit={handleStartVerification}>
-              <label>
-                Канал
-                <input
-                  required
-                  value={chatId}
-                  onChange={(e) => setChatId(e.target.value)}
-                  placeholder="@mychannel"
-                />
+            <form onSubmit={handleStartVerification} className="dialog-form">
+              <label className="field-block">
+                <span className="field-label">Канал</span>
+                <input required value={chatId} onChange={(e) => setChatId(e.target.value)} placeholder="@mychannel" />
               </label>
               {startError && <p className="error">{startError}</p>}
               <button type="submit" disabled={startingVerification}>
@@ -310,17 +412,13 @@ function SocialAccountsManager() {
               Канал найден: <strong>{verification.chatTitle ?? chatId}</strong>
             </p>
             <p className="muted">
-              Чтобы подтвердить, что вы администратор канала (а не просто знаете его адрес),
-              вставьте этот код в описание канала в Telegram (Изменить → Описание) и сохраните,
-              затем нажмите «Подключить». После подключения код можно убрать.
+              Чтобы подтвердить, что вы администратор канала (а не просто знаете его адрес), вставьте этот код в описание
+              канала в Telegram (Изменить → Описание) и сохраните, затем нажмите «Подключить». После подключения код можно
+              убрать.
             </p>
             <div className="verification-code-row">
               <code className="verification-code">{verification.code}</code>
-              <button
-                type="button"
-                className="secondary"
-                onClick={() => navigator.clipboard.writeText(verification.code)}
-              >
+              <button type="button" className="secondary" onClick={() => navigator.clipboard.writeText(verification.code)}>
                 Скопировать
               </button>
             </div>
@@ -335,102 +433,28 @@ function SocialAccountsManager() {
             </div>
           </>
         )}
-      </div>
+      </Dialog>
 
-      <h2>Подключить Instagram</h2>
-      <div className="card">
-        {META_APP_ID ? (
-          <>
-            <p className="muted">Перед подключением убедитесь, что:</p>
-            <ul className="muted">
-              <li>Instagram-аккаунт переведён в профессиональный режим (Business или Creator);</li>
-              <li>он привязан к Facebook-странице, которой вы управляете как администратор.</li>
-            </ul>
-            <p className="muted">
-              <a
-                href="https://developers.facebook.com/docs/instagram-platform"
-                target="_blank"
-                rel="noreferrer"
-              >
-                Подробнее в документации Meta
-              </a>
-            </p>
-            <button onClick={handleConnectInstagram} disabled={connectingInstagram}>
-              {connectingInstagram ? "Переходим в Meta…" : "Войти через Meta"}
-            </button>
-            {instagramError && <p className="error">{instagramError}</p>}
-            <p className="muted">
-              Заодно подключится и сама Facebook-страница — она появится в списке выше отдельной
-              записью, публиковать в неё можно так же, как в Telegram и Instagram.
-            </p>
-          </>
-        ) : (
-          <p className="muted">
-            Подключение Instagram пока недоступно — не настроено Meta App (см. задачу CIN-52).
-          </p>
-        )}
-      </div>
-
-      <h2>Подключить TikTok</h2>
-      <div className="card">
+      <Dialog open={metaOpen} title="Подключить Instagram и Facebook" onClose={() => setMetaOpen(false)}>
+        <p className="muted">Перед подключением убедитесь, что:</p>
+        <ul className="muted">
+          <li>Instagram-аккаунт переведён в профессиональный режим (Business или Creator);</li>
+          <li>он привязан к Facebook-странице, которой вы управляете как администратор.</li>
+        </ul>
         <p className="muted">
-          Подключается через официальный TikTok Login Kit. Cindra запросит только данные профиля
-          и разрешения на загрузку и публикацию видео.
+          <a href="https://developers.facebook.com/docs/instagram-platform" target="_blank" rel="noreferrer">
+            Подробнее в документации Meta
+          </a>
         </p>
-        {tiktokError && <p className="error">{tiktokError}</p>}
-        <button type="button" onClick={handleConnectTikTok} disabled={connectingTikTok}>
-          {connectingTikTok ? "Открываем TikTok…" : "Войти через TikTok"}
+        <button type="button" onClick={handleConnectInstagram} disabled={connectingInstagram}>
+          {connectingInstagram ? "Переходим в Meta…" : "Войти через Meta"}
         </button>
-      </div>
-
-      <h2>Подключить YouTube</h2>
-      <div className="card">
+        {instagramError && <p className="error">{instagramError}</p>}
         <p className="muted">
-          Подключается через Google OAuth. Cindra запросит только разрешение на загрузку видео на
-          канал (YouTube Data API), без доступа к остальному аккаунту Google.
+          Заодно подключится и сама Facebook-страница — она появится отдельной карточкой, публиковать в неё можно так
+          же, как в Telegram и Instagram.
         </p>
-        {youtubeError && <p className="error">{youtubeError}</p>}
-        <button type="button" onClick={handleConnectYouTube} disabled={connectingYouTube}>
-          {connectingYouTube ? "Открываем YouTube…" : "Войти через YouTube"}
-        </button>
-      </div>
-
-      <h2>Подключить LinkedIn</h2>
-      <div className="card">
-        <p className="muted">
-          Подключается через LinkedIn OAuth. Публикация — только текст и изображения (видео пока
-          не поддерживается).
-        </p>
-        {linkedinError && <p className="error">{linkedinError}</p>}
-        <button type="button" onClick={handleConnectLinkedIn} disabled={connectingLinkedIn}>
-          {connectingLinkedIn ? "Открываем LinkedIn…" : "Войти через LinkedIn"}
-        </button>
-      </div>
-
-      <h2>Подключить Reddit</h2>
-      <div className="card">
-        <p className="muted">
-          Подключается через Reddit OAuth. Публикуется в ваш профиль (u/username) — выбор
-          отдельного сабреддита пока не поддерживается. Текст выходит постом, изображение и
-          видео — ссылкой на уже опубликованный в Cindra файл.
-        </p>
-        {redditError && <p className="error">{redditError}</p>}
-        <button type="button" onClick={handleConnectReddit} disabled={connectingReddit}>
-          {connectingReddit ? "Открываем Reddit…" : "Войти через Reddit"}
-        </button>
-      </div>
-
-      <h2>Подключить X (Twitter)</h2>
-      <div className="card">
-        <p className="muted">
-          Подключается через OAuth X. Публикуется только текст (до 280 символов) — изображения
-          и видео пока не поддерживаются.
-        </p>
-        {twitterError && <p className="error">{twitterError}</p>}
-        <button type="button" onClick={handleConnectTwitter} disabled={connectingTwitter}>
-          {connectingTwitter ? "Открываем X…" : "Войти через X"}
-        </button>
-      </div>
+      </Dialog>
     </>
   );
 }

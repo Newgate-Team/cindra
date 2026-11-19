@@ -175,10 +175,12 @@ function BillingSummary() {
     <>
       <div className="page-header">
         <div>
-          <h1>Тариф</h1>
+          <h1>Больше пространства для идей</h1>
           {subscription && (
             <p className="muted">
-              {TIER_LABELS[subscription.tier] ?? subscription.tier}
+              Ваш тариф {TIER_LABELS[subscription.tier] ?? subscription.tier}
+              {" · "}
+              <span className={`badge ${subscription.status}`}>{subscription.status === "active" ? "активен" : subscription.status}</span>
               {subscription.current_period_end &&
                 ` · продление ${new Date(subscription.current_period_end).toLocaleDateString("ru-RU")}`}
             </p>
@@ -186,23 +188,24 @@ function BillingSummary() {
         </div>
       </div>
       {error && <p className="error">{error}</p>}
+      {!subscription && !error && (
+        <div className="grid three" aria-busy="true">
+          <div className="skeleton" />
+          <div className="skeleton" />
+          <div className="skeleton" />
+        </div>
+      )}
       {subscription && (
         <>
-          <p>
-            Статус: <span className={`badge ${subscription.status}`}>{subscription.status}</span>
-          </p>
-
-          <div className="tile-grid">
+          <div className="tier-grid">
             {TIER_ORDER.map((tier) => {
               const isCurrent = subscription.tier === tier;
               const tierIndex = TIER_ORDER.indexOf(tier);
               return (
-                <div key={tier} className={`card tier-card${isCurrent ? " current" : ""}`}>
-                  <div className="tile-header">
-                    <div className="tile-header-body">
-                      <strong>{TIER_NAME[tier]}</strong>
-                    </div>
-                    {isCurrent && <span className="badge active">Текущий</span>}
+                <section key={tier} className={`panel tier-card${isCurrent ? " current" : ""}`}>
+                  <div className="section-head">
+                    <h2>{TIER_NAME[tier]}</h2>
+                    {isCurrent && <span className="tag purple">Текущий</span>}
                   </div>
                   <p className="tier-price">
                     {TIER_PRICE[tier]}
@@ -227,10 +230,13 @@ function BillingSummary() {
                       <p className="muted">Изменить тариф команды может только её владелец</p>
                     ))
                   )}
-                </div>
+                </section>
               );
             })}
           </div>
+          <p className="muted section">
+            Оплата через PayPal. Генерации аватаров и эфир оплачиваются отдельно — с ваших аккаунтов у этих сервисов.
+          </p>
         </>
       )}
     </>

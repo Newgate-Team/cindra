@@ -1,7 +1,8 @@
 "use client";
 
+import { HardDrive, MessageCircle, Radio, UserRound, type LucideIcon } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
 
 import { ApiError, api } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
@@ -572,6 +573,38 @@ function TwitchSection({ integration, onChanged }: { integration: Integration | 
   );
 }
 
+// A service as a card: coloured tile, name, what it is for, and whether
+// it is connected -- the settings below it stay exactly as they were.
+function ProviderPanel({
+  icon: Icon,
+  name,
+  subtitle,
+  connected,
+  children,
+}: {
+  icon: LucideIcon;
+  name: string;
+  subtitle: string;
+  connected: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <section className="panel provider">
+      <div className="provider-head">
+        <span className="tile" style={{ "--t": "#e88a3d" } as CSSProperties} aria-hidden="true">
+          <Icon size={17} />
+        </span>
+        <div className="list-line-text">
+          <h2>{name}</h2>
+          <small>{subtitle}</small>
+        </div>
+        <span className={`tag${connected ? " green" : ""}`}>{connected ? "Подключён" : "Не подключён"}</span>
+      </div>
+      {children}
+    </section>
+  );
+}
+
 function IntegrationsManager() {
   const { token } = useAuth();
   const [integrations, setIntegrations] = useState<Integration[] | null>(null);
@@ -593,70 +626,74 @@ function IntegrationsManager() {
     <>
       <div className="page-header">
         <div>
-          <h1>Инструменты</h1>
+          <h1>Ваши инструменты</h1>
           <p className="muted">
-            Подключите свои аккаунты сервисов — Cindra генерирует в них и складывает туда готовый
-            контент от вашего имени, а оплата идёт с вашего аккаунта у сервиса.
+            Подключите сервисы, с которыми работает ваша студия: Cindra генерирует в них от вашего имени, а оплата идёт
+            с вашего аккаунта у сервиса. Ключи хранятся зашифрованными и в интерфейсе не показываются.
           </p>
         </div>
       </div>
       {error && <p className="error">{error}</p>}
-      {integrations === null && !error && <p className="muted">Загрузка…</p>}
+      {integrations === null && !error && <div className="skeleton" aria-busy="true" />}
 
       {integrations !== null && (
-        <>
-          <h2>HeyGen — AI-аватары</h2>
-          <div className="card">
+        <div className="provider-list">
+          <ProviderPanel
+            icon={UserRound}
+            name="HeyGen"
+            subtitle="Аватар-видео"
+            connected={heygen !== null}
+          >
             {heygen ? (
               <HeyGenConnected integration={heygen} onChanged={reload} />
             ) : (
               <>
                 <p className="muted">
-                  Видео с вашим аватаром и голосом по сценарию. Генерация оплачивается с вашего
-                  кошелька HeyGen API.
+                  Видео с вашим аватаром и голосом по сценарию. Генерация оплачивается с вашего кошелька HeyGen API.
                 </p>
                 <HeyGenKeyForm submitLabel="Подключить HeyGen" onConnected={reload} />
               </>
             )}
-          </div>
+          </ProviderPanel>
 
-          {AVATAR_VENDORS.map((vendor) => (
-            <div key={vendor.id}>
-              <h2>{vendor.name} — аватар для эфира</h2>
-              <div className="card">
-                <AvatarVendorSection
-                  vendor={vendor}
-                  integration={integrations.find((item) => item.provider === vendor.id) ?? null}
-                  onChanged={reload}
-                />
-              </div>
-            </div>
-          ))}
+          {AVATAR_VENDORS.map((vendor) => {
+            const integration = integrations.find((item) => item.provider === vendor.id) ?? null;
+            return (
+              <ProviderPanel
+                key={vendor.id}
+                icon={Radio}
+                name={vendor.name}
+                subtitle="Аватар для эфира"
+                connected={integration !== null}
+              >
+                <AvatarVendorSection vendor={vendor} integration={integration} onChanged={reload} />
+              </ProviderPanel>
+            );
+          })}
 
-          <h2>Twitch — чат эфира</h2>
-          <div className="card">
-            <TwitchSection
-              integration={integrations.find((item) => item.provider === "twitch") ?? null}
-              onChanged={reload}
-            />
-          </div>
+          {(() => {
+            const twitch = integrations.find((item) => item.provider === "twitch") ?? null;
+            return (
+              <ProviderPanel icon={MessageCircle} name="Twitch" subtitle="Чат и реакции эфира" connected={twitch !== null}>
+                <TwitchSection integration={twitch} onChanged={reload} />
+              </ProviderPanel>
+            );
+          })()}
 
-          <h2>Google Drive — хранилище</h2>
-          <div className="card">
+          <ProviderPanel icon={HardDrive} name="Google Drive" subtitle="Хранилище материалов" connected={drive !== null}>
             {drive ? (
               <GoogleDriveConnected integration={drive} onChanged={reload} />
             ) : (
               <>
                 <p className="muted">
-                  Готовые изображения, видео и монтажи сами складываются в папку «Cindra» на вашем
-                  Google Диске. Cindra получает доступ только к файлам, которые создаёт сама, —
-                  остальное содержимое Диска ей не видно.
+                  Готовые изображения, видео и монтажи сами складываются в папку «Cindra» на вашем Google Диске. Cindra
+                  получает доступ только к файлам, которые создаёт сама, — остальное содержимое Диска ей не видно.
                 </p>
                 <ConnectGoogleDriveButton label="Подключить Google Drive" />
               </>
             )}
-          </div>
-        </>
+          </ProviderPanel>
+        </div>
       )}
     </>
   );

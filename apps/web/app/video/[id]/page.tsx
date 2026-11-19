@@ -112,7 +112,7 @@ function PublishBlock({ project }: { project: VideoProject }) {
     return (
       <p className="muted">
         Чтобы опубликовать ролик из Cindra, подключите аккаунт с поддержкой видео на
-        странице «Каналы».
+        странице «Соцсети».
       </p>
     );
   }
