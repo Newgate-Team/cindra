@@ -3065,7 +3065,11 @@ fieldset.plain > legend {
 .cal-title {
   margin: 0;
   font-size: 18px;
-  text-transform: capitalize;
+}
+
+/* "ноябрь 2026 г." -> "Ноябрь 2026 г." without capitalising the "г." */
+.cal-title::first-letter {
+  text-transform: uppercase;
 }
 
 .calendar {
