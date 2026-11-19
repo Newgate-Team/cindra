@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent 
 import { ApiError, api } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { CONTENT_KIND_LABELS, allowedContentKindsFor, allowedContentTypesFor } from "@/lib/publish-matrix";
+import { TONE_OPTIONS } from "@/lib/tones";
 import type {
   Attachment,
   GenerationContentType,
@@ -21,14 +22,6 @@ import { ChipSelect, PostCard, platformLabel } from "./Studio";
 
 const TERMINAL_STATUSES = new Set(["completed", "failed", "flagged"]);
 
-// CIN-138: mirrors prompts.TONE_GUIDANCE keys on the backend.
-const TONE_OPTIONS = [
-  { value: "", label: "По умолчанию" },
-  { value: "expert", label: "Экспертный" },
-  { value: "conversational", label: "Разговорный" },
-  { value: "provocative", label: "Провокационный" },
-  { value: "storytelling", label: "Сторителлинг" },
-];
 const POLL_INTERVAL_MS = 2000;
 
 const JOB_STATUS_LABELS: Record<string, string> = {
@@ -173,14 +166,15 @@ export function GenerationForm({
   hideTargetPicker = false,
   postGenerationAction = "publish",
 }: GenerationFormProps) {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const [accounts, setAccounts] = useState<SocialAccount[]>([]);
   const [targetAccountIds, setTargetAccountIds] = useState<string[]>([]);
   const [topic, setTopic] = useState("");
   const [contentType, setContentType] = useState<GenerationContentType>(lockedContentType ?? "text");
   const [contentKind, setContentKind] = useState(lockedContentKind ?? "post");
-  const [brandGuide, setBrandGuide] = useState("");
-  const [tone, setTone] = useState("");
+  // Brand kit (Settings) pre-fills both; each run may still change them.
+  const [brandGuide, setBrandGuide] = useState(user?.brand_guide ?? "");
+  const [tone, setTone] = useState(user?.default_tone ?? "");
   // CIN-143: image templates come from the backend catalog -- the
   // frontend renders whatever GET /content/image-templates returns.
   const [imageTemplates, setImageTemplates] = useState<ImageTemplate[]>([]);

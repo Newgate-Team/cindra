@@ -1,5 +1,5 @@
 export const metadata = {
-  title: "Политика конфиденциальности — Cindra",
+  title: "Политика конфиденциальности",
 };
 
 export default function PrivacyPolicyPage() {

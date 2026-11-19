@@ -46,3 +46,26 @@ export function timezoneLabel(date = new Date()): string {
   const minutes = Math.abs(offset) % 60;
   return `UTC${sign}${hours}${minutes ? `:${pad(minutes)}` : ""}`;
 }
+
+export interface QuickSlot {
+  label: string;
+  value: string; // datetime-local value
+}
+
+// One-click times for the schedule field, always in the future. Neutral
+// picks (an hour from now, tomorrow morning/evening, the next Friday
+// noon) -- not claims about when an audience is online.
+export function quickSlots(now = new Date()): QuickSlot[] {
+  const at = (days: number, hour: number) =>
+    new Date(now.getFullYear(), now.getMonth(), now.getDate() + days, hour, 0);
+  const inHour = new Date(now.getTime() + 60 * 60 * 1000);
+  inHour.setMinutes(0, 0, 0);
+  inHour.setHours(inHour.getHours() + 1);
+  const slots: QuickSlot[] = [{ label: "Через час", value: toLocalInputValue(inHour) }];
+  if (now.getHours() < 18) slots.push({ label: "Сегодня 19:00", value: toLocalInputValue(at(0, 19)) });
+  slots.push({ label: "Завтра 9:00", value: toLocalInputValue(at(1, 9)) });
+  slots.push({ label: "Завтра 19:00", value: toLocalInputValue(at(1, 19)) });
+  const untilFriday = ((5 - now.getDay() + 7) % 7) || 7;
+  if (untilFriday > 1) slots.push({ label: "В пятницу 12:00", value: toLocalInputValue(at(untilFriday, 12)) });
+  return slots;
+}

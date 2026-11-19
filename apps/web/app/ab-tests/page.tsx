@@ -6,29 +6,20 @@ import { useState, type FormEvent } from "react";
 
 import { ApiError, api } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
+import { TONE_OPTIONS } from "@/lib/tones";
 import type { ABTest } from "@/lib/types";
 
 import { RequireAuth } from "../components/RequireAuth";
 import { ChipSelect } from "../components/Studio";
 
-// Mirrors prompts.TONE_GUIDANCE keys on the backend, same as
-// GenerationForm's own copy of this list.
-const TONE_OPTIONS = [
-  { value: "", label: "По умолчанию" },
-  { value: "expert", label: "Экспертный" },
-  { value: "conversational", label: "Разговорный" },
-  { value: "provocative", label: "Провокационный" },
-  { value: "storytelling", label: "Сторителлинг" },
-];
-
 const VARIANT_COUNT_OPTIONS = [2, 3, 4, 5];
 
 function CreateABTestForm() {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const router = useRouter();
   const [topic, setTopic] = useState("");
-  const [tone, setTone] = useState("");
-  const [brandGuide, setBrandGuide] = useState("");
+  const [tone, setTone] = useState(user?.default_tone ?? "");
+  const [brandGuide, setBrandGuide] = useState(user?.brand_guide ?? "");
   const [variantCount, setVariantCount] = useState(2);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
