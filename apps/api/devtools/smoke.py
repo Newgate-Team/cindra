@@ -15,7 +15,11 @@ import urllib.request
 
 
 def _call(url: str, method: str = "GET", headers: dict | None = None, body: bytes | None = None):
-    request = urllib.request.Request(url, method=method, headers=headers or {}, data=body)
+    # Cloudflare (in front of the API and the web app) answers urllib's
+    # default "Python-urllib" agent with 403 / error 1010 -- a smoke test
+    # that says "403" for a healthy API is worse than none.
+    merged = {"User-Agent": "cindra-smoke/1.0", **(headers or {})}
+    request = urllib.request.Request(url, method=method, headers=merged, data=body)
     try:
         with urllib.request.urlopen(request, timeout=15) as response:
             return response.status, dict(response.headers), response.read()
