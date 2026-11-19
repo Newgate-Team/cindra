@@ -3047,3 +3047,213 @@ fieldset.plain > legend {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ---- Calendar ---- */
+.cal-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+  margin-bottom: 14px;
+}
+
+.cal-nav {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.cal-title {
+  margin: 0;
+  font-size: 18px;
+  text-transform: capitalize;
+}
+
+.calendar {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.cal-head {
+  padding: 4px 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.day {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  min-height: 130px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: #fff;
+  font-size: 12px;
+}
+
+.calendar.month .day {
+  min-height: 104px;
+}
+
+.day.today {
+  border-color: #ba9af4;
+  background: #faf7ff;
+}
+
+.day.outside {
+  background: transparent;
+  opacity: 0.55;
+}
+
+.day.past:not(.today) {
+  background: #fafbfd;
+}
+
+.day-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.day-weekday {
+  display: none;
+  font-weight: 500;
+  color: var(--muted-foreground);
+}
+
+.day-add {
+  padding: 3px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.day:hover .day-add,
+.day-add:focus-visible {
+  opacity: 1;
+}
+
+.cal-post {
+  display: block;
+  width: 100%;
+  padding: 5px 7px;
+  border: 0;
+  border-radius: 8px;
+  background: #e7efff;
+  color: #2f4f8a;
+  box-shadow: none;
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.35;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.cal-post[draggable="true"] {
+  cursor: grab;
+}
+
+.cal-post:hover:not(:disabled) {
+  background: #d9e6ff;
+  box-shadow: none;
+}
+
+.cal-post.published {
+  background: var(--success-bg);
+  color: var(--success);
+}
+
+.cal-post.failed {
+  background: var(--danger-bg);
+  color: var(--danger-text);
+}
+
+.cal-post.publishing {
+  background: #f0ecff;
+  color: #6347c2;
+}
+
+.day-more {
+  align-self: flex-start;
+  padding: 2px 4px;
+  font-size: 11px;
+}
+
+@media (max-width: 720px) {
+  /* Seven columns do not fit a phone: the week becomes an agenda. */
+  .calendar {
+    grid-template-columns: 1fr;
+  }
+
+  .cal-head {
+    display: none;
+  }
+
+  .day {
+    min-height: 0;
+  }
+
+  .calendar.month .day.outside {
+    display: none;
+  }
+
+  .day-weekday {
+    display: inline;
+  }
+
+  .day-add {
+    opacity: 1;
+  }
+}
+
+.thumb {
+  width: 60px;
+  height: 60px;
+  border-radius: 8px;
+  object-fit: cover;
+}
+
+.post-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.post-detail p {
+  margin: 0;
+}
+
+.post-detail-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ---- Dialog ---- */
+.dialog {
+  width: min(520px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: #fff;
+  color: var(--foreground);
+  box-shadow: 0 24px 60px rgb(20 22 31 / 0.22);
+}
+
+.dialog::backdrop {
+  background: rgb(20 22 31 / 0.4);
+  backdrop-filter: blur(2px);
+}
+
+.dialog-body {
+  padding: 22px;
+}
+
+.dialog-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: none;
+}
