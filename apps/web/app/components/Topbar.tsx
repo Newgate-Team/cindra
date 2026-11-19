@@ -89,6 +89,12 @@ export function Topbar() {
     return () => window.removeEventListener("keydown", onKey);
   }, [signedIn]);
 
+  // Pages are client components, so they cannot export `metadata`; the
+  // section name in the browser tab and history comes from here.
+  useEffect(() => {
+    if (signedIn && current) document.title = `${current.label} — Cindra`;
+  }, [signedIn, current]);
+
   // Keeps the page from jumping while the session is being checked.
   if (loading) return <header className="topbar" aria-hidden="true" />;
 

@@ -45,6 +45,8 @@ cd apps/web && npm run lint && npm run build
 
 Тесты требуют поднятого Postgres и **отдельной базы с `test` в имени** (`createdb cindra_test` + `alembic upgrade head` с тем же `DATABASE_URL`): каждый тест начинается с `TRUNCATE users … CASCADE`, и на dev-базе из `.env` conftest остановит прогон сам. Если 5433 занят другим проектом, поднимите контейнер на свободном порту и передайте `DATABASE_URL` переменной окружения — весь набор тестов от этого не зависит.
 
+После деплоя: `python apps/api/devtools/smoke.py --api https://<api> --web https://<фронтенд>` — read-only прогон (живость, база/Redis, CORS, защита маршрутов, `robots.txt`); код возврата 1, если что-то не так. `GET /health/ready` — для внешнего аптайм-монитора.
+
 ## Как здесь принято работать
 
 **Процесс:** задача в Jira ([доска CIN](https://dalmonded.atlassian.net/jira/software/projects/CIN/boards/100)) → ветка `feature/CIN-N` от `dev` → PR в `dev` → мерж после зелёного CI. Мерж `dev → main` (релиз) — всегда вручную человеком.
@@ -74,6 +76,8 @@ cd apps/web && npm run lint && npm run build
 | X (Twitter) | `TWITTER_CLIENT_ID` / `TWITTER_CLIENT_SECRET` — confidential-клиент; уточнить, что тариф X API включает write-доступ (с 2023 бесплатный не включает) |
 | Эфир с AI-аватаром | у пользователя — свой ключ LiveAvatar (app.liveavatar.com, отдельный от HeyGen API) **или Simli** (app.simli.com, ≈$13/сутки 24/7 против ≈$130 у LiveAvatar) и ключ трансляции Twitch; у нас — `STREAM_AGENT_TOKEN` и машина с агентом `stream_agent/`. Сессия LiveAvatar ≤20 мин (Essential) / ≤60 мин (Business) — агент ротирует их, 24/7 стоит у пользователя ≈$130/сутки кредитами LiveAvatar. Голос — Gemini TTS (`GEMINI_TTS_MODEL`, нужен `GEMINI_API_KEY`). Проверяется симуляторами `devtools/liveavatar_simulator.py` и `devtools/simli_simulator.py` (+ LiveKit в Docker для видео, см. apps/api/README «Агент эфиров») |
 | Чат эфира через официальный API Twitch | `TWITCH_CLIENT_ID` / `TWITCH_CLIENT_SECRET` — приложение на dev.twitch.tv (Confidential, redirect `…/oauth/twitch/callback`). Без него чат читается анонимно по IRC (подписки и рейды тоже видны), но аватар не может писать ответы в чат. Проверяется симулятором `devtools/twitch_simulator.py` |
+| Лимиты запросов за прокси | `TRUSTED_PROXY_HOPS=1` на Railway — иначе регистрация/вход/сброс пароля считают всех пользователей одним адресом и лимит срабатывает на всех сразу. Redis недоступен — лимиты молча отключаются (fail-open) |
+| Отчёты об ошибках | `SENTRY_DSN` (необязательно; пусто = выключено) |
 | Оплата | реальные ключи и планы PayPal |
 | Генерация | `GEMINI_API_KEY` (учтите: API проверяет геолокацию запроса) |
 | Длинные ролики | `FAL_KEY` (fal.ai) — без него «Полное авто» в студии генерирует через Veo, а не Seedance (CIN-144) |

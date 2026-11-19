@@ -16,6 +16,7 @@ from app.models import (
     User,
     UserRole,
 )
+from app.ratelimit import hit, limit_by_ip
 from app.scheduler.tasks import send_email_task
 from app.schemas import (
     ChangePasswordRequest,
@@ -85,7 +86,12 @@ def _send_verification_email(user: User, db: Session) -> None:
     )
 
 
-@router.post("/register", response_model=UserOut, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/register",
+    response_model=UserOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(limit_by_ip("register", 10, 3600))],
+)
 def register(payload: UserCreate, db: Session = Depends(get_db)) -> User:
     existing = db.scalar(select(User).where(User.email == payload.email))
     if existing is not None:
@@ -129,7 +135,13 @@ def register(payload: UserCreate, db: Session = Depends(get_db)) -> User:
     return user
 
 
-@router.post("/login", response_model=Token)
+@router.post(
+    "/login",
+    response_model=Token,
+    # On top of the per-account lockout: this one stops a script that
+    # sprays many different accounts from a single address.
+    dependencies=[Depends(limit_by_ip("login", 30, 600))],
+)
 def login(payload: UserLogin, db: Session = Depends(get_db)) -> Token:
     user = db.scalar(select(User).where(User.email == payload.email))
     # CIN-159: checked before anything password-related so a locked
@@ -165,7 +177,9 @@ def login(payload: UserLogin, db: Session = Depends(get_db)) -> Token:
     return Token(access_token=create_access_token(user.id))
 
 
-@router.post("/google", response_model=Token)
+@router.post(
+    "/google", response_model=Token, dependencies=[Depends(limit_by_ip("google", 30, 600))]
+)
 def login_with_google(payload: GoogleLoginRequest, db: Session = Depends(get_db)) -> Token:
     if not get_settings().google_client_id:
         raise HTTPException(
@@ -283,8 +297,16 @@ _PASSWORD_RESET_REQUESTED_RESPONSE = {
 }
 
 
-@router.post("/password-reset/request", status_code=status.HTTP_200_OK)
+@router.post(
+    "/password-reset/request",
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(limit_by_ip("pwreset", 5, 3600))],
+)
 def request_password_reset(payload: PasswordResetRequest, db: Session = Depends(get_db)) -> dict:
+    # Per address above; per mailbox here, so one inbox cannot be flooded
+    # from many addresses. Counted before the lookup so the response
+    # (and its timing) does not reveal whether the email is registered.
+    hit("pwreset-email", payload.email.lower(), 3, 3600)
     if not get_settings().smtp_host:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -346,7 +368,11 @@ def request_password_reset(payload: PasswordResetRequest, db: Session = Depends(
     return _PASSWORD_RESET_REQUESTED_RESPONSE
 
 
-@router.post("/password-reset/confirm", status_code=status.HTTP_204_NO_CONTENT)
+@router.post(
+    "/password-reset/confirm",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(limit_by_ip("pwconfirm", 20, 3600))],
+)
 def confirm_password_reset(payload: PasswordResetConfirm, db: Session = Depends(get_db)) -> None:
     token_hash = hash_url_token(payload.token)
     reset_token = db.scalar(
@@ -374,6 +400,7 @@ def request_email_verification(
 ) -> dict:
     if current_user.email_verified:
         return {"detail": "Email уже подтверждён"}
+    hit("verify-email", str(current_user.id), 5, 3600)
     if not get_settings().smtp_host:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
