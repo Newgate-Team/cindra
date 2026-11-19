@@ -46,7 +46,7 @@ REDIS_URL
 JWT_SECRET
 SOCIAL_TOKEN_ENCRYPTION_KEY
 CORS_ORIGINS               # https://<домен фронтенда на Vercel>
-TRUSTED_PROXY_HOPS=1       # сколько прокси перед API дописывают X-Forwarded-For (Railway: 1). 0 = лимиты запросов считаются по адресу сокета, т.е. у всех за прокси он один и тот же -- включать обязательно
+TRUSTED_PROXY_HOPS         # сколько прокси перед API дописывают X-Forwarded-For; по умолчанию 1 (Railway). 0 -- только для прямого доступа к API без прокси (локально): за прокси лимиты запросов сочтут всех пользователей одним адресом
 SENTRY_DSN                 # необязательно: отчёты об необработанных ошибках (sentry-sdk уже в образе); пусто = выключено
 SENTRY_ENVIRONMENT         # production / staging
 GEMINI_API_KEY

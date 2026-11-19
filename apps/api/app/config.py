@@ -170,10 +170,13 @@ class Settings(BaseSettings):
     # only for local load tests; tests turn it off in conftest.
     rate_limit_enabled: bool = True
     # How many reverse proxies sit in front of the API and append to
-    # X-Forwarded-For (Railway: 1). 0 = ignore the header, key on the
-    # socket address. Wrong values either throttle everyone together (too
-    # low) or let a client choose its own identity (too high).
-    trusted_proxy_hops: int = 0
+    # X-Forwarded-For. Default 1 (Railway): the failure modes are not
+    # symmetric -- too LOW behind a proxy makes every user share one
+    # address, so the sign-in/registration limits throttle the whole
+    # product at once; too HIGH only lets a client choose its own address
+    # for abuse limits, which are not a security boundary. Set 0 when the
+    # API is reached directly (local runs).
+    trusted_proxy_hops: int = 1
     # Error reporting (Sentry-compatible DSN). Empty = off.
     sentry_dsn: str = ""
     sentry_environment: str = "production"
