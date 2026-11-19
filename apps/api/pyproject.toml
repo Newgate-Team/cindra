@@ -20,6 +20,7 @@ dependencies = [
     "pypdf>=5.1",
     "python-docx>=1.1",
     "Pillow>=11.0",
+    "sentry-sdk>=2.0",
 ]
 
 [project.optional-dependencies]

@@ -6,11 +6,17 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.celery_app import celery_app
+from app.config import get_settings
 from app.db import SessionLocal, engine
 from app.main import app
 from app.models import Subscription, User
 
 celery_app.conf.update(task_always_eager=True, task_eager_propagates=True)
+
+# Limits live in Redis and survive between tests (and runs): with Redis up
+# locally the registrations of one test run would throttle the next.
+# test_ratelimit.py switches them back on with a fake Redis.
+get_settings().rate_limit_enabled = False
 
 
 @pytest.fixture(scope="session", autouse=True)

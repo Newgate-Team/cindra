@@ -24,9 +24,32 @@ import { EmailVerificationBanner } from "./components/EmailVerificationBanner";
 import { Footer } from "./components/Footer";
 
 
-export const metadata = {
-  title: "Cindra",
-  description: "AI-контент для соцсетей",
+import type { Metadata, Viewport } from "next";
+
+import { SITE_URL } from "@/lib/site";
+
+const DESCRIPTION =
+  "Посты, видео, аватары и эфиры для соцсетей в одной студии: от идеи до публикации на всех ваших площадках.";
+
+export const metadata: Metadata = {
+  metadataBase: new URL(SITE_URL),
+  title: { default: "Cindra — весь контент для соцсетей в одной студии", template: "%s — Cindra" },
+  description: DESCRIPTION,
+  applicationName: "Cindra",
+  openGraph: {
+    type: "website",
+    siteName: "Cindra",
+    locale: "ru_RU",
+    title: "Cindra — весь контент для соцсетей в одной студии",
+    description: DESCRIPTION,
+  },
+  twitter: { card: "summary_large_image", title: "Cindra", description: DESCRIPTION },
+};
+
+export const viewport: Viewport = {
+  themeColor: "#f6f7fb",
+  width: "device-width",
+  initialScale: 1,
 };
 
 export default function RootLayout({

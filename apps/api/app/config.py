@@ -166,6 +166,17 @@ class Settings(BaseSettings):
     # while verifying CIN-60's frontend changes against a real
     # browser for the first time.
     cors_origins: str = "http://localhost:3000"
+    # Rate limits on the public endpoints (app/ratelimit.py). Switch off
+    # only for local load tests; tests turn it off in conftest.
+    rate_limit_enabled: bool = True
+    # How many reverse proxies sit in front of the API and append to
+    # X-Forwarded-For (Railway: 1). 0 = ignore the header, key on the
+    # socket address. Wrong values either throttle everyone together (too
+    # low) or let a client choose its own identity (too high).
+    trusted_proxy_hops: int = 0
+    # Error reporting (Sentry-compatible DSN). Empty = off.
+    sentry_dsn: str = ""
+    sentry_environment: str = "production"
     # Empty until CIN-56/CIN-78 gate ticket is resolved (Cloudflare
     # account + bucket not created yet). Generated images/video need a
     # real public URL -- Imagen/Veo return base64/a temporary

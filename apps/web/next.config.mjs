@@ -6,6 +6,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   outputFileTracingRoot: __dirname,
+  // Do not advertise the framework in every response.
+  poweredByHeader: false,
   // No CSP here yet -- this app loads scripts/images from several
   // external origins (Google Identity Services, R2-hosted media, the
   // API backend) that would need to be enumerated carefully first;
@@ -22,6 +24,9 @@ const nextConfig = {
           { key: "X-Frame-Options", value: "DENY" },
           { key: "X-Content-Type-Options", value: "nosniff" },
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+          // Nothing here uses the camera, microphone or location; say so
+          // to the browser (and to any script that might be injected).
+          { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
           {
             key: "Strict-Transport-Security",
             value: "max-age=63072000; includeSubDomains; preload",
