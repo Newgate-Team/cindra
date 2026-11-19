@@ -1,12 +1,12 @@
 "use client";
 
+import { ChevronDown, ChevronUp } from "lucide-react";
 import { useEffect, useState, type FormEvent } from "react";
 
 import { ApiError, api } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import type { Page, Post, SocialAccount } from "@/lib/types";
 
-import { ChevronDownIcon, ChevronUpIcon } from "../components/icons";
 import { RequireAuth } from "../components/RequireAuth";
 
 function formatDate(iso: string): string {
@@ -42,7 +42,7 @@ function PostText({ text }: { text: string }) {
           aria-label={expanded ? "Свернуть текст публикации" : "Показать полный текст публикации"}
           title={expanded ? "Свернуть текст публикации" : "Показать полный текст публикации"}
         >
-          {expanded ? <ChevronUpIcon size={14} /> : <ChevronDownIcon size={14} />}
+          {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
         </button>
       )}
     </span>

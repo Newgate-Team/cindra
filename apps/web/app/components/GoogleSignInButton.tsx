@@ -34,7 +34,7 @@ declare global {
 
 export default function GoogleSignInButton({
   onError,
-  next = "/generate",
+  next = "/",
 }: {
   onError: (message: string) => void;
   // Already vetted by safeNext() on the login page.

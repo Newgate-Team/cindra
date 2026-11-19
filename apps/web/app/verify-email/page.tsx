@@ -69,7 +69,7 @@ function VerifyEmailContent() {
       <h1>Email подтверждён</h1>
       <p className="muted">Спасибо — адрес подтверждён.</p>
       <p className="muted">
-        <Link href={user ? "/generate" : "/login"}>{user ? "Вернуться в приложение" : "Войти"}</Link>
+        <Link href={user ? "/" : "/login"}>{user ? "Вернуться в приложение" : "Войти"}</Link>
       </p>
     </>
   );

@@ -16,7 +16,7 @@ SaaS для AI-контента в соцсетях, два раздела пр�
 
 | Что | Где |
 |---|---|
-| Frontend | `apps/web` — Next.js (App Router) + TypeScript, без UI-библиотек, свои стили в `app/globals.css` |
+| Frontend | `apps/web` — Next.js (App Router) + TypeScript, без UI-библиотек (только иконки `lucide-react` и шрифты Fontsource), свои стили в `app/globals.css`: палитра и токены — вверху файла, цвет и иконка каждого раздела — в `lib/nav.ts` |
 | Backend | `apps/api` — FastAPI + SQLAlchemy 2.0 + Alembic, пакеты внутри `app/` |
 | Генерация | `app/content_pipeline/` — промпты, Gemini/Veo/Seedance, модерация, Celery-задачи |
 | Каталоги | `app/image_templates.py` (AI-шаблоны), `app/layout_templates.py` (макеты для рендера), `app/video_styles.py` (стили видео) — чистые данные, добавление записи не требует ни кода, ни миграции |
