@@ -13,6 +13,11 @@ from app.deps import get_current_user
 from app.models import SocialAccount, SocialPlatform, User
 from app.schemas import (
     InstagramConnectRequest,
+    LinkedInConnectRequest,
+    LinkedInOAuthStartOut,
+    MetaOAuthStartOut,
+    RedditConnectRequest,
+    RedditOAuthStartOut,
     SocialAccountOut,
     TelegramConnectRequest,
     TelegramStartVerificationOut,
@@ -21,17 +26,39 @@ from app.schemas import (
     TikTokCreatorInfoOut,
     TikTokOAuthStartOut,
     TikTokPublishStatusOut,
+    TwitterConnectRequest,
+    TwitterOAuthStartOut,
+    YouTubeConnectRequest,
+    YouTubeOAuthStartOut,
 )
 from app.security import (
+    create_linkedin_oauth_state,
+    create_meta_oauth_state,
+    create_reddit_oauth_state,
     create_telegram_verification_token,
     create_tiktok_oauth_state,
+    create_twitter_oauth_state,
+    create_youtube_oauth_state,
+    decode_linkedin_oauth_state,
+    decode_meta_oauth_state,
+    decode_reddit_oauth_state,
     decode_telegram_verification_token,
     decode_tiktok_oauth_state,
+    decode_twitter_oauth_state,
+    decode_youtube_oauth_state,
 )
 from app.social_accounts import upsert_social_account
-from app.social_integrations import instagram, tiktok
+from app.social_integrations import (
+    instagram,
+    linkedin,
+    reddit,
+    tiktok,
+    twitter,
+    youtube,
+)
 from app.social_integrations.errors import PermanentPublishError, TransientPublishError
 from app.social_integrations.telegram import get_chat, get_chat_member, get_me
+from app.teams import visible_user_ids
 
 router = APIRouter(prefix="/social-accounts", tags=["social-accounts"])
 
@@ -148,6 +175,21 @@ def connect_telegram(
     )
 
 
+@router.post("/instagram/start", response_model=MetaOAuthStartOut)
+def start_instagram_oauth(
+    current_user: User = Depends(get_current_user),
+) -> MetaOAuthStartOut:
+    """Issues the CSRF state for the Meta OAuth dialog (CIN-154).
+
+    Unlike TikTok's /tiktok/start, this doesn't also build the full
+    authorization URL: NEXT_PUBLIC_META_APP_ID and
+    NEXT_PUBLIC_META_REDIRECT_URI are already public (the frontend
+    builds https://www.facebook.com/.../dialog/oauth itself), so the
+    only thing the backend needs to hand over is the signed state.
+    """
+    return MetaOAuthStartOut(state=create_meta_oauth_state(current_user.id))
+
+
 @router.post(
     "/instagram/connect", response_model=SocialAccountOut, status_code=status.HTTP_201_CREATED
 )
@@ -156,6 +198,21 @@ def connect_instagram(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> SocialAccount:
+    # CIN-154: reject before spending a Meta API round-trip on a code
+    # that didn't originate from this user's own OAuth start.
+    try:
+        state_user_id = decode_meta_oauth_state(payload.state)
+    except (jwt.InvalidTokenError, ValueError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="OAuth state истёк или недействителен — начните подключение заново",
+        ) from None
+    if state_user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="OAuth был начат другим пользователем",
+        )
+
     settings = get_settings()
     try:
         short_lived_token = instagram.exchange_code_for_token(
@@ -289,11 +346,343 @@ def connect_tiktok(
     return account
 
 
-def _owned_tiktok_account(db: Session, account_id: str, user: User) -> SocialAccount:
+@router.post("/youtube/start", response_model=YouTubeOAuthStartOut)
+def start_youtube_oauth(
+    current_user: User = Depends(get_current_user),
+) -> YouTubeOAuthStartOut:
+    settings = get_settings()
+    if not settings.youtube_client_id or not settings.youtube_client_secret:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="YouTube ещё не настроен на сервере",
+        )
+    state_token = create_youtube_oauth_state(current_user.id)
+    query = urlencode(
+        {
+            "client_id": settings.youtube_client_id,
+            "redirect_uri": settings.youtube_redirect_uri,
+            "response_type": "code",
+            "scope": "https://www.googleapis.com/auth/youtube.upload",
+            # offline + consent: without both, Google only issues a
+            # refresh_token on the very first consent a user ever
+            # grants this client -- a reconnect after revoking access
+            # would otherwise silently come back with no refresh_token
+            # at all (ensure_fresh_access_token would then have nothing
+            # to refresh with once the short-lived access token expired).
+            "access_type": "offline",
+            "prompt": "consent",
+            "state": state_token,
+        }
+    )
+    return YouTubeOAuthStartOut(
+        authorization_url=f"https://accounts.google.com/o/oauth2/v2/auth?{query}"
+    )
+
+
+@router.post(
+    "/youtube/connect", response_model=SocialAccountOut, status_code=status.HTTP_201_CREATED
+)
+def connect_youtube(
+    payload: YouTubeConnectRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> SocialAccount:
+    try:
+        state_user_id = decode_youtube_oauth_state(payload.state)
+    except (jwt.InvalidTokenError, ValueError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="YouTube OAuth state истёк или недействителен — начните подключение заново",
+        ) from None
+    if state_user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="YouTube OAuth был начат другим пользователем",
+        )
+
+    settings = get_settings()
+    try:
+        token = youtube.exchange_code_for_token(
+            payload.code,
+            settings.youtube_client_id,
+            settings.youtube_client_secret,
+            settings.youtube_redirect_uri,
+        )
+        channel = youtube.get_channel_info(token["access_token"])
+        account = upsert_social_account(
+            db,
+            current_user,
+            platform=SocialPlatform.youtube,
+            external_account_id=channel["id"],
+            access_token=token["access_token"],
+            refresh_token=token.get("refresh_token"),
+            token_expires_at=datetime.now(UTC) + timedelta(seconds=int(token["expires_in"])),
+            display_name=channel.get("snippet", {}).get("title"),
+        )
+    except (KeyError, ValueError, PermanentPublishError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Не удалось подключить YouTube: {exc}",
+        ) from exc
+    except TransientPublishError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        ) from exc
+    return account
+
+
+@router.post("/linkedin/start", response_model=LinkedInOAuthStartOut)
+def start_linkedin_oauth(
+    current_user: User = Depends(get_current_user),
+) -> LinkedInOAuthStartOut:
+    settings = get_settings()
+    if not settings.linkedin_client_id or not settings.linkedin_client_secret:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="LinkedIn ещё не настроен на сервере",
+        )
+    state_token = create_linkedin_oauth_state(current_user.id)
+    query = urlencode(
+        {
+            "response_type": "code",
+            "client_id": settings.linkedin_client_id,
+            "redirect_uri": settings.linkedin_redirect_uri,
+            # openid+profile: identify the member (OIDC userinfo) to get
+            # their own URN. w_member_social: "Share on LinkedIn" --
+            # create/manage posts as that member. Both auto-approved
+            # products, no partner review needed (unlike LinkedIn's
+            # Marketing/organization-posting APIs).
+            "scope": "openid profile w_member_social",
+            "state": state_token,
+        }
+    )
+    return LinkedInOAuthStartOut(
+        authorization_url=f"https://www.linkedin.com/oauth/v2/authorization?{query}"
+    )
+
+
+@router.post(
+    "/linkedin/connect", response_model=SocialAccountOut, status_code=status.HTTP_201_CREATED
+)
+def connect_linkedin(
+    payload: LinkedInConnectRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> SocialAccount:
+    try:
+        state_user_id = decode_linkedin_oauth_state(payload.state)
+    except (jwt.InvalidTokenError, ValueError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="LinkedIn OAuth state истёк или недействителен — начните подключение заново",
+        ) from None
+    if state_user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="LinkedIn OAuth был начат другим пользователем",
+        )
+
+    settings = get_settings()
+    try:
+        token = linkedin.exchange_code_for_token(
+            payload.code,
+            settings.linkedin_client_id,
+            settings.linkedin_client_secret,
+            settings.linkedin_redirect_uri,
+        )
+        member = linkedin.get_member_info(token["access_token"])
+        account = upsert_social_account(
+            db,
+            current_user,
+            platform=SocialPlatform.linkedin,
+            external_account_id=member["sub"],
+            access_token=token["access_token"],
+            refresh_token=token.get("refresh_token"),
+            token_expires_at=datetime.now(UTC) + timedelta(seconds=int(token["expires_in"])),
+            display_name=member.get("name"),
+        )
+    except (KeyError, ValueError, PermanentPublishError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Не удалось подключить LinkedIn: {exc}",
+        ) from exc
+    except TransientPublishError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        ) from exc
+    return account
+
+
+@router.post("/reddit/start", response_model=RedditOAuthStartOut)
+def start_reddit_oauth(
+    current_user: User = Depends(get_current_user),
+) -> RedditOAuthStartOut:
+    settings = get_settings()
+    if not settings.reddit_client_id or not settings.reddit_client_secret:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Reddit ещё не настроен на сервере",
+        )
+    state_token = create_reddit_oauth_state(current_user.id)
+    query = urlencode(
+        {
+            "client_id": settings.reddit_client_id,
+            "response_type": "code",
+            "state": state_token,
+            "redirect_uri": settings.reddit_redirect_uri,
+            # duration=permanent: without it Reddit issues a 1-hour
+            # access token and NO refresh token at all (a "temporary"
+            # grant meant for short read-only sessions) -- publishing
+            # later from a background task needs a refresh token.
+            "duration": "permanent",
+            "scope": "identity submit",
+        }
+    )
+    return RedditOAuthStartOut(
+        authorization_url=f"https://www.reddit.com/api/v1/authorize?{query}"
+    )
+
+
+@router.post(
+    "/reddit/connect", response_model=SocialAccountOut, status_code=status.HTTP_201_CREATED
+)
+def connect_reddit(
+    payload: RedditConnectRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> SocialAccount:
+    try:
+        state_user_id = decode_reddit_oauth_state(payload.state)
+    except (jwt.InvalidTokenError, ValueError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Reddit OAuth state истёк или недействителен — начните подключение заново",
+        ) from None
+    if state_user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Reddit OAuth был начат другим пользователем",
+        )
+
+    settings = get_settings()
+    try:
+        token = reddit.exchange_code_for_token(
+            payload.code,
+            settings.reddit_client_id,
+            settings.reddit_client_secret,
+            settings.reddit_redirect_uri,
+            settings.reddit_user_agent,
+        )
+        identity = reddit.get_identity(token["access_token"], settings.reddit_user_agent)
+        account = upsert_social_account(
+            db,
+            current_user,
+            platform=SocialPlatform.reddit,
+            external_account_id=identity["name"],
+            access_token=token["access_token"],
+            refresh_token=token.get("refresh_token"),
+            token_expires_at=datetime.now(UTC) + timedelta(seconds=int(token["expires_in"])),
+            display_name=identity.get("name"),
+        )
+    except (KeyError, ValueError, PermanentPublishError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Не удалось подключить Reddit: {exc}",
+        ) from exc
+    except TransientPublishError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        ) from exc
+    return account
+
+
+@router.post("/twitter/start", response_model=TwitterOAuthStartOut)
+def start_twitter_oauth(
+    current_user: User = Depends(get_current_user),
+) -> TwitterOAuthStartOut:
+    settings = get_settings()
+    if not settings.twitter_client_id or not settings.twitter_client_secret:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="X (Twitter) ещё не настроен на сервере",
+        )
+    state_token, code_challenge = create_twitter_oauth_state(current_user.id)
+    query = urlencode(
+        {
+            "response_type": "code",
+            "client_id": settings.twitter_client_id,
+            "redirect_uri": settings.twitter_redirect_uri,
+            # offline.access: without it X issues no refresh token at
+            # all, same reasoning as YouTube's access_type=offline.
+            "scope": "tweet.read tweet.write users.read offline.access",
+            "state": state_token,
+            "code_challenge": code_challenge,
+            "code_challenge_method": "S256",
+        }
+    )
+    return TwitterOAuthStartOut(
+        authorization_url=f"https://twitter.com/i/oauth2/authorize?{query}"
+    )
+
+
+@router.post(
+    "/twitter/connect", response_model=SocialAccountOut, status_code=status.HTTP_201_CREATED
+)
+def connect_twitter(
+    payload: TwitterConnectRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> SocialAccount:
+    try:
+        state_user_id, code_verifier = decode_twitter_oauth_state(payload.state)
+    except (jwt.InvalidTokenError, ValueError, KeyError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="X OAuth state истёк или недействителен — начните подключение заново",
+        ) from None
+    if state_user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="X OAuth был начат другим пользователем",
+        )
+
+    settings = get_settings()
+    try:
+        token = twitter.exchange_code_for_token(
+            payload.code,
+            code_verifier,
+            settings.twitter_client_id,
+            settings.twitter_client_secret,
+            settings.twitter_redirect_uri,
+        )
+        me = twitter.get_me(token["access_token"])
+        account = upsert_social_account(
+            db,
+            current_user,
+            platform=SocialPlatform.twitter,
+            external_account_id=me["id"],
+            access_token=token["access_token"],
+            refresh_token=token.get("refresh_token"),
+            token_expires_at=datetime.now(UTC) + timedelta(seconds=int(token["expires_in"])),
+            display_name=me.get("username"),
+        )
+    except (KeyError, ValueError, PermanentPublishError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Не удалось подключить X: {exc}",
+        ) from exc
+    except TransientPublishError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        ) from exc
+    return account
+
+
+def _visible_tiktok_account(db: Session, account_id: str, user: User) -> SocialAccount:
     account = db.get(SocialAccount, account_id)
     if (
         account is None
-        or account.user_id != user.id
+        or account.user_id not in visible_user_ids(db, user)
         or account.platform != SocialPlatform.tiktok
     ):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="TikTok аккаунт не найден")
@@ -306,7 +695,7 @@ def get_tiktok_creator_info(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> TikTokCreatorInfoOut:
-    account = _owned_tiktok_account(db, account_id, current_user)
+    account = _visible_tiktok_account(db, account_id, current_user)
     try:
         access_token = tiktok.ensure_fresh_access_token(account)
         creator = tiktok.query_creator_info(access_token)
@@ -327,7 +716,7 @@ def get_tiktok_publish_status(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> TikTokPublishStatusOut:
-    account = _owned_tiktok_account(db, account_id, current_user)
+    account = _visible_tiktok_account(db, account_id, current_user)
     try:
         access_token = tiktok.ensure_fresh_access_token(account)
         result = tiktok.fetch_publish_status(access_token, publish_id)
@@ -345,8 +734,14 @@ def get_tiktok_publish_status(
 def list_social_accounts(
     current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
 ) -> list[SocialAccount]:
+    # Roadmap item 5: team-visible, not just the caller's own rows --
+    # a shared channel list is the actual point of a team.
     return list(
-        db.scalars(select(SocialAccount).where(SocialAccount.user_id == current_user.id))
+        db.scalars(
+            select(SocialAccount).where(
+                SocialAccount.user_id.in_(visible_user_ids(db, current_user))
+            )
+        )
     )
 
 
@@ -356,9 +751,12 @@ def disconnect_social_account(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> None:
+    # Any team member can manage a shared account, not just whoever
+    # originally connected it -- same reasoning as the list above.
     result = db.execute(
         delete(SocialAccount).where(
-            SocialAccount.id == account_id, SocialAccount.user_id == current_user.id
+            SocialAccount.id == account_id,
+            SocialAccount.user_id.in_(visible_user_ids(db, current_user)),
         )
     )
     db.commit()

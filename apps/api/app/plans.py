@@ -1,6 +1,12 @@
 from dataclasses import dataclass
 
-from app.models import GenerationContentType, SubscriptionTier, UsageEventType
+from app.models import (
+    GenerationContentType,
+    Subscription,
+    SubscriptionStatus,
+    SubscriptionTier,
+    UsageEventType,
+)
 
 
 @dataclass(frozen=True)
@@ -12,6 +18,26 @@ class PlanLimits:
     max_generations_per_format: dict[GenerationContentType, int | None]
     max_publications_per_month: int | None
     max_connected_accounts: int | None
+    # CIN-146: long AI clips (Seedance, CIN-144) are billed separately
+    # from the 8-second Veo clips counted in max_generations_per_format
+    # -- at ~$7 apiece they'd blow a tier's whole margin in a handful
+    # of generations.
+    max_long_videos_per_month: int | None = 0
+    # CIN-148: laid-out renders are free to produce (no model call), so
+    # this bounds storage abuse rather than cost -- generous on purpose.
+    max_layout_renders_per_month: int | None = 30
+    # Avatar videos on the user's own HeyGen key cost Cindra no AI
+    # money (HeyGen bills the user), but each one holds a worker for
+    # the whole render (minutes of polling) and leaves a copy in R2 --
+    # this bounds that, not spend, so it's generous like layout renders.
+    max_byo_avatar_videos_per_month: int | None = 5
+    # One Resolve instance renders one montage at a time on Cindra's
+    # render machine -- this rations that queue, not AI spend.
+    max_davinci_montages_per_month: int | None = 3
+    # Started hours on air of a live avatar stream: Cindra's machine
+    # encodes the video and pays for the chat replies. Business covers
+    # one round-the-clock stream for a whole month (31 x 24 = 744).
+    max_stream_hours_per_month: int | None = 1
 
 
 # Values fixed in CIN-59, derived from real per-generation AI cost
@@ -19,6 +45,14 @@ class PlanLimits:
 # per tier -- see the unit-economics report linked from that ticket.
 # `None` means unlimited; text limits are a soft-cap against abuse
 # rather than a real cost constraint (text is ~$0.0001/generation).
+#
+# CIN-146 re-checked these against official pricing on 2026-09-01 and
+# left the per-format numbers as they are: on Veo 3.1 Fast ($0.12/s,
+# so $0.96 per 8s clip) Pro costs ~$8.7 against $19 and Business ~$60
+# against $100. The long-video counter is new: a 15s Seedance 2.5 clip
+# at 720p runs ~$7.10 ($0.473/s), so Business gets 3 (~$21 on top of
+# ~$60) and the cheaper tiers none -- one 30s clip per user would cost
+# more than a whole Pro subscription.
 PLAN_LIMITS: dict[SubscriptionTier, PlanLimits] = {
     SubscriptionTier.free: PlanLimits(
         max_generations_per_format={
@@ -28,6 +62,10 @@ PLAN_LIMITS: dict[SubscriptionTier, PlanLimits] = {
         },
         max_publications_per_month=10,
         max_connected_accounts=1,
+        max_layout_renders_per_month=30,
+        max_byo_avatar_videos_per_month=5,
+        max_davinci_montages_per_month=3,
+        max_stream_hours_per_month=1,
     ),
     SubscriptionTier.pro: PlanLimits(
         max_generations_per_format={
@@ -37,6 +75,11 @@ PLAN_LIMITS: dict[SubscriptionTier, PlanLimits] = {
         },
         max_publications_per_month=None,
         max_connected_accounts=None,
+        max_long_videos_per_month=0,
+        max_layout_renders_per_month=500,
+        max_byo_avatar_videos_per_month=100,
+        max_davinci_montages_per_month=50,
+        max_stream_hours_per_month=100,
     ),
     SubscriptionTier.business: PlanLimits(
         max_generations_per_format={
@@ -46,8 +89,32 @@ PLAN_LIMITS: dict[SubscriptionTier, PlanLimits] = {
         },
         max_publications_per_month=None,
         max_connected_accounts=None,
+        max_long_videos_per_month=3,
+        max_layout_renders_per_month=None,
+        max_byo_avatar_videos_per_month=300,
+        max_davinci_montages_per_month=200,
+        max_stream_hours_per_month=744,
     ),
 }
+
+
+def effective_tier(subscription: Subscription) -> SubscriptionTier:
+    """The tier actually entitled to quota right now (CIN-153).
+
+    `subscription.tier` only ever moves forward -- confirm_paypal_
+    subscription sets it once and nothing resets it, by design: it
+    records what the user last paid for, which the billing page shows
+    alongside `status` ("Business · canceled") so a lapsed subscriber
+    can see what to renew. But that means `tier` alone is NOT a safe
+    input to quota checks -- a cancelled or payment-failed subscriber
+    would otherwise keep premium limits forever. Everything that
+    enforces a limit must go through this, not `subscription.tier`
+    directly; nothing currently justifies a grace period for past_due,
+    so it drops straight to free like cancelled does.
+    """
+    if subscription.status is not SubscriptionStatus.active:
+        return SubscriptionTier.free
+    return subscription.tier
 
 
 def limit_for(
@@ -65,4 +132,14 @@ def limit_for(
         if content_type is None:
             raise ValueError("content_type is required to look up a generation limit")
         return limits.max_generations_per_format[content_type]
+    if event_type is UsageEventType.long_video_generation:
+        return limits.max_long_videos_per_month
+    if event_type is UsageEventType.layout_render:
+        return limits.max_layout_renders_per_month
+    if event_type is UsageEventType.byo_avatar_video:
+        return limits.max_byo_avatar_videos_per_month
+    if event_type is UsageEventType.davinci_montage:
+        return limits.max_davinci_montages_per_month
+    if event_type is UsageEventType.stream_hour:
+        return limits.max_stream_hours_per_month
     return limits.max_publications_per_month

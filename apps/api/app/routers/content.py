@@ -1,12 +1,28 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
+from datetime import UTC, datetime
+
+from fastapi import APIRouter, Depends, HTTPException, Response, UploadFile, status
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.content_pipeline.attachments import (
     AttachmentTooLargeError,
     UnsupportedAttachmentError,
     classify_attachment,
+    downscale_image_for_background,
     downscale_image_for_context,
+    max_size_bytes_for_mime,
+    read_upload_capped,
+)
+from app.content_pipeline.errors import TransientGenerationError
+from app.content_pipeline.ideas import generate_ideas
+from app.content_pipeline.image_generator import nano_banana_image_generator
+from app.content_pipeline.layout_renderer import (
+    LayoutFontMissingError,
+    LayoutRenderError,
+    render_layout,
+    render_sample,
 )
 from app.content_pipeline.media_storage import upload_bytes
 from app.content_pipeline.publish_matrix import (
@@ -14,11 +30,34 @@ from app.content_pipeline.publish_matrix import (
     validate_generation_target,
 )
 from app.content_pipeline.tasks import run_generation_job
+from app.content_pipeline.video_studio import VideoStudioFailedError
 from app.db import get_db
-from app.deps import get_current_user
-from app.models import GenerationJob, SocialAccount, UsageEventType, User
-from app.schemas import AttachmentOut, GenerationJobOut, GenerationRequest
-from app.usage import enforce_and_record_usage
+from app.deps import get_current_user, require_admin
+from app.image_templates import IMAGE_TEMPLATES
+from app.layout_templates import LAYOUT_TEMPLATES
+from app.models import (
+    GenerationJob,
+    ImageTemplatePreview,
+    SocialAccount,
+    UsageEventType,
+    User,
+)
+from app.ratelimit import hit
+from app.schemas import (
+    AttachmentOut,
+    GenerationJobOut,
+    GenerationRequest,
+    IdeasOut,
+    IdeasRequest,
+    ImageTemplateOut,
+    ImageTemplatePreviewsOut,
+    LayoutBackgroundOut,
+    LayoutRenderOut,
+    LayoutRenderRequest,
+    LayoutTemplateOut,
+)
+from app.teams import visible_user_ids
+from app.usage import check_usage_limit, enforce_and_record_usage, record_usage
 
 router = APIRouter(prefix="/content", tags=["content"])
 
@@ -32,19 +71,24 @@ async def upload_attachment(
     upload validation and the R2 PUT are both fast, synchronous operations.
     Free on every tier: this isn't a metered UsageEvent, just storage.
     """
-    data = await file.read()
     mime_type = file.content_type or "application/octet-stream"
+    try:
+        # Resolved from the declared Content-Type alone, before reading
+        # any of the body, so the read below can be capped instead of
+        # buffering an oversized upload fully before rejecting it.
+        max_bytes = max_size_bytes_for_mime(mime_type)
+    except UnsupportedAttachmentError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
     try:
         # Size cap is enforced on the original upload, before any
         # downscaling below -- otherwise it'd be trivial to dodge the
         # cap with an image that only becomes small after resizing.
-        attachment_type = classify_attachment(mime_type, len(data))
-    except UnsupportedAttachmentError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
+        data = await read_upload_capped(file, max_bytes)
     except AttachmentTooLargeError as exc:
         raise HTTPException(
             status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail=str(exc)
         ) from None
+    attachment_type = classify_attachment(mime_type, len(data))
 
     extension = (file.filename or "").rsplit(".", 1)[-1].lower() if "." in (file.filename or "") else "bin"
     if attachment_type == "image":
@@ -68,25 +112,32 @@ def generate_content(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> GenerationJob:
-    # Target accounts are chosen up front (CIN-106) -- content_type/
-    # content_kind must be publishable to all of them at once, checked
-    # here (before spending any generation budget) rather than only
-    # failing later at actual publish time.
-    accounts = db.scalars(
-        select(SocialAccount).where(SocialAccount.id.in_(payload.target_account_ids))
-    ).all()
-    found_ids = {a.id for a in accounts}
-    missing = set(payload.target_account_ids) - found_ids
-    if missing or any(a.user_id != current_user.id for a in accounts):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Соцаккаунт не найден"
-        )
+    # Target accounts are optional -- a user can generate before
+    # connecting anything (POST /posts is where a connected account is
+    # actually required, see PostCreate.social_account_ids). When
+    # accounts ARE chosen up front (CIN-106), content_type/content_kind
+    # must be publishable to all of them at once, checked here (before
+    # spending any generation budget) rather than only failing later;
+    # with none chosen, that same check runs at publish time instead
+    # (posts.py::create_post).
+    accounts: list[SocialAccount] = []
+    if payload.target_account_ids:
+        accounts = db.scalars(
+            select(SocialAccount).where(SocialAccount.id.in_(payload.target_account_ids))
+        ).all()
+        found_ids = {a.id for a in accounts}
+        missing = set(payload.target_account_ids) - found_ids
+        visible_ids = visible_user_ids(db, current_user)
+        if missing or any(a.user_id not in visible_ids for a in accounts):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Соцаккаунт не найден"
+            )
 
-    platforms = {a.platform for a in accounts}
-    try:
-        validate_generation_target(platforms, payload.content_type, payload.content_kind)
-    except InvalidGenerationTargetError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
+        platforms = {a.platform for a in accounts}
+        try:
+            validate_generation_target(platforms, payload.content_type, payload.content_kind)
+        except InvalidGenerationTargetError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
 
     # content_type defaults to text. All three content types now have
     # real generators registered (text: CIN-53, image: CIN-54, video:
@@ -103,9 +154,11 @@ def generate_content(
     # platform (see prompts.py); image/video generation don't read
     # platform at all. Rather than the bigger scope of generating a
     # distinct text variant per target platform, tone is derived from
-    # the first-selected target account.
-    first_account = min(accounts, key=lambda a: payload.target_account_ids.index(a.id))
-    input_payload["platform"] = first_account.platform.value
+    # the first-selected target account -- omitted entirely (falls back
+    # to platform-neutral guidance) when nothing was selected.
+    if accounts:
+        first_account = min(accounts, key=lambda a: payload.target_account_ids.index(a.id))
+        input_payload["platform"] = first_account.platform.value
 
     job = GenerationJob(
         user_id=current_user.id,
@@ -128,6 +181,255 @@ def generate_content(
     return job
 
 
+# CIN-148: like the catalog below, these sit before GET /{job_id} so
+# the catch-all doesn't swallow their paths as job ids.
+@router.get("/layout-templates", response_model=list[LayoutTemplateOut])
+def list_layout_templates(
+    current_user: User = Depends(get_current_user),
+) -> list[LayoutTemplateOut]:
+    """Catalog of code-rendered templates: what each one is and which
+    fields the user fills in."""
+    return [
+        LayoutTemplateOut(
+            id=template_id,
+            title=t["title"],
+            description=t["description"],
+            supports_image=t["supports_image"],
+            slots=t["slots"],
+        )
+        for template_id, t in LAYOUT_TEMPLATES.items()
+    ]
+
+
+@router.get("/layout-templates/{template_id}/preview")
+def preview_layout_template(
+    template_id: str,
+    canvas_format: str = "square",
+    theme: str = "dark",
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """Gallery thumbnail: the template filled with demo copy.
+
+    Rendered per request rather than stored -- it takes tens of
+    milliseconds, costs nothing, and never goes stale when a template
+    changes. Not metered for the same reason.
+    """
+    try:
+        png = render_sample(template_id, canvas_format, theme=theme)
+    except LayoutRenderError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except LayoutFontMissingError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        ) from exc
+    return Response(
+        content=png,
+        media_type="image/png",
+        # Same demo copy every time -- let the browser keep it.
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
+
+
+@router.post(
+    "/layout-background",
+    response_model=LayoutBackgroundOut,
+    status_code=status.HTTP_201_CREATED,
+)
+async def upload_layout_background(
+    file: UploadFile, current_user: User = Depends(get_current_user)
+) -> LayoutBackgroundOut:
+    """Upload a background for a template that supports one (CIN-151).
+
+    Separate from /content/attachment because that path shrinks images
+    to 384px for the model's tile budget (CIN-98) -- fine as context,
+    visibly soft behind a 1080x1920 card. Like attachments, it isn't
+    metered: only the render itself is.
+    """
+    if not get_settings().r2_account_id:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Медиа-хранилище не настроено на сервере",
+        )
+    mime_type = file.content_type or "application/octet-stream"
+    try:
+        max_bytes = max_size_bytes_for_mime(mime_type)
+    except UnsupportedAttachmentError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
+    try:
+        data = await read_upload_capped(file, max_bytes)
+    except AttachmentTooLargeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail=str(exc)
+        ) from None
+    attachment_type = classify_attachment(mime_type, len(data))
+    if attachment_type != "image":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Подложкой может быть только изображение",
+        )
+    try:
+        data, mime_type = downscale_image_for_background(data)
+    except UnsupportedAttachmentError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
+    return LayoutBackgroundOut(background_url=upload_bytes(data, mime_type, "jpg"))
+
+
+@router.post("/ideas", response_model=IdeasOut)
+def suggest_ideas(
+    payload: IdeasRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> IdeasOut:
+    """A handful of concrete content ideas for the week ("Идеи" on the dashboard).
+
+    One cheap text call, so it is not metered against the plan's
+    generation quota (that would punish exploring); a per-user rate
+    limit keeps it from becoming a free text API instead.
+    """
+    if not get_settings().gemini_api_key:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Генерация не настроена на сервере",
+        )
+    hit("ideas-hour", str(current_user.id), 6, 3600)
+    hit("ideas-day", str(current_user.id), 20, 86400)
+    recent = db.scalars(
+        select(GenerationJob.input_payload["topic"].astext)
+        .where(GenerationJob.user_id == current_user.id)
+        .order_by(GenerationJob.created_at.desc())
+        .limit(10)
+    ).all()
+    try:
+        ideas = generate_ideas(
+            current_user.brand_guide, [t for t in recent if t], payload.focus
+        )
+    except TransientGenerationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Сервис генерации сейчас перегружен — попробуйте через минуту",
+        ) from exc
+    except VideoStudioFailedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Не удалось придумать идеи — попробуйте ещё раз",
+        ) from exc
+    return IdeasOut(ideas=ideas)
+
+
+@router.post("/layout-render", response_model=LayoutRenderOut)
+def render_layout_template(
+    payload: LayoutRenderRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> LayoutRenderOut:
+    """Render a template with the user's own text and store it in R2.
+
+    Synchronous: no model call, so the result is known within the
+    request. Per CIN-139 the quota is therefore checked first and only
+    recorded once the render actually succeeded.
+    """
+    # Without R2 the upload below dies deep inside boto3 with a bare
+    # ValueError ("Invalid endpoint: https://.r2.cloudflarestorage.com")
+    # and the user just sees a 500. Checked up front instead, the same
+    # way /auth/google reports its own missing config (CIN-133).
+    if not get_settings().r2_account_id:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Медиа-хранилище не настроено на сервере",
+        )
+    # CIN-158: for_update=True is safe here -- render_layout() below is
+    # local Pillow rendering, no external call between check and record.
+    check_usage_limit(db, current_user, UsageEventType.layout_render, for_update=True)
+    try:
+        png = render_layout(
+            payload.template_id,
+            payload.canvas_format,
+            payload.values,
+            theme=payload.theme,
+            accent=payload.accent,
+            background_url=payload.background_url,
+        )
+    except LayoutRenderError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except LayoutFontMissingError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        ) from exc
+    image_url = upload_bytes(png, "image/png", "png")
+    record_usage(db, current_user, UsageEventType.layout_render)
+    return LayoutRenderOut(image_url=image_url)
+
+
+# CIN-143: registered before GET /{job_id} -- that catch-all would
+# otherwise swallow "image-templates" as a job id.
+@router.get("/image-templates", response_model=list[ImageTemplateOut])
+def list_image_templates(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[ImageTemplateOut]:
+    """Image template catalog for the «Посты» page -- the frontend
+    renders whatever is here (single source of truth, like
+    /video-projects/styles)."""
+    previews = {
+        row.template_id: row.preview_url
+        for row in db.scalars(select(ImageTemplatePreview)).all()
+    }
+    return [
+        ImageTemplateOut(
+            id=template_id,
+            title=t["title"],
+            description=t["description"],
+            preview_url=previews.get(template_id),
+        )
+        for template_id, t in IMAGE_TEMPLATES.items()
+    ]
+
+
+@router.post("/image-templates/previews", response_model=ImageTemplatePreviewsOut)
+def generate_image_template_previews(
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> ImageTemplatePreviewsOut:
+    """Generate one example image per AI template and store it (CIN-150).
+
+    Staff-only and deliberately manual: this spends a real image
+    generation per template, so it runs when the catalog changes, not
+    on a schedule and never on a user's quota. Failures are reported
+    per template instead of aborting -- one template's refusal must not
+    cost the whole run.
+    """
+    generated: list[str] = []
+    failed: dict[str, str] = {}
+    for template_id, template in IMAGE_TEMPLATES.items():
+        try:
+            # Goes through the ordinary user path -- enhancer included
+            # (CIN-142) -- so the example shows what someone actually
+            # gets, not a differently-built approximation.
+            result = nano_banana_image_generator(
+                {"topic": template["preview_topic"], "image_template": template_id}
+            )
+        except Exception as exc:  # noqa: BLE001 -- reported per template below
+            failed[template_id] = str(exc)[:200]
+            continue
+        # Upsert rather than merge(): regenerating replaces the
+        # stored example, and ON CONFLICT keeps that correct even if two
+        # staff runs overlap.
+        db.execute(
+            pg_insert(ImageTemplatePreview)
+            .values(template_id=template_id, preview_url=result["image_url"])
+            .on_conflict_do_update(
+                index_elements=[ImageTemplatePreview.template_id],
+                set_={
+                    "preview_url": result["image_url"],
+                    "generated_at": datetime.now(UTC),
+                },
+            )
+        )
+        generated.append(template_id)
+    db.commit()
+    return ImageTemplatePreviewsOut(generated=generated, failed=failed)
+
+
 @router.get("/{job_id}", response_model=GenerationJobOut)
 def get_generation_job(
     job_id: str,
@@ -135,7 +437,7 @@ def get_generation_job(
     db: Session = Depends(get_db),
 ) -> GenerationJob:
     job = db.get(GenerationJob, job_id)
-    if job is None or job.user_id != current_user.id:
+    if job is None or job.user_id not in visible_user_ids(db, current_user):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Задача не найдена"
         )

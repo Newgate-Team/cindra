@@ -2,18 +2,27 @@
 
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 
-import { api } from "./api";
+import { api, onUnauthorized } from "./api";
 import type { User, UserRole } from "./types";
 
 const TOKEN_STORAGE_KEY = "cindra_token";
+// Read once by the login page to say why the user landed there.
+export const SESSION_EXPIRED_KEY = "cindra_session_expired";
 
 interface AuthContextValue {
   token: string | null;
   user: User | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
+  loginWithGoogle: (idToken: string) => Promise<void>;
   register: (email: string, password: string, role: UserRole) => Promise<void>;
   logout: () => void;
+  // Re-fetches /auth/me and updates the shared user object -- for
+  // callers (Settings) that changed something about the account
+  // server-side (PATCH /auth/me) and need the rest of the app (this
+  // context is shared everywhere) to see the new value immediately,
+  // not just their own local state.
+  refreshUser: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -40,10 +49,43 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .finally(() => setLoading(false));
   }, []);
 
+  useEffect(() => {
+    if (!token) return;
+    onUnauthorized((failedToken) => {
+      // Only this tab's current token: a late 401 from a request made with
+      // an older token must not log out a session started since. Compared
+      // with the tab's own state, not localStorage -- that is shared by all
+      // tabs, so once one tab had cleared it, a second tab on the same dead
+      // token never matched and kept polling 401s forever.
+      if (failedToken !== token) return;
+      try {
+        sessionStorage.setItem(SESSION_EXPIRED_KEY, "1");
+      } catch {
+        // storage unavailable -- the login page just won't explain why
+      }
+      // ...and don't wipe a newer login another tab has stored since.
+      if (localStorage.getItem(TOKEN_STORAGE_KEY) === failedToken) {
+        localStorage.removeItem(TOKEN_STORAGE_KEY);
+      }
+      setToken(null);
+      setUser(null);
+    });
+    return () => onUnauthorized(null);
+  }, [token]);
+
   async function login(email: string, password: string) {
     const { access_token } = await api.post<{ access_token: string }>("/auth/login", {
       email,
       password,
+    });
+    localStorage.setItem(TOKEN_STORAGE_KEY, access_token);
+    setToken(access_token);
+    setUser(await api.get<User>("/auth/me", access_token));
+  }
+
+  async function loginWithGoogle(idToken: string) {
+    const { access_token } = await api.post<{ access_token: string }>("/auth/google", {
+      id_token: idToken,
     });
     localStorage.setItem(TOKEN_STORAGE_KEY, access_token);
     setToken(access_token);
@@ -61,8 +103,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
   }
 
+  async function refreshUser() {
+    if (!token) return;
+    setUser(await api.get<User>("/auth/me", token));
+  }
+
   return (
-    <AuthContext.Provider value={{ token, user, loading, login, register, logout }}>
+    <AuthContext.Provider
+      value={{ token, user, loading, login, loginWithGoogle, register, logout, refreshUser }}
+    >
       {children}
     </AuthContext.Provider>
   );

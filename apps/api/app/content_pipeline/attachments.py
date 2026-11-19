@@ -4,8 +4,11 @@ from typing import Any
 
 import httpx
 from docx import Document
+from fastapi import UploadFile
 from PIL import Image
 from pypdf import PdfReader
+
+from app.social_integrations.media_validation import is_own_media_url
 
 # Gemini's tile count is aspect-ratio-driven, not size-driven, above
 # this threshold (crop_unit = floor(min(w,h)/1.5), tiles = ceil(w/
@@ -123,19 +126,90 @@ def downscale_image_for_context(data: bytes) -> tuple[bytes, str]:
     return buffer.getvalue(), "image/jpeg"
 
 
+# CIN-151: backgrounds for the card renderer are resized for a canvas,
+# not for a model's tile budget -- 384px (the attachment bound above)
+# would be visibly soft behind 1080x1920. This bound covers every
+# canvas format with room for the cover-crop.
+_MAX_BACKGROUND_DIMENSION = 2160
+
+
+def downscale_image_for_background(data: bytes) -> tuple[bytes, str]:
+    """Resize an uploaded card background down to a canvas-appropriate
+    bound. Same validation and JPEG re-encode as the context path
+    (downscale_image_for_context), only a much larger target: this
+    image is displayed to people, not read by a model."""
+    try:
+        image = Image.open(io.BytesIO(data))
+        image.load()
+    except Exception as exc:
+        raise UnsupportedAttachmentError(
+            f"Повреждённый или неподдерживаемый файл изображения: {exc}"
+        ) from exc
+    width, height = image.size
+    if max(width, height) > _MAX_BACKGROUND_DIMENSION:
+        scale = _MAX_BACKGROUND_DIMENSION / max(width, height)
+        image = image.resize(
+            (round(width * scale), round(height * scale)), Image.Resampling.LANCZOS
+        )
+    if image.mode not in ("RGB", "L"):
+        image = image.convert("RGB")
+    buffer = io.BytesIO()
+    image.save(buffer, format="JPEG", quality=_IMAGE_JPEG_QUALITY)
+    return buffer.getvalue(), "image/jpeg"
+
+
+def _attachment_type_for_mime(mime_type: str) -> str:
+    attachment_type = _MIME_TO_ATTACHMENT_TYPE.get(mime_type)
+    if attachment_type is None:
+        raise UnsupportedAttachmentError(f"Неподдерживаемый формат файла: {mime_type}")
+    return attachment_type
+
+
+def max_size_bytes_for_mime(mime_type: str) -> int:
+    """Size cap for this mime type's attachment category -- resolvable
+    from the (client-declared) Content-Type alone, before any of the
+    request body has been read. Lets a caller bound the read itself
+    (see read_upload_capped) instead of buffering the whole upload
+    first and only checking its size afterwards."""
+    return _MAX_SIZE_BYTES[_attachment_type_for_mime(mime_type)]
+
+
 def classify_attachment(mime_type: str, size_bytes: int) -> str:
     """Validate an uploaded file and return its attachment_type
     (image/video/audio/document), or raise if the type is unsupported
     or the file exceeds its type's size cap."""
-    attachment_type = _MIME_TO_ATTACHMENT_TYPE.get(mime_type)
-    if attachment_type is None:
-        raise UnsupportedAttachmentError(f"Неподдерживаемый формат файла: {mime_type}")
+    attachment_type = _attachment_type_for_mime(mime_type)
     if size_bytes > _MAX_SIZE_BYTES[attachment_type]:
         limit_mb = _MAX_SIZE_BYTES[attachment_type] / (1024 * 1024)
         raise AttachmentTooLargeError(
             f"Файл больше {limit_mb:.0f}MB -- максимум для типа {attachment_type}"
         )
     return attachment_type
+
+
+_UPLOAD_CHUNK_BYTES = 1024 * 1024
+
+
+async def read_upload_capped(file: UploadFile, max_bytes: int) -> bytes:
+    """Read an UploadFile's body in chunks, aborting as soon as
+    max_bytes is exceeded -- a bare `await file.read()` reads the
+    entire body into memory unconditionally, so an oversized upload
+    gets fully materialized before any size check gets a chance to
+    reject it. Every /content and /video-projects upload endpoint is
+    authenticated but registration is open (CIN-147), so this bounds
+    how much memory one free-tier request can force the API process to
+    hold, regardless of what the client actually sends."""
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await file.read(_UPLOAD_CHUNK_BYTES)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise AttachmentTooLargeError(f"Файл больше {max_bytes / (1024 * 1024):.0f}MB")
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 def extract_document_text(data: bytes, mime_type: str) -> str:
@@ -169,7 +243,23 @@ def fetch_attachment_bytes(url: str, client: httpx.Client | None = None) -> byte
     """Download an attachment previously uploaded to R2 (public URL) so a
     generator can read it as context. Public bucket URL, no auth header
     needed -- same pattern video_generator.py uses to re-download from
-    Google's own signed video URI."""
+    Google's own signed video URI.
+
+    CIN-161: GenerationRequest.attachments[].url is a plain client-
+    supplied string, not verified against anything POST /content/
+    attachment actually returned -- without this check, any
+    authenticated user can point it at an internal address and have
+    the response (as "document" text, it decodes straight into the
+    generation prompt -- see extract_document_text's text/plain
+    fallback) come back through the generated post. Same SSRF class
+    already closed for TikTok/Telegram (CIN-134/CIN-156), reused here
+    via is_own_media_url rather than duplicated.
+    """
+    if not is_own_media_url(url):
+        raise UnsupportedAttachmentError(
+            "Вложение должно ссылаться на файл, загруженный через "
+            "POST /content/attachment"
+        )
     response = (
         client.get(url, timeout=30.0) if client is not None else httpx.get(url, timeout=30.0)
     )

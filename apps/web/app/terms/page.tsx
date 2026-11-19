@@ -1,5 +1,5 @@
 export const metadata = {
-  title: "Условия использования — Cindra",
+  title: "Условия использования",
 };
 
 export default function TermsOfServicePage() {

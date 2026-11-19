@@ -5,6 +5,7 @@ from app.content_pipeline.errors import ContentModeratedError, TransientGenerati
 from app.content_pipeline.moderation import check_content
 from app.content_pipeline.registry import get_generator
 from app.db import SessionLocal
+from app.drive_exports import queue_generation_export
 from app.models import GenerationJob, GenerationStatus
 
 _MAX_RETRIES = 3
@@ -63,3 +64,5 @@ def run_generation_job(self, job_id: str) -> None:
         job.output_payload = output
         job.completed_at = datetime.now(UTC)
         db.commit()
+        # After the commit: the result is the user's whatever Drive does.
+        queue_generation_export(db, job)

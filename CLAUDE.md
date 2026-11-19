@@ -1,0 +1,90 @@
+# Cindra — инструкции для Claude Code
+
+Этот файл читается автоматически при работе в репозитории. Он описывает, как здесь принято работать; продуктовые решения и их обоснования — в [docs/spec.md](docs/spec.md), деплой — в [apps/api/README.md](apps/api/README.md).
+
+## Что за продукт
+
+SaaS для AI-контента в соцсетях, два раздела приложения:
+
+- **Посты** (`/generate`) — быстрый цикл: тема/бренд-гайд → сгенерированный текст или изображение → публикация (сразу или по расписанию) в подключённые аккаунты, в том числе fan-out на несколько сразу.
+- **Видео** (`/video`) — студия с проектным циклом: сценарий → выбор стиля → производственный бриф из трёх файлов → готовый ролик (загруженный пользователем или сгенерированный Veo/Seedance) → публикация тем же fan-out.
+- **Шаблоны** (`/templates`) — карточки, которые собирает код, а не модель: пользователь выбирает макет и заполняет поля, текст встаёт ровно как введён. Появился потому, что модели ненадёжно рисуют текст на изображении (CIN-125) и каждый раз верстают по-разному.
+
+Платформы публикации: Telegram, Instagram, Facebook, TikTok (только видео), YouTube (только видео), LinkedIn (текст + изображение), Reddit (текст + изображение + видео, публикация через `kind=link` на собственный R2-URL, не нативная загрузка Reddit), X/Twitter (только текст, единственный OAuth-флоу в приложении с PKCE). Последние четыре написаны и протестированы, но ждут реальных OAuth-кредов владельца аккаунтов (см. «Гейты» ниже) — до этого отдают 503 на `/social-accounts/{platform}/start`.
+
+## Стек и раскладка
+
+| Что | Где |
+|---|---|
+| Frontend | `apps/web` — Next.js (App Router) + TypeScript, без UI-библиотек (только иконки `lucide-react` и шрифты Fontsource), свои стили в `app/globals.css`: палитра и токены — вверху файла, цвет и иконка каждого раздела — в `lib/nav.ts` |
+| Backend | `apps/api` — FastAPI + SQLAlchemy 2.0 + Alembic, пакеты внутри `app/` |
+| Генерация | `app/content_pipeline/` — промпты, Gemini/Veo/Seedance, модерация, Celery-задачи |
+| Каталоги | `app/image_templates.py` (AI-шаблоны), `app/layout_templates.py` (макеты для рендера), `app/video_styles.py` (стили видео) — чистые данные, добавление записи не требует ни кода, ни миграции |
+| Публикация | `app/social_integrations/` + `app/scheduler/` |
+| Платежи | `app/billing_integrations/` (PayPal) |
+| Инфра для разработки | `infra/docker-compose.yml` — Postgres (порт 5433), Redis (6380) |
+
+`packages/*` — пустые заглушки из ранней спецификации, кода там нет.
+
+## Локальный запуск
+
+```bash
+cd infra && docker compose up -d
+cd apps/api && cp .env.example .env && pip install -e ".[dev]" && alembic upgrade head && uvicorn app.main:app --reload
+cd apps/web && npm ci && npm run dev
+```
+
+Без реальных ключей в `.env` генерация и публикация будут падать на реальных вызовах — это ожидаемо, ключи выдаёт владелец аккаунтов (см. «Гейты» ниже). Всё остальное (авторизация, проекты, лимиты, календарь) работает локально.
+
+## Проверки перед коммитом
+
+```bash
+cd apps/api && ruff check . && DATABASE_URL=postgresql+psycopg://cindra:cindra@localhost:5433/cindra_test pytest
+cd apps/web && npm run lint && npm run build
+```
+
+Тесты требуют поднятого Postgres и **отдельной базы с `test` в имени** (`createdb cindra_test` + `alembic upgrade head` с тем же `DATABASE_URL`): каждый тест начинается с `TRUNCATE users … CASCADE`, и на dev-базе из `.env` conftest остановит прогон сам. Если 5433 занят другим проектом, поднимите контейнер на свободном порту и передайте `DATABASE_URL` переменной окружения — весь набор тестов от этого не зависит.
+
+После деплоя: `python apps/api/devtools/smoke.py --api https://<api> --web https://<фронтенд>` — read-only прогон (живость, база/Redis, CORS, защита маршрутов, `robots.txt`); код возврата 1, если что-то не так. `GET /health/ready` — для внешнего аптайм-монитора.
+
+## Как здесь принято работать
+
+**Процесс:** задача в Jira ([доска CIN](https://dalmonded.atlassian.net/jira/software/projects/CIN/boards/100)) → ветка `feature/CIN-N` от `dev` → PR в `dev` → мерж после зелёного CI. Мерж `dev → main` (релиз) — всегда вручную человеком.
+
+Интеграции GitHub↔Jira нет, статусы двигает Claude по ходу: создал ветку → «В работе», открыл PR → «На проверке», смёржил → «Готово».
+
+**Правила, выработанные на этом проекте:**
+
+- **Проверять на реальном стеке, а не на моках.** Изменения в UI проверяются в браузере на запущенном dev-сервере; изменения в интеграциях — на реальных эндпоинтах, где это возможно. Формулировка «должно работать» в отчёте не принимается.
+- **Комментарий объясняет «почему», а не «что».** В коде много комментариев вида «сделано так, потому что вот это сломалось в проде (CIN-N)» — они дороже описания синтаксиса, сохраняйте этот стиль и ссылайтесь на тикеты.
+- **Не откатывать чужие защиты, не разобравшись.** Несколько мест выглядят избыточными, но закрывают реальные инциденты: `_validate_media_url` в TikTok (SSRF), отказ от `raise_for_status()` в вызовах Gemini (ключ в URL утекал в текст ошибки), запрет предвыбора приватности в TikTok (требование платформы).
+- **Лимиты тарифа — деньги.** Синхронные эндпоинты списывают лимит только после успешной генерации; асинхронные (job-based) — заранее, потому что результат приходит в воркере. Дорогие генерации защищены от повторного запуска (409, пока джоба в работе).
+- **Миграции выстраиваются в одну цепочку.** Перед PR убедиться, что `alembic heads` даёт одну голову: параллельные ветки часто ответвляют миграции от одной ревизии.
+
+## Гейты (не код, а доступы)
+
+Часть функциональности написана и протестирована, но не запускается без ключей, которые может получить только владелец аккаунтов:
+
+| Что | Что нужно |
+|---|---|
+| Вход через Google | OAuth Web Client ID в Google Cloud Console → `GOOGLE_CLIENT_ID` + `NEXT_PUBLIC_GOOGLE_CLIENT_ID` |
+| TikTok | `TIKTOK_CLIENT_KEY` / `TIKTOK_CLIENT_SECRET` из TikTok Developer Portal |
+| YouTube | `YOUTUBE_CLIENT_ID` / `YOUTUBE_CLIENT_SECRET` — отдельный OAuth-клиент от `GOOGLE_CLIENT_ID` (тот только вход, без refresh-токена) |
+| Google Drive | `GOOGLE_DRIVE_CLIENT_ID` / `GOOGLE_DRIVE_CLIENT_SECRET` — можно тот же клиент, что YouTube (включить Drive API, добавить redirect URI); экран согласия в «In production», иначе Google отзывает токены через 7 дней. До этого проверяется симулятором `devtools/google_drive_simulator.py` |
+| LinkedIn | `LINKEDIN_CLIENT_ID` / `LINKEDIN_CLIENT_SECRET` из LinkedIn Developer Portal |
+| Reddit | `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` (тип «web app») из reddit.com/prefs/apps |
+| X (Twitter) | `TWITTER_CLIENT_ID` / `TWITTER_CLIENT_SECRET` — confidential-клиент; уточнить, что тариф X API включает write-доступ (с 2023 бесплатный не включает) |
+| Эфир с AI-аватаром | у пользователя — свой ключ LiveAvatar (app.liveavatar.com, отдельный от HeyGen API) **или Simli** (app.simli.com, ≈$13/сутки 24/7 против ≈$130 у LiveAvatar) и ключ трансляции Twitch; у нас — `STREAM_AGENT_TOKEN` и машина с агентом `stream_agent/`. Сессия LiveAvatar ≤20 мин (Essential) / ≤60 мин (Business) — агент ротирует их, 24/7 стоит у пользователя ≈$130/сутки кредитами LiveAvatar. Голос — Gemini TTS (`GEMINI_TTS_MODEL`, нужен `GEMINI_API_KEY`). Проверяется симуляторами `devtools/liveavatar_simulator.py` и `devtools/simli_simulator.py` (+ LiveKit в Docker для видео, см. apps/api/README «Агент эфиров») |
+| Чат эфира через официальный API Twitch | `TWITCH_CLIENT_ID` / `TWITCH_CLIENT_SECRET` — приложение на dev.twitch.tv (Confidential, redirect `…/oauth/twitch/callback`). Без него чат читается анонимно по IRC (подписки и рейды тоже видны), но аватар не может писать ответы в чат. Проверяется симулятором `devtools/twitch_simulator.py` |
+| Лимиты запросов за прокси | `TRUSTED_PROXY_HOPS` (по умолчанию 1 — Railway; 0 только без прокси): если за прокси поставить 0, регистрация/вход/сброс пароля считают всех пользователей одним адресом и лимит срабатывает на всех сразу. Redis недоступен — лимиты молча отключаются (fail-open) |
+| Отчёты об ошибках | `SENTRY_DSN` (необязательно; пусто = выключено) |
+| Оплата | реальные ключи и планы PayPal |
+| Генерация | `GEMINI_API_KEY` (учтите: API проверяет геолокацию запроса) |
+| Длинные ролики | `FAL_KEY` (fal.ai) — без него «Полное авто» в студии генерирует через Veo, а не Seedance (CIN-144) |
+| Хранилище медиа | Cloudflare R2 (`R2_*`) — без него генерация изображений/видео не сможет отдать публичный URL, а рендер карточек отдаёт 503 |
+| Примеры AI-шаблонов | нужен `GEMINI_API_KEY`: превью генерируются один раз командой через `POST /content/image-templates/previews` (только админ), до этого каталог отдаёт `preview_url: null` (CIN-150) |
+| Резервные копии БД | `BACKUP_ENCRYPTION_KEY` (Fernet, отдельный от `SOCIAL_TOKEN_ENCRYPTION_KEY`) — без него ежедневный бэкап (`app.scheduler.tasks.backup_database`) падает явно, а не грузит дамп в открытом виде |
+
+Секреты передаются вне репозитория, в `.env` (он в `.gitignore`). Не коммитить.
+
+**Не ключ, но тоже внешняя зависимость:** рендер карточек (`/templates`) требует шрифта с кириллицей — встроенный в Pillow её не знает. В Docker и CI ставится `fonts-dejavu-core`; локально подхватывается системный шрифт, путь при необходимости задаётся `LAYOUT_FONT_REGULAR`/`LAYOUT_FONT_BOLD`.

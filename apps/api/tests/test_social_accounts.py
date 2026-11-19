@@ -1,13 +1,34 @@
+import threading
+import uuid
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
+from urllib.parse import parse_qs, urlparse
 
 import jwt
+import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.models import SocialPlatform, User
+from app.db import SessionLocal
+from app.models import (
+    SocialAccount,
+    SocialPlatform,
+    Subscription,
+    SubscriptionTier,
+    User,
+)
+from app.security import (
+    create_linkedin_oauth_state,
+    create_meta_oauth_state,
+    create_reddit_oauth_state,
+    create_twitter_oauth_state,
+    create_youtube_oauth_state,
+    decode_twitter_oauth_state,
+)
 from app.social_accounts import get_access_token, upsert_social_account
 from app.social_integrations.errors import PermanentPublishError
 from app.token_crypto import decrypt_token, encrypt_token
@@ -43,11 +64,130 @@ def test_upsert_is_idempotent_per_platform_and_account(db: Session, user: User) 
     assert get_access_token(second) == "token-2"
 
 
+def test_free_tier_blocks_a_second_connected_account(db: Session, user: User) -> None:
+    # CIN-155: free tier's max_connected_accounts=1 (see app/plans.py).
+    upsert_social_account(db, user, SocialPlatform.telegram, "12345", access_token="t1")
+
+    with pytest.raises(HTTPException) as exc_info:
+        upsert_social_account(db, user, SocialPlatform.tiktok, "67890", access_token="t2")
+    assert exc_info.value.status_code == 402
+    assert db.query(SocialAccount).filter(SocialAccount.user_id == user.id).count() == 1
+
+
+def test_free_tier_allows_refreshing_an_account_already_at_the_limit(
+    db: Session, user: User
+) -> None:
+    # Reconnecting/refreshing the SAME account is an update, not a new
+    # connection -- must never count against the cap, even once it's
+    # already been reached.
+    upsert_social_account(db, user, SocialPlatform.telegram, "12345", access_token="t1")
+    refreshed = upsert_social_account(
+        db, user, SocialPlatform.telegram, "12345", access_token="t2"
+    )
+    assert get_access_token(refreshed) == "t2"
+    assert db.query(SocialAccount).filter(SocialAccount.user_id == user.id).count() == 1
+
+
+def test_facebook_pair_does_not_count_twice_against_the_limit(db: Session, user: User) -> None:
+    # CIN-155: Instagram's OAuth grant always creates a paired Facebook
+    # row in the same request (CIN-65) -- from the user's own
+    # perspective that's one "Connect Instagram" action, not two
+    # platforms consuming two slots. Facebook itself is never checked
+    # or counted (see _enforce_connected_account_limit).
+    upsert_social_account(db, user, SocialPlatform.instagram, "ig-1", access_token="t1")
+    upsert_social_account(db, user, SocialPlatform.facebook, "fb-1", access_token="t2")
+    assert db.query(SocialAccount).filter(SocialAccount.user_id == user.id).count() == 2
+
+    # The Instagram connection already used the free tier's one slot --
+    # a third, genuinely independent platform must still be blocked.
+    with pytest.raises(HTTPException) as exc_info:
+        upsert_social_account(db, user, SocialPlatform.telegram, "12345", access_token="t3")
+    assert exc_info.value.status_code == 402
+
+
+def test_connected_account_limit_is_unlimited_on_pro_tier(db: Session, user: User) -> None:
+    subscription = db.scalar(select(Subscription).where(Subscription.user_id == user.id))
+    subscription.tier = SubscriptionTier.pro
+    db.commit()
+
+    for i in range(5):
+        upsert_social_account(db, user, SocialPlatform.telegram, str(i), access_token="t")
+    assert db.query(SocialAccount).filter(SocialAccount.user_id == user.id).count() == 5
+
+
+def test_connected_account_limit_frees_up_after_disconnect(db: Session, user: User) -> None:
+    upsert_social_account(db, user, SocialPlatform.telegram, "12345", access_token="t1")
+    with pytest.raises(HTTPException):
+        upsert_social_account(db, user, SocialPlatform.tiktok, "67890", access_token="t2")
+
+    account = db.scalar(select(SocialAccount).where(SocialAccount.user_id == user.id))
+    db.delete(account)
+    db.commit()
+
+    # The slot freed by the disconnect is available again.
+    reconnected = upsert_social_account(
+        db, user, SocialPlatform.tiktok, "67890", access_token="t2"
+    )
+    assert reconnected.platform == SocialPlatform.tiktok
+
+
+def test_concurrent_connect_of_the_same_account_does_not_500(
+    db: Session, user: User
+) -> None:
+    # Same class of race as CIN-158/162 and the auth.py register/google
+    # fixes: two genuinely concurrent OAuth callbacks for the same
+    # (user, platform, external_account_id) -- e.g. a double-clicked
+    # "Connect" button, or a duplicate callback tab. Real threads, real
+    # separate DB connections; a mock can't exercise the DB's own
+    # uq_social_account constraint.
+    user_id = user.id
+    results: list[SocialAccount | Exception] = []
+    barrier = threading.Barrier(2)
+
+    def attempt(token: str) -> None:
+        with SessionLocal() as session:
+            local_user = session.get(User, user_id)
+            barrier.wait(timeout=15)
+            try:
+                results.append(
+                    upsert_social_account(
+                        session, local_user, SocialPlatform.telegram, "99999", access_token=token
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001 -- asserted on below
+                results.append(exc)
+
+    threads = [
+        threading.Thread(target=attempt, args=(f"token-{i}",)) for i in range(2)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=20)
+
+    assert all(isinstance(r, SocialAccount) for r in results), results
+    account_ids = {r.id for r in results}
+    assert len(account_ids) == 1  # both calls resolved to the same row, no 500
+    with SessionLocal() as verify:
+        rows = verify.scalars(
+            select(SocialAccount).where(
+                SocialAccount.user_id == user_id,
+                SocialAccount.platform == SocialPlatform.telegram,
+                SocialAccount.external_account_id == "99999",
+            )
+        ).all()
+        assert len(rows) == 1
+
+
 def _auth_headers(client: TestClient) -> dict[str, str]:
     payload = {"email": "ada@cindra.dev", "password": "supersecret1"}
     client.post("/auth/register", json=payload)
     token = client.post("/auth/login", json=payload).json()["access_token"]
     return {"Authorization": f"Bearer {token}"}
+
+
+def _user_id(db: Session, email: str = "ada@cindra.dev") -> uuid.UUID:
+    return db.scalar(select(User.id).where(User.email == email))
 
 
 def test_list_social_accounts_excludes_tokens(client: TestClient, db: Session) -> None:
@@ -89,8 +229,12 @@ def test_disconnect_social_account(client: TestClient, db: Session) -> None:
 def test_disconnect_social_account_not_owned_returns_404(
     client: TestClient, db: Session
 ) -> None:
+    # CIN-155: upsert_social_account now needs a Subscription to check
+    # the connected-account limit against.
     other = User(email="eve@cindra.dev", hashed_password="x")
     db.add(other)
+    db.flush()
+    db.add(Subscription(user_id=other.id))
     db.commit()
     other_account = upsert_social_account(
         db, other, SocialPlatform.telegram, "999", access_token="t"
@@ -349,8 +493,25 @@ def test_connect_telegram_requires_auth(client: TestClient) -> None:
     assert response.status_code == 401
 
 
-def test_connect_instagram_creates_social_account(client: TestClient) -> None:
+def test_start_instagram_oauth_returns_state_bound_to_current_user(
+    client: TestClient, db: Session
+) -> None:
     headers = _auth_headers(client)
+    response = client.post("/social-accounts/instagram/start", headers=headers)
+    assert response.status_code == 200
+    state = response.json()["state"]
+    assert jwt.decode(state, get_settings().jwt_secret, algorithms=["HS256"])["sub"] == str(
+        _user_id(db)
+    )
+
+
+def test_start_instagram_oauth_requires_auth(client: TestClient) -> None:
+    assert client.post("/social-accounts/instagram/start").status_code == 401
+
+
+def test_connect_instagram_creates_social_account(client: TestClient, db: Session) -> None:
+    headers = _auth_headers(client)
+    state = create_meta_oauth_state(_user_id(db))
     with (
         patch(
             "app.routers.social_accounts.instagram.exchange_code_for_token",
@@ -369,7 +530,9 @@ def test_connect_instagram_creates_social_account(client: TestClient) -> None:
         ),
     ):
         response = client.post(
-            "/social-accounts/instagram/connect", json={"code": "auth-code"}, headers=headers
+            "/social-accounts/instagram/connect",
+            json={"code": "auth-code", "state": state},
+            headers=headers,
         )
 
     assert response.status_code == 201
@@ -379,8 +542,9 @@ def test_connect_instagram_creates_social_account(client: TestClient) -> None:
     assert body["display_name"] == "mybrand"
 
 
-def test_connect_instagram_also_connects_facebook_page(client: TestClient) -> None:
+def test_connect_instagram_also_connects_facebook_page(client: TestClient, db: Session) -> None:
     headers = _auth_headers(client)
+    state = create_meta_oauth_state(_user_id(db))
     with (
         patch(
             "app.routers.social_accounts.instagram.exchange_code_for_token",
@@ -398,7 +562,11 @@ def test_connect_instagram_also_connects_facebook_page(client: TestClient) -> No
             },
         ),
     ):
-        client.post("/social-accounts/instagram/connect", json={"code": "auth-code"}, headers=headers)
+        client.post(
+            "/social-accounts/instagram/connect",
+            json={"code": "auth-code", "state": state},
+            headers=headers,
+        )
 
     listed = client.get("/social-accounts", headers=headers).json()
     platforms = {account["platform"]: account for account in listed}
@@ -407,8 +575,9 @@ def test_connect_instagram_also_connects_facebook_page(client: TestClient) -> No
     assert platforms["facebook"]["display_name"] == "Cindra"
 
 
-def test_connect_instagram_no_linked_account_returns_400(client: TestClient) -> None:
+def test_connect_instagram_no_linked_account_returns_400(client: TestClient, db: Session) -> None:
     headers = _auth_headers(client)
+    state = create_meta_oauth_state(_user_id(db))
     with (
         patch(
             "app.routers.social_accounts.instagram.exchange_code_for_token",
@@ -424,7 +593,9 @@ def test_connect_instagram_no_linked_account_returns_400(client: TestClient) -> 
         ),
     ):
         response = client.post(
-            "/social-accounts/instagram/connect", json={"code": "auth-code"}, headers=headers
+            "/social-accounts/instagram/connect",
+            json={"code": "auth-code", "state": state},
+            headers=headers,
         )
 
     assert response.status_code == 400
@@ -432,5 +603,413 @@ def test_connect_instagram_no_linked_account_returns_400(client: TestClient) -> 
 
 
 def test_connect_instagram_requires_auth(client: TestClient) -> None:
-    response = client.post("/social-accounts/instagram/connect", json={"code": "auth-code"})
+    response = client.post(
+        "/social-accounts/instagram/connect", json={"code": "auth-code", "state": "irrelevant"}
+    )
+    assert response.status_code == 401
+
+
+def test_connect_instagram_missing_state_is_rejected(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    response = client.post(
+        "/social-accounts/instagram/connect", json={"code": "auth-code"}, headers=headers
+    )
+    assert response.status_code == 422
+
+
+def test_connect_instagram_invalid_state_returns_400(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    response = client.post(
+        "/social-accounts/instagram/connect",
+        json={"code": "auth-code", "state": "not-a-real-token"},
+        headers=headers,
+    )
+    assert response.status_code == 400
+    assert "истёк" in response.json()["detail"] or "недействителен" in response.json()["detail"]
+
+
+def test_connect_instagram_expired_state_returns_400(client: TestClient, db: Session) -> None:
+    expired = jwt.encode(
+        {
+            "sub": str(_user_id(db)),
+            "nonce": "x",
+            "exp": datetime.now(UTC) - timedelta(minutes=1),
+            "typ": "meta_oauth_state",
+        },
+        get_settings().jwt_secret,
+        algorithm="HS256",
+    )
+    headers = _auth_headers(client)
+    response = client.post(
+        "/social-accounts/instagram/connect",
+        json={"code": "auth-code", "state": expired},
+        headers=headers,
+    )
+    assert response.status_code == 400
+
+
+def test_connect_instagram_wrong_token_type_is_rejected(client: TestClient, db: Session) -> None:
+    # A validly-signed token of the WRONG kind (e.g. a telegram
+    # verification token, or another user's access token) must not be
+    # accepted just because it's signed with our own secret.
+    wrong_kind = jwt.encode(
+        {
+            "sub": str(_user_id(db)),
+            "nonce": "x",
+            "exp": datetime.now(UTC) + timedelta(minutes=10),
+            "typ": "tiktok_oauth_state",
+        },
+        get_settings().jwt_secret,
+        algorithm="HS256",
+    )
+    headers = _auth_headers(client)
+    response = client.post(
+        "/social-accounts/instagram/connect",
+        json={"code": "auth-code", "state": wrong_kind},
+        headers=headers,
+    )
+    assert response.status_code == 400
+
+
+def test_connect_instagram_rejects_state_issued_for_a_different_user(
+    client: TestClient, db: Session
+) -> None:
+    # CIN-154's actual exploit: an attacker's own valid state (or a
+    # code paired with it) must not attach to the victim's account.
+    headers = _auth_headers(client)
+    someone_elses_state = create_meta_oauth_state(uuid.uuid4())
+    response = client.post(
+        "/social-accounts/instagram/connect",
+        json={"code": "auth-code", "state": someone_elses_state},
+        headers=headers,
+    )
+    assert response.status_code == 400
+    assert "другим пользователем" in response.json()["detail"]
+
+
+def _youtube_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(get_settings(), "youtube_client_id", "client-id")
+    monkeypatch.setattr(get_settings(), "youtube_client_secret", "client-secret")
+
+
+def test_start_youtube_oauth_returns_503_when_unconfigured(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    response = client.post("/social-accounts/youtube/start", headers=headers)
+    assert response.status_code == 503
+
+
+def test_start_youtube_oauth_returns_state_bound_to_current_user(
+    client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _youtube_configured(monkeypatch)
+    headers = _auth_headers(client)
+    response = client.post("/social-accounts/youtube/start", headers=headers)
+    assert response.status_code == 200
+    url = response.json()["authorization_url"]
+    assert url.startswith("https://accounts.google.com/o/oauth2/v2/auth?")
+    assert "access_type=offline" in url
+    assert "prompt=consent" in url
+    state = parse_qs(urlparse(url).query)["state"][0]
+    assert jwt.decode(state, get_settings().jwt_secret, algorithms=["HS256"])["sub"] == str(
+        _user_id(db)
+    )
+
+
+def test_start_youtube_oauth_requires_auth(client: TestClient) -> None:
+    assert client.post("/social-accounts/youtube/start").status_code == 401
+
+
+def test_connect_youtube_creates_social_account(client: TestClient, db: Session) -> None:
+    headers = _auth_headers(client)
+    state = create_youtube_oauth_state(_user_id(db))
+    with (
+        patch(
+            "app.routers.social_accounts.youtube.exchange_code_for_token",
+            return_value={"access_token": "access", "refresh_token": "refresh", "expires_in": 3600},
+        ),
+        patch(
+            "app.routers.social_accounts.youtube.get_channel_info",
+            return_value={"id": "UC123", "snippet": {"title": "Cindra Demo"}},
+        ),
+    ):
+        response = client.post(
+            "/social-accounts/youtube/connect",
+            json={"code": "auth-code", "state": state},
+            headers=headers,
+        )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["platform"] == "youtube"
+    assert body["external_account_id"] == "UC123"
+    assert body["display_name"] == "Cindra Demo"
+
+
+def test_connect_youtube_rejects_state_issued_for_a_different_user(
+    client: TestClient, db: Session
+) -> None:
+    headers = _auth_headers(client)
+    someone_elses_state = create_youtube_oauth_state(uuid.uuid4())
+    response = client.post(
+        "/social-accounts/youtube/connect",
+        json={"code": "auth-code", "state": someone_elses_state},
+        headers=headers,
+    )
+    assert response.status_code == 400
+    assert "другим пользователем" in response.json()["detail"]
+
+
+def test_connect_youtube_requires_auth(client: TestClient) -> None:
+    response = client.post(
+        "/social-accounts/youtube/connect", json={"code": "auth-code", "state": "whatever"}
+    )
+    assert response.status_code == 401
+
+
+def _linkedin_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(get_settings(), "linkedin_client_id", "client-id")
+    monkeypatch.setattr(get_settings(), "linkedin_client_secret", "client-secret")
+
+
+def test_start_linkedin_oauth_returns_503_when_unconfigured(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    response = client.post("/social-accounts/linkedin/start", headers=headers)
+    assert response.status_code == 503
+
+
+def test_start_linkedin_oauth_returns_state_bound_to_current_user(
+    client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _linkedin_configured(monkeypatch)
+    headers = _auth_headers(client)
+    response = client.post("/social-accounts/linkedin/start", headers=headers)
+    assert response.status_code == 200
+    url = response.json()["authorization_url"]
+    assert url.startswith("https://www.linkedin.com/oauth/v2/authorization?")
+    state = parse_qs(urlparse(url).query)["state"][0]
+    assert jwt.decode(state, get_settings().jwt_secret, algorithms=["HS256"])["sub"] == str(
+        _user_id(db)
+    )
+
+
+def test_start_linkedin_oauth_requires_auth(client: TestClient) -> None:
+    assert client.post("/social-accounts/linkedin/start").status_code == 401
+
+
+def test_connect_linkedin_creates_social_account(client: TestClient, db: Session) -> None:
+    headers = _auth_headers(client)
+    state = create_linkedin_oauth_state(_user_id(db))
+    with (
+        patch(
+            "app.routers.social_accounts.linkedin.exchange_code_for_token",
+            return_value={"access_token": "access", "expires_in": 5184000},
+        ),
+        patch(
+            "app.routers.social_accounts.linkedin.get_member_info",
+            return_value={"sub": "abc123", "name": "Cindra Demo"},
+        ),
+    ):
+        response = client.post(
+            "/social-accounts/linkedin/connect",
+            json={"code": "auth-code", "state": state},
+            headers=headers,
+        )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["platform"] == "linkedin"
+    assert body["external_account_id"] == "abc123"
+    assert body["display_name"] == "Cindra Demo"
+
+
+def test_connect_linkedin_rejects_state_issued_for_a_different_user(
+    client: TestClient, db: Session
+) -> None:
+    headers = _auth_headers(client)
+    someone_elses_state = create_linkedin_oauth_state(uuid.uuid4())
+    response = client.post(
+        "/social-accounts/linkedin/connect",
+        json={"code": "auth-code", "state": someone_elses_state},
+        headers=headers,
+    )
+    assert response.status_code == 400
+    assert "другим пользователем" in response.json()["detail"]
+
+
+def test_connect_linkedin_requires_auth(client: TestClient) -> None:
+    response = client.post(
+        "/social-accounts/linkedin/connect", json={"code": "auth-code", "state": "whatever"}
+    )
+    assert response.status_code == 401
+
+
+def _reddit_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(get_settings(), "reddit_client_id", "client-id")
+    monkeypatch.setattr(get_settings(), "reddit_client_secret", "client-secret")
+
+
+def test_start_reddit_oauth_returns_503_when_unconfigured(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    response = client.post("/social-accounts/reddit/start", headers=headers)
+    assert response.status_code == 503
+
+
+def test_start_reddit_oauth_returns_state_bound_to_current_user(
+    client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _reddit_configured(monkeypatch)
+    headers = _auth_headers(client)
+    response = client.post("/social-accounts/reddit/start", headers=headers)
+    assert response.status_code == 200
+    url = response.json()["authorization_url"]
+    assert url.startswith("https://www.reddit.com/api/v1/authorize?")
+    query = parse_qs(urlparse(url).query)
+    assert query["duration"] == ["permanent"]
+    state = query["state"][0]
+    assert jwt.decode(state, get_settings().jwt_secret, algorithms=["HS256"])["sub"] == str(
+        _user_id(db)
+    )
+
+
+def test_start_reddit_oauth_requires_auth(client: TestClient) -> None:
+    assert client.post("/social-accounts/reddit/start").status_code == 401
+
+
+def test_connect_reddit_creates_social_account(client: TestClient, db: Session) -> None:
+    headers = _auth_headers(client)
+    state = create_reddit_oauth_state(_user_id(db))
+    with (
+        patch(
+            "app.routers.social_accounts.reddit.exchange_code_for_token",
+            return_value={"access_token": "access", "refresh_token": "refresh", "expires_in": 3600},
+        ),
+        patch(
+            "app.routers.social_accounts.reddit.get_identity",
+            return_value={"name": "ada_lovelace", "id": "t2_abc123"},
+        ),
+    ):
+        response = client.post(
+            "/social-accounts/reddit/connect",
+            json={"code": "auth-code", "state": state},
+            headers=headers,
+        )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["platform"] == "reddit"
+    assert body["external_account_id"] == "ada_lovelace"
+    assert body["display_name"] == "ada_lovelace"
+
+
+def test_connect_reddit_rejects_state_issued_for_a_different_user(
+    client: TestClient, db: Session
+) -> None:
+    headers = _auth_headers(client)
+    someone_elses_state = create_reddit_oauth_state(uuid.uuid4())
+    response = client.post(
+        "/social-accounts/reddit/connect",
+        json={"code": "auth-code", "state": someone_elses_state},
+        headers=headers,
+    )
+    assert response.status_code == 400
+    assert "другим пользователем" in response.json()["detail"]
+
+
+def test_connect_reddit_requires_auth(client: TestClient) -> None:
+    response = client.post(
+        "/social-accounts/reddit/connect", json={"code": "auth-code", "state": "whatever"}
+    )
+    assert response.status_code == 401
+
+
+def _twitter_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(get_settings(), "twitter_client_id", "client-id")
+    monkeypatch.setattr(get_settings(), "twitter_client_secret", "client-secret")
+
+
+def test_start_twitter_oauth_returns_503_when_unconfigured(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    response = client.post("/social-accounts/twitter/start", headers=headers)
+    assert response.status_code == 503
+
+
+def test_start_twitter_oauth_returns_state_bound_to_current_user_with_pkce_challenge(
+    client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _twitter_configured(monkeypatch)
+    headers = _auth_headers(client)
+    response = client.post("/social-accounts/twitter/start", headers=headers)
+    assert response.status_code == 200
+    url = response.json()["authorization_url"]
+    assert url.startswith("https://twitter.com/i/oauth2/authorize?")
+    query = parse_qs(urlparse(url).query)
+    assert query["code_challenge_method"] == ["S256"]
+    assert query["code_challenge"][0]
+    state = query["state"][0]
+    payload = jwt.decode(state, get_settings().jwt_secret, algorithms=["HS256"])
+    assert payload["sub"] == str(_user_id(db))
+    assert payload["cv"]  # the PKCE code_verifier rides inside the state JWT
+
+
+def test_start_twitter_oauth_requires_auth(client: TestClient) -> None:
+    assert client.post("/social-accounts/twitter/start").status_code == 401
+
+
+def test_connect_twitter_creates_social_account(client: TestClient, db: Session) -> None:
+    headers = _auth_headers(client)
+    state, code_challenge = create_twitter_oauth_state(_user_id(db))
+    _state_user_id, expected_code_verifier = decode_twitter_oauth_state(state)
+    captured: dict = {}
+
+    def fake_exchange(code, code_verifier, client_id, client_secret, redirect_uri, client=None):
+        captured["code_verifier"] = code_verifier
+        return {"access_token": "access", "refresh_token": "refresh", "expires_in": 7200}
+
+    with (
+        patch(
+            "app.routers.social_accounts.twitter.exchange_code_for_token",
+            side_effect=fake_exchange,
+        ),
+        patch(
+            "app.routers.social_accounts.twitter.get_me",
+            return_value={"id": "12345", "username": "ada"},
+        ),
+    ):
+        response = client.post(
+            "/social-accounts/twitter/connect",
+            json={"code": "auth-code", "state": state},
+            headers=headers,
+        )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["platform"] == "twitter"
+    assert body["external_account_id"] == "12345"
+    assert body["display_name"] == "ada"
+    # The PKCE code_verifier from /start's state JWT must reach the
+    # token exchange unchanged -- confirms create_twitter_oauth_state's
+    # verifier and decode_twitter_oauth_state's extraction actually
+    # round-trip through the OAuth redirect, not just independently.
+    assert captured["code_verifier"] == expected_code_verifier
+    assert code_challenge  # sanity: /start did produce a real challenge
+
+
+def test_connect_twitter_rejects_state_issued_for_a_different_user(
+    client: TestClient, db: Session
+) -> None:
+    headers = _auth_headers(client)
+    someone_elses_state, _code_challenge = create_twitter_oauth_state(uuid.uuid4())
+    response = client.post(
+        "/social-accounts/twitter/connect",
+        json={"code": "auth-code", "state": someone_elses_state},
+        headers=headers,
+    )
+    assert response.status_code == 400
+    assert "другим пользователем" in response.json()["detail"]
+
+
+def test_connect_twitter_requires_auth(client: TestClient) -> None:
+    response = client.post(
+        "/social-accounts/twitter/connect", json={"code": "auth-code", "state": "whatever"}
+    )
     assert response.status_code == 401

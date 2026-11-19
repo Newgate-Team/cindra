@@ -1,17 +1,97 @@
+from datetime import UTC, datetime, timedelta
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.db import get_db
 from app.deps import get_current_user
-from app.models import Subscription, User
-from app.schemas import Token, UserCreate, UserLogin, UserOut, UserUpdate
-from app.security import create_access_token, hash_password, verify_password
+from app.google_auth import GoogleAuthError, verify_google_id_token
+from app.models import (
+    EmailVerificationToken,
+    PasswordResetToken,
+    Subscription,
+    User,
+    UserRole,
+)
+from app.ratelimit import hit, limit_by_ip
+from app.scheduler.tasks import send_email_task
+from app.schemas import (
+    ChangePasswordRequest,
+    EmailVerificationConfirm,
+    GoogleLoginRequest,
+    PasswordResetConfirm,
+    PasswordResetRequest,
+    Token,
+    UserCreate,
+    UserLogin,
+    UserOut,
+    UserUpdate,
+)
+from app.security import (
+    EMAIL_VERIFICATION_TOKEN_EXPIRE_MINUTES,
+    LOGIN_LOCKOUT_MINUTES,
+    PASSWORD_RESET_TOKEN_EXPIRE_MINUTES,
+    create_access_token,
+    generate_url_token,
+    hash_password,
+    hash_url_token,
+    is_locked_out,
+    record_failed_login,
+    record_successful_login,
+    verify_password,
+)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
-@router.post("/register", response_model=UserOut, status_code=status.HTTP_201_CREATED)
+def _issue_email_verification_token(user: User, db: Session) -> str:
+    """Mirrors the password-reset issuance below: at most one valid
+    link per user, hash-only storage. Caller commits."""
+    now = datetime.now(UTC)
+    for stale_token in db.scalars(
+        select(EmailVerificationToken).where(
+            EmailVerificationToken.user_id == user.id,
+            EmailVerificationToken.used_at.is_(None),
+            EmailVerificationToken.expires_at > now,
+        )
+    ):
+        stale_token.used_at = now
+    raw_token = generate_url_token()
+    db.add(
+        EmailVerificationToken(
+            user_id=user.id,
+            token_hash=hash_url_token(raw_token),
+            expires_at=now + timedelta(minutes=EMAIL_VERIFICATION_TOKEN_EXPIRE_MINUTES),
+        )
+    )
+    return raw_token
+
+
+def _send_verification_email(user: User, db: Session) -> None:
+    if not get_settings().smtp_host:
+        return
+    raw_token = _issue_email_verification_token(user, db)
+    db.commit()
+    verify_link = f"{get_settings().frontend_base_url}/verify-email?token={raw_token}"
+    send_email_task.delay(
+        user.email,
+        "Cindra — подтвердите email",
+        "Чтобы подтвердить адрес, перейдите по ссылке (действует "
+        f"{EMAIL_VERIFICATION_TOKEN_EXPIRE_MINUTES // 60} ч):\n\n{verify_link}\n\n"
+        "Ничего страшного, если вы не сделаете этого прямо сейчас — это не помешает "
+        "пользоваться Cindra.",
+    )
+
+
+@router.post(
+    "/register",
+    response_model=UserOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(limit_by_ip("register", 10, 3600))],
+)
 def register(payload: UserCreate, db: Session = Depends(get_db)) -> User:
     existing = db.scalar(select(User).where(User.email == payload.email))
     if existing is not None:
@@ -23,22 +103,136 @@ def register(payload: UserCreate, db: Session = Depends(get_db)) -> User:
         email=payload.email,
         hashed_password=hash_password(payload.password),
         role=payload.role,
+        # Лента (CIN-109) is a shared feed by design -- but for an
+        # agency, that's an unreleased client campaign visible to every
+        # other user before the client sees it published. Default
+        # private for agency, shared for solo (the audience CIN-109
+        # was actually built for); either can override via PATCH.
+        share_generations_to_feed=payload.role != UserRole.agency,
     )
     db.add(user)
-    db.flush()
-    db.add(Subscription(user_id=user.id))
-    db.commit()
+    try:
+        db.flush()
+        db.add(Subscription(user_id=user.id))
+        db.commit()
+    except IntegrityError:
+        # A second registration for the same email raced past the check
+        # above (e.g. a double-clicked submit) -- the email's UNIQUE
+        # constraint is the real guard; without this, that race would
+        # surface as an unhandled 500 instead of the same clean 409.
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Email уже зарегистрирован"
+        ) from None
     db.refresh(user)
+    try:
+        # Best-effort: verification is informational-only (see
+        # User.email_verified), so a broken mail relay or SMTP being
+        # unconfigured must never turn into a failed registration.
+        _send_verification_email(user, db)
+    except Exception:  # noqa: BLE001 -- a broken mail relay must not fail registration
+        db.rollback()
     return user
 
 
-@router.post("/login", response_model=Token)
+@router.post(
+    "/login",
+    response_model=Token,
+    # On top of the per-account lockout: this one stops a script that
+    # sprays many different accounts from a single address.
+    dependencies=[Depends(limit_by_ip("login", 30, 600))],
+)
 def login(payload: UserLogin, db: Session = Depends(get_db)) -> Token:
     user = db.scalar(select(User).where(User.email == payload.email))
+    # CIN-159: checked before anything password-related so a locked
+    # account gets the same 429 regardless of whether the submitted
+    # password happens to be right -- otherwise a correct guess mid-
+    # lockout would still leak "that was the password" via the 200.
+    if user is not None and is_locked_out(user):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=(
+                "Слишком много неудачных попыток входа — "
+                f"попробуйте снова через {LOGIN_LOCKOUT_MINUTES} минут"
+            ),
+        )
+    if user is not None and user.hashed_password is None:
+        # Google-created account: no password exists to check. The
+        # message intentionally names the real fix -- /auth/register
+        # already reveals email existence via its 409, so this hint
+        # doesn't leak anything new.
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Этот аккаунт создан через Google — используйте кнопку «Войти через Google»",
+        )
     if user is None or not verify_password(payload.password, user.hashed_password):
+        if user is not None:
+            record_failed_login(user)
+            db.commit()
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Неверный email или пароль"
         )
+    record_successful_login(user)
+    db.commit()
+    return Token(access_token=create_access_token(user.id))
+
+
+@router.post(
+    "/google", response_model=Token, dependencies=[Depends(limit_by_ip("google", 30, 600))]
+)
+def login_with_google(payload: GoogleLoginRequest, db: Session = Depends(get_db)) -> Token:
+    if not get_settings().google_client_id:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Вход через Google не настроен на сервере",
+        )
+    try:
+        claims = verify_google_id_token(payload.id_token)
+    except GoogleAuthError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)
+        ) from exc
+
+    email = claims["email"]
+    user = db.scalar(select(User).where(User.email == email))
+    if user is None:
+        # Google has already proven control of this address -- same
+        # reasoning as the password-drop below, just for a brand-new
+        # account instead of an existing one.
+        user = User(email=email, hashed_password=None, email_verified=True)
+        db.add(user)
+        try:
+            db.flush()
+            db.add(Subscription(user_id=user.id))
+            db.commit()
+        except IntegrityError:
+            # Two concurrent Google sign-ins for the same brand-new
+            # email raced past the check above -- the other request
+            # already created the account, so use it rather than
+            # erroring what's still a legitimate concurrent login.
+            db.rollback()
+            user = db.scalar(select(User).where(User.email == email))
+        else:
+            db.refresh(user)
+    elif user.hashed_password is not None:
+        # CIN-140 -- account pre-hijacking defence. /auth/register does
+        # not verify the address (there is no mail infrastructure), so
+        # anyone can register somebody else's email with a password of
+        # their choosing. Without this branch, the real owner's first
+        # "Sign in with Google" would drop them straight into that
+        # attacker-created account, which the attacker still holds the
+        # password to -- and this app stores connected social accounts
+        # and can publish through them.
+        #
+        # Google has just proven control of the address; the password
+        # holder never proved anything, so the password is dropped and
+        # the account becomes Google-only. A legitimate user who set
+        # that password themselves keeps full access through the same
+        # Google account (/auth/login already tells them where to go).
+        user.hashed_password = None
+        user.email_verified = True
+        db.commit()
+        db.refresh(user)
     return Token(access_token=create_access_token(user.id))
 
 
@@ -54,6 +248,196 @@ def update_me(
     db: Session = Depends(get_db),
 ) -> User:
     current_user.role = payload.role
+    if payload.share_generations_to_feed is not None:
+        current_user.share_generations_to_feed = payload.share_generations_to_feed
+    # "" means "clear it", None means "not part of this request".
+    if payload.brand_guide is not None:
+        current_user.brand_guide = payload.brand_guide.strip() or None
+    if payload.default_tone is not None:
+        current_user.default_tone = payload.default_tone or None
     db.commit()
     db.refresh(current_user)
     return current_user
+
+
+@router.post("/change-password", status_code=status.HTTP_204_NO_CONTENT)
+def change_password(
+    payload: ChangePasswordRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> None:
+    # Reuses CIN-159's login-lockout counters -- a leaked/stolen access
+    # token shouldn't hand over the account for free just because the
+    # attacker skips straight to this endpoint instead of /auth/login;
+    # guessing the current password here costs the same as guessing it
+    # there. Sharing the counter also means enough failed attempts here
+    # locks out real logins too -- a deliberate, conservative tradeoff:
+    # protecting the account matters more than the inconvenience.
+    if is_locked_out(current_user):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=(
+                "Слишком много неудачных попыток — "
+                f"попробуйте снова через {LOGIN_LOCKOUT_MINUTES} минут"
+            ),
+        )
+    if current_user.hashed_password is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Этот аккаунт создан через Google — пароля для смены нет",
+        )
+    if not verify_password(payload.current_password, current_user.hashed_password):
+        record_failed_login(current_user)
+        db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Неверный текущий пароль"
+        )
+    record_successful_login(current_user)
+    current_user.hashed_password = hash_password(payload.new_password)
+    db.commit()
+
+
+_PASSWORD_RESET_REQUESTED_RESPONSE = {
+    "detail": "Если такой email зарегистрирован, мы отправили на него ссылку для сброса пароля"
+}
+
+
+@router.post(
+    "/password-reset/request",
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(limit_by_ip("pwreset", 5, 3600))],
+)
+def request_password_reset(payload: PasswordResetRequest, db: Session = Depends(get_db)) -> dict:
+    # Per address above; per mailbox here, so one inbox cannot be flooded
+    # from many addresses. Counted before the lookup so the response
+    # (and its timing) does not reveal whether the email is registered.
+    hit("pwreset-email", payload.email.lower(), 3, 3600)
+    if not get_settings().smtp_host:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Отправка email не настроена на сервере",
+        )
+
+    # Always the same response whether or not the email is registered --
+    # a distinguishable response here is exactly the user-enumeration
+    # vector this endpoint would otherwise hand an attacker for free.
+    user = db.scalar(select(User).where(User.email == payload.email))
+    if user is None:
+        return _PASSWORD_RESET_REQUESTED_RESPONSE
+
+    if user.hashed_password is None:
+        # Google-only account -- nothing to reset, but still send
+        # *something* so the API response stays identical either way;
+        # this is also a genuine help to a legitimate user who forgot
+        # they signed up through Google.
+        send_email_task.delay(
+            user.email,
+            "Cindra — вход через Google",
+            "Этот аккаунт создан через Google — используйте кнопку «Войти через Google» "
+            "на странице входа. Сброс пароля для него не нужен и не поддерживается.",
+        )
+        return _PASSWORD_RESET_REQUESTED_RESPONSE
+
+    now = datetime.now(UTC)
+    # At most one valid link per user at a time -- an older still-valid
+    # token from an earlier request shouldn't remain a second, forgotten
+    # way to reset the password after a newer one is issued.
+    for stale_token in db.scalars(
+        select(PasswordResetToken).where(
+            PasswordResetToken.user_id == user.id,
+            PasswordResetToken.used_at.is_(None),
+            PasswordResetToken.expires_at > now,
+        )
+    ):
+        stale_token.used_at = now
+
+    raw_token = generate_url_token()
+    db.add(
+        PasswordResetToken(
+            user_id=user.id,
+            token_hash=hash_url_token(raw_token),
+            expires_at=now + timedelta(minutes=PASSWORD_RESET_TOKEN_EXPIRE_MINUTES),
+        )
+    )
+    db.commit()
+
+    reset_link = f"{get_settings().frontend_base_url}/reset-password?token={raw_token}"
+    send_email_task.delay(
+        user.email,
+        "Cindra — сброс пароля",
+        f"Чтобы задать новый пароль, перейдите по ссылке (действует "
+        f"{PASSWORD_RESET_TOKEN_EXPIRE_MINUTES} минут):\n\n{reset_link}\n\n"
+        "Если вы не запрашивали сброс пароля, просто проигнорируйте это письмо — "
+        "пароль останется прежним.",
+    )
+    return _PASSWORD_RESET_REQUESTED_RESPONSE
+
+
+@router.post(
+    "/password-reset/confirm",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(limit_by_ip("pwconfirm", 20, 3600))],
+)
+def confirm_password_reset(payload: PasswordResetConfirm, db: Session = Depends(get_db)) -> None:
+    token_hash = hash_url_token(payload.token)
+    reset_token = db.scalar(
+        select(PasswordResetToken).where(PasswordResetToken.token_hash == token_hash)
+    )
+    now = datetime.now(UTC)
+    if reset_token is None or reset_token.used_at is not None or reset_token.expires_at <= now:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Ссылка недействительна или устарела — запросите новую",
+        )
+
+    user = db.get(User, reset_token.user_id)
+    user.hashed_password = hash_password(payload.new_password)
+    # A successful reset is real proof of ownership -- clears any
+    # CIN-159 lockout too, same as a normal successful login would.
+    record_successful_login(user)
+    reset_token.used_at = now
+    db.commit()
+
+
+@router.post("/verify-email/request", status_code=status.HTTP_200_OK)
+def request_email_verification(
+    current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
+) -> dict:
+    if current_user.email_verified:
+        return {"detail": "Email уже подтверждён"}
+    hit("verify-email", str(current_user.id), 5, 3600)
+    if not get_settings().smtp_host:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Отправка email не настроена на сервере",
+        )
+    _send_verification_email(current_user, db)
+    return {"detail": "Мы отправили ссылку для подтверждения на ваш email"}
+
+
+@router.post("/verify-email/confirm", status_code=status.HTTP_204_NO_CONTENT)
+def confirm_email_verification(
+    payload: EmailVerificationConfirm, db: Session = Depends(get_db)
+) -> None:
+    # Unauthenticated, token-only -- same as /password-reset/confirm:
+    # the link may be opened on a device/browser where the user never
+    # logged in, so the token itself has to be the proof.
+    token_hash = hash_url_token(payload.token)
+    verification_token = db.scalar(
+        select(EmailVerificationToken).where(EmailVerificationToken.token_hash == token_hash)
+    )
+    now = datetime.now(UTC)
+    if (
+        verification_token is None
+        or verification_token.used_at is not None
+        or verification_token.expires_at <= now
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Ссылка недействительна или устарела — запросите новую",
+        )
+
+    user = db.get(User, verification_token.user_id)
+    user.email_verified = True
+    verification_token.used_at = now
+    db.commit()

@@ -5,10 +5,13 @@ from typing import Any
 import httpx
 
 from app.config import get_settings
+from app.content_pipeline.aspect_ratio import image_aspect_ratio
 from app.content_pipeline.attachments import build_attachment_context
 from app.content_pipeline.errors import TransientGenerationError
 from app.content_pipeline.media_storage import upload_bytes
+from app.content_pipeline.prompt_enhancer import enhance_image_prompt
 from app.content_pipeline.text_generator import generate_caption
+from app.image_templates import IMAGE_TEMPLATES
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +63,15 @@ def _build_image_prompt(payload: dict[str, Any], attachment_texts: list[str] | N
     # request succeeds in AI Studio without this instruction). Whether
     # text belongs on the image is now entirely up to the user's own
     # topic/brand_guide.
-    lines = [f"Фотореалистичное изображение на тему: {payload['topic']}."]
+    # CIN-137: studio illustrations (blocks/cartoon styles) are drawn
+    # assets, not photos -- the photorealistic lead and the "natural
+    # moment, not a stock pose" composition line would fight the
+    # illustration prompt, so they get their own minimal wrapper.
+    is_illustration = payload.get("image_kind") == "illustration"
+    if is_illustration:
+        lines = [f"Иллюстрация: {payload['topic']}."]
+    else:
+        lines = [f"Фотореалистичное изображение на тему: {payload['topic']}."]
     # CIN-125: image models are structurally unreliable at rendering
     # long text correctly (confirmed in production -- real generated
     # photos with a full Russian sentence baked in came back with
@@ -74,6 +85,34 @@ def _build_image_prompt(payload: dict[str, Any], attachment_texts: list[str] | N
         "баннере/экране и т.п.) -- используй короткую фразу, не длиннее 4-6 слов, и "
         "напиши её без орфографических и грамматических ошибок."
     )
+    # CIN-132: grounded in the run-social-content skill's
+    # create-social-image-posts reference (prompt-contracts.md's
+    # exclusion list + visual-formats.md's "natural moment over generic
+    # pose"). Negative space near an edge keeps the frame usable if the
+    # user overlays a caption in their own editor. Worded to exclude
+    # only accidental artifacts (garbled background writing), not text
+    # in general -- CIN-117's blanket "no text" prohibition must not
+    # creep back in.
+    if is_illustration:
+        lines.append(
+            "Чистая композиция с одним главным объектом. Без случайного текста и "
+            "нечитаемых надписей."
+        )
+    else:
+        lines.append(
+            "Кадр должен быть композиционно чистым и правдоподобным: естественный момент, "
+            "а не постановочная стоковая поза. Оставь немного свободного пространства у "
+            "одного из краёв на случай подписи поверх фото. Без искажённых лиц, лишних "
+            "пальцев, поддельных интерфейсов и нечитаемых случайных надписей на заднем "
+            "плане."
+        )
+    # CIN-143: the template's art direction must survive the enhancer
+    # falling back -- appended here in English as-is (the image model
+    # follows English direction fine inside a Russian prompt).
+    if not is_illustration:
+        template = IMAGE_TEMPLATES.get(payload.get("image_template") or "")
+        if template:
+            lines.append(template["directive"])
     brand_guide = payload.get("brand_guide")
     if brand_guide:
         lines.append(f"Стиль и бренд-гайд (соблюдать): {brand_guide}")
@@ -144,6 +183,18 @@ def nano_banana_image_generator(
             )
 
     prompt = _build_image_prompt(payload, attachment_texts=attachment_texts)
+    # CIN-142: for user-facing images the raw topic goes through a
+    # prompt-engineering rewrite first (detailed English prompt) -- the
+    # wrapper above stays as the fallback when the enhancer hiccups, so
+    # generation never fails because of the improver. Studio
+    # illustrations skip it: their prompts are already model-written
+    # from the brief (CIN-137).
+    if payload.get("image_kind") != "illustration":
+        enhanced = enhance_image_prompt(
+            payload, attachment_texts=attachment_texts, client=client
+        )
+        if enhanced:
+            prompt = enhanced
 
     input_field: Any
     if reference_images:
@@ -151,12 +202,18 @@ def nano_banana_image_generator(
     else:
         input_field = prompt
 
+    request_json: dict[str, Any] = {"model": settings.image_model, "input": input_field}
+    # CIN-145: stories and the Instagram feed need specific geometry --
+    # omitted entirely (model default) everywhere else.
+    ratio = image_aspect_ratio(payload)
+    if ratio:
+        request_json["response_format"] = {"type": "image", "aspect_ratio": ratio}
     request_kwargs: dict[str, Any] = {
         "headers": {
             "x-goog-api-key": settings.gemini_api_key,
             "content-type": "application/json",
         },
-        "json": {"model": settings.image_model, "input": input_field},
+        "json": request_json,
         "timeout": 60.0,
     }
     try:
@@ -204,7 +261,10 @@ def nano_banana_image_generator(
     # CIN-114: a real caption, not just the raw topic, for the "Подпись"
     # field on the review-and-publish screen -- best-effort, never
     # fails the (already successful, already paid-for) image itself.
-    caption = generate_caption(payload, client=client)
-    if caption:
-        result["text"] = caption
+    # Studio illustrations (CIN-137) are never published as posts, so
+    # the extra paid caption call is skipped for them.
+    if payload.get("image_kind") != "illustration":
+        caption = generate_caption(payload, client=client)
+        if caption:
+            result["text"] = caption
     return result

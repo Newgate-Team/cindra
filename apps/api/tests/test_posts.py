@@ -1,11 +1,21 @@
+import threading
 import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Post, PostStatus, SocialPlatform, User
+from app.models import (
+    Post,
+    PostStatus,
+    SocialAccount,
+    SocialPlatform,
+    Subscription,
+    SubscriptionTier,
+    User,
+)
 from app.scheduler import registry
 from app.scheduler.registry import register_publisher
 from app.social_accounts import upsert_social_account
@@ -25,6 +35,57 @@ def _auth_headers(client: TestClient) -> dict[str, str]:
     client.post("/auth/register", json=payload)
     token = client.post("/auth/login", json=payload).json()["access_token"]
     return {"Authorization": f"Bearer {token}"}
+
+
+def _upgrade_to_pro(db: Session, email: str = "ada@cindra.dev") -> None:
+    # CIN-155: free tier now caps connected accounts at 1 -- fan-out
+    # tests that legitimately connect several accounts to the same
+    # user need Pro (unlimited) to do that, same tier-upgrade pattern
+    # already used for the video-studio double-start tests.
+    owner = db.query(User).filter(User.email == email).one()
+    subscription = db.query(Subscription).filter(Subscription.user_id == owner.id).one()
+    subscription.tier = SubscriptionTier.pro
+    db.commit()
+
+
+def _second_account_bypassing_connect_limit(
+    db: Session, owner: User, external_account_id: str
+) -> SocialAccount:
+    # CIN-155's connected-account limit lives in upsert_social_account,
+    # the shared path every real connect flow uses -- but some tests
+    # here need a second account on a user that's deliberately still on
+    # free tier (e.g. to test the free-tier *publication* limit's
+    # atomicity, a different limit entirely), which the connect limit
+    # would now legitimately refuse. Construct the row directly, same
+    # as upsert_social_account would, without going through its check
+    # -- these tests aren't testing the connect flow itself.
+    from app.token_crypto import encrypt_token
+
+    account = SocialAccount(
+        user_id=owner.id,
+        platform=SocialPlatform.telegram,
+        external_account_id=external_account_id,
+        encrypted_access_token=encrypt_token("t2"),
+    )
+    db.add(account)
+    db.commit()
+    db.refresh(account)
+    return account
+
+
+def _other_user(db: Session, email: str) -> User:
+    # CIN-155: upsert_social_account now needs a Subscription to check
+    # the connected-account limit against -- mirrors what POST
+    # /auth/register does for the main test user (via _auth_headers,
+    # above), which conftest.py's own `user` fixture already documents
+    # as a real invariant, not a test-only convenience.
+    user = User(email=email, hashed_password="x")
+    db.add(user)
+    db.flush()
+    db.add(Subscription(user_id=user.id))
+    db.commit()
+    db.refresh(user)
+    return user
 
 
 def _connected_account_id(client: TestClient, headers: dict[str, str], db: Session) -> str:
@@ -119,12 +180,52 @@ def test_create_post_scheduled_in_future_stays_scheduled(
     assert response.json()[0]["status"] == "scheduled"
 
 
+def test_create_post_rejects_text_only_post_to_instagram(
+    client: TestClient, db: Session
+) -> None:
+    # Generation no longer requires a target account up front, so this
+    # platform/content_type compatibility check (publish_matrix.py) is
+    # no longer guaranteed to have run before the content existed --
+    # POST /posts is the backstop now. Instagram's Content Publishing
+    # API has no text-only post (CIN-106).
+    headers = _auth_headers(client)
+    owner = db.query(User).filter(User.email == "ada@cindra.dev").one()
+    account = upsert_social_account(
+        db, owner, SocialPlatform.instagram, "insta-1", access_token="t"
+    )
+
+    response = client.post(
+        "/posts",
+        json={"social_account_ids": [str(account.id)], "text": "Просто текст, без картинки"},
+        headers=headers,
+    )
+    assert response.status_code == 400
+
+
+def test_create_post_rejects_story_on_a_platform_without_stories(
+    client: TestClient, db: Session
+) -> None:
+    # "story" only exists as a concept for Instagram (publish_matrix.py).
+    headers = _auth_headers(client)
+    account_id = _connected_account_id(client, headers, db)  # Telegram
+
+    response = client.post(
+        "/posts",
+        json={
+            "social_account_ids": [account_id],
+            "text": "Сторис",
+            "image_url": "https://media.cindra.example/x.jpg",
+            "content_kind": "story",
+        },
+        headers=headers,
+    )
+    assert response.status_code == 400
+
+
 def test_create_post_for_someone_elses_account_returns_404(
     client: TestClient, db: Session
 ) -> None:
-    other = User(email="eve@cindra.dev", hashed_password="x")
-    db.add(other)
-    db.commit()
+    other = _other_user(db, "eve@cindra.dev")
     other_account = upsert_social_account(
         db, other, SocialPlatform.telegram, "-999", access_token="t"
     )
@@ -157,9 +258,7 @@ def test_list_posts_scoped_to_owner(client: TestClient, db: Session) -> None:
         "/posts", json={"social_account_ids": [account_id], "text": "мой пост"}, headers=headers
     )
 
-    other = User(email="eve2@cindra.dev", hashed_password="x")
-    db.add(other)
-    db.commit()
+    other = _other_user(db, "eve2@cindra.dev")
     other_account = upsert_social_account(
         db, other, SocialPlatform.telegram, "-777", access_token="t"
     )
@@ -180,6 +279,46 @@ def test_list_posts_scoped_to_owner(client: TestClient, db: Session) -> None:
     assert body["total"] == 1
     texts = [p["text"] for p in body["items"]]
     assert texts == ["мой пост"]
+
+
+def test_list_posts_filters_by_scheduled_range(client: TestClient, db: Session) -> None:
+    headers = _auth_headers(client)
+    account_id = _connected_account_id(client, headers, db)
+    user = db.scalars(select(User).where(User.email == "ada@cindra.dev")).one()
+    base = datetime(2030, 1, 10, 12, 0, tzinfo=UTC)
+    for day, label in ((0, "раньше"), (3, "внутри"), (7, "после")):
+        db.add(
+            Post(
+                user_id=user.id,
+                social_account_id=uuid.UUID(account_id),
+                text=label,
+                status=PostStatus.scheduled,
+                scheduled_for=base + timedelta(days=day),
+            )
+        )
+    db.commit()
+
+    response = client.get(
+        "/posts",
+        params={"from": "2030-01-11T00:00:00Z", "to": "2030-01-15T00:00:00Z"},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert [p["text"] for p in body["items"]] == ["внутри"]
+    assert body["total"] == 1
+
+    # `to` is exclusive: a post exactly at the boundary belongs to the next range.
+    boundary = client.get(
+        "/posts",
+        params={"from": "2030-01-10T00:00:00Z", "to": "2030-01-10T12:00:00Z"},
+        headers=headers,
+    )
+    assert boundary.json()["total"] == 0
+
+    # Only the lower bound: everything from then on.
+    open_ended = client.get("/posts", params={"from": "2030-01-11T00:00:00Z"}, headers=headers)
+    assert sorted(p["text"] for p in open_ended.json()["items"]) == ["внутри", "после"]
 
 
 def test_list_posts_requires_auth(client: TestClient) -> None:
@@ -249,6 +388,7 @@ def test_create_post_returns_402_once_publication_limit_reached(
 def test_create_post_fans_out_to_multiple_accounts(client: TestClient, db: Session) -> None:
     headers = _auth_headers(client)
     account_id = _connected_account_id(client, headers, db)
+    _upgrade_to_pro(db)  # CIN-155: free tier now caps connected accounts at 1
     second_account = upsert_social_account(
         db,
         db.query(User).filter(User.email == "ada@cindra.dev").one(),
@@ -281,15 +421,16 @@ def test_create_post_fan_out_limit_check_is_atomic_for_whole_batch(
     # Free tier's publication limit is 10/month (see app/plans.py).
     # Use up 9, then try to fan out to 2 accounts at once -- neither
     # should be created, since the batch can't fully fit.
+    #
+    # Must stay on free tier to exercise its finite limit -- Pro/
+    # Business are both unlimited -- so the second account is
+    # constructed directly rather than through upsert_social_account,
+    # bypassing CIN-155's *connected-account* limit (a different check
+    # than the one this test is actually about).
     headers = _auth_headers(client)
     account_id = _connected_account_id(client, headers, db)
-    second_account = upsert_social_account(
-        db,
-        db.query(User).filter(User.email == "ada@cindra.dev").one(),
-        SocialPlatform.telegram,
-        "-200",
-        access_token="t2",
-    )
+    owner = db.query(User).filter(User.email == "ada@cindra.dev").one()
+    second_account = _second_account_bypassing_connect_limit(db, owner, "-200")
 
     for _ in range(9):
         response = client.post(
@@ -319,6 +460,57 @@ def _generation_job_id(db: Session, user: User) -> str:
     db.commit()
     db.refresh(job)
     return str(job.id)
+
+
+def test_create_post_rejects_nonexistent_generation_job_id(
+    client: TestClient, db: Session
+) -> None:
+    # Found in the same audit that flagged CIN-158/162: a made-up
+    # generation_job_id used to trip the Post.generation_job_id FK
+    # constraint as an unhandled IntegrityError (a confusing 500)
+    # rather than a clean 404.
+    headers = _auth_headers(client)
+    account_id = _connected_account_id(client, headers, db)
+    response = client.post(
+        "/posts",
+        json={
+            "social_account_ids": [account_id],
+            "text": "текст",
+            "generation_job_id": str(uuid.uuid4()),
+        },
+        headers=headers,
+    )
+    assert response.status_code == 404
+
+
+def test_create_post_rejects_another_users_generation_job_id(
+    client: TestClient, db: Session
+) -> None:
+    # Same audit: generation_job_id was never ownership-checked, unlike
+    # social_account_ids just above it -- a user could tag their own
+    # post with someone else's job id, polluting the CIN-122 dedup
+    # namespace across tenants.
+    headers = _auth_headers(client)
+    account_id = _connected_account_id(client, headers, db)
+    other = db.query(User).filter(User.email == "someone-else@cindra.dev").first()
+    if other is None:
+        other = User(email="someone-else@cindra.dev", hashed_password="not-a-real-hash")
+        db.add(other)
+        db.commit()
+        db.refresh(other)
+    foreign_job_id = _generation_job_id(db, other)
+
+    response = client.post(
+        "/posts",
+        json={
+            "social_account_ids": [account_id],
+            "text": "текст",
+            "generation_job_id": foreign_job_id,
+        },
+        headers=headers,
+    )
+    assert response.status_code == 404
+    assert db.query(Post).filter(Post.generation_job_id == foreign_job_id).count() == 0
 
 
 def test_create_post_retry_with_same_generation_job_and_account_is_not_duplicated(
@@ -387,6 +579,51 @@ def test_create_post_retry_only_dispatches_publish_once(client: TestClient, db: 
     assert len(calls) == 1
 
 
+def test_concurrent_retries_of_the_same_generation_job_do_not_double_publish(
+    client: TestClient, db: Session
+) -> None:
+    # The tests above cover CIN-122's SEQUENTIAL retry case (first call
+    # fully lands, then a second arrives). The real CIN-120 incident
+    # ("one Story published 4x") was retries genuinely overlapping the
+    # original, still in-flight request -- a race the sequential tests
+    # can't exercise. Real threads hitting the real endpoint, so both
+    # requests' existing_by_account check can genuinely race.
+    calls: list[uuid.UUID] = []
+    register_publisher(
+        SocialPlatform.telegram, lambda account, post: calls.append(post.id) or {"message_id": 7}
+    )
+
+    headers = _auth_headers(client)
+    account_id = _connected_account_id(client, headers, db)
+    owner = db.query(User).filter(User.email == "ada@cindra.dev").one()
+    job_id = _generation_job_id(db, owner)
+    payload = {
+        "social_account_ids": [account_id],
+        "text": "сторис",
+        "generation_job_id": job_id,
+    }
+
+    results: list[int] = []
+    barrier = threading.Barrier(2)
+
+    def attempt() -> None:
+        barrier.wait(timeout=5)
+        results.append(client.post("/posts", json=payload, headers=headers).status_code)
+
+    threads = [threading.Thread(target=attempt) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert results == [201, 201]  # both requests succeed -- the loser just reuses the winner's post
+    assert db.query(Post).filter(Post.generation_job_id == job_id).count() == 1
+    assert len(calls) == 1  # published to the real platform exactly once, not twice
+    from app.models import UsageEvent
+
+    assert db.query(UsageEvent).filter(UsageEvent.user_id == owner.id).count() == 1
+
+
 def test_create_post_fan_out_retry_only_creates_missing_accounts(
     client: TestClient, db: Session
 ) -> None:
@@ -394,6 +631,7 @@ def test_create_post_fan_out_retry_only_creates_missing_accounts(
     # published for this job should only create/dispatch the new one.
     headers = _auth_headers(client)
     account_id = _connected_account_id(client, headers, db)
+    _upgrade_to_pro(db)  # CIN-155: free tier now caps connected accounts at 1
     owner = db.query(User).filter(User.email == "ada@cindra.dev").one()
     second_account = upsert_social_account(db, owner, SocialPlatform.telegram, "-201", access_token="t2")
     job_id = _generation_job_id(db, owner)
@@ -489,9 +727,7 @@ def test_update_already_published_post_returns_400(client: TestClient, db: Sessi
 
 
 def test_update_someone_elses_post_returns_404(client: TestClient, db: Session) -> None:
-    other = User(email="eve3@cindra.dev", hashed_password="x")
-    db.add(other)
-    db.commit()
+    other = _other_user(db, "eve3@cindra.dev")
     other_account = upsert_social_account(
         db, other, SocialPlatform.telegram, "-555", access_token="t"
     )

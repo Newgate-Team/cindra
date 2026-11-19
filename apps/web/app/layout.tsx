@@ -7,20 +7,49 @@
 // Each weight file below already includes latin + cyrillic (and other)
 // unicode-range subsets in one file -- the browser only fetches the
 // subset it actually needs per character on the page.
-import "@fontsource/ibm-plex-sans/400.css";
-import "@fontsource/ibm-plex-sans/500.css";
-import "@fontsource/ibm-plex-sans/600.css";
-import "@fontsource/ibm-plex-sans/700.css";
+// Inter for text, Manrope for headings and numbers (the redesign).
+import "@fontsource/inter/400.css";
+import "@fontsource/inter/500.css";
+import "@fontsource/inter/600.css";
+import "@fontsource/inter/700.css";
+import "@fontsource/manrope/600.css";
+import "@fontsource/manrope/700.css";
+import "@fontsource/manrope/800.css";
 import "./globals.css";
 
 import { AuthProvider } from "@/lib/auth-context";
 
+import { AppShell } from "./components/AppShell";
+import { EmailVerificationBanner } from "./components/EmailVerificationBanner";
 import { Footer } from "./components/Footer";
-import { NavBar } from "./components/NavBar";
 
-export const metadata = {
-  title: "Cindra",
-  description: "AI-контент для соцсетей",
+
+import type { Metadata, Viewport } from "next";
+
+import { SITE_URL } from "@/lib/site";
+
+const DESCRIPTION =
+  "Посты, видео, аватары и эфиры для соцсетей в одной студии: от идеи до публикации на всех ваших площадках.";
+
+export const metadata: Metadata = {
+  metadataBase: new URL(SITE_URL),
+  title: { default: "Cindra — весь контент для соцсетей в одной студии", template: "%s — Cindra" },
+  description: DESCRIPTION,
+  applicationName: "Cindra",
+  openGraph: {
+    type: "website",
+    siteName: "Cindra",
+    locale: "ru_RU",
+    title: "Cindra — весь контент для соцсетей в одной студии",
+    description: DESCRIPTION,
+  },
+  twitter: { card: "summary_large_image", title: "Cindra", description: DESCRIPTION },
+};
+
+export const viewport: Viewport = {
+  themeColor: "#f6f7fb",
+  width: "device-width",
+  initialScale: 1,
 };
 
 export default function RootLayout({
@@ -32,13 +61,11 @@ export default function RootLayout({
     <html lang="ru">
       <body>
         <AuthProvider>
-          <div className="app-shell">
-            <NavBar />
-            <div className="app-content">
-              <main>{children}</main>
-              <Footer />
-            </div>
-          </div>
+          <AppShell>
+            <EmailVerificationBanner />
+            <main>{children}</main>
+            <Footer />
+          </AppShell>
         </AuthProvider>
       </body>
     </html>

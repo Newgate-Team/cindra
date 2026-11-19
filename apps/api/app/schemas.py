@@ -1,7 +1,7 @@
 import re
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
@@ -9,13 +9,18 @@ from app.content_pipeline.attachments import (
     TooManyAttachmentsError,
     validate_attachment_set,
 )
+from app.content_pipeline.prompts import TONE_GUIDANCE
+from app.image_templates import IMAGE_TEMPLATES
 from app.models import (
+    DriveExportStatus,
     GenerationContentType,
     GenerationStatus,
+    IntegrationProvider,
     PostStatus,
     SocialPlatform,
     SubscriptionStatus,
     SubscriptionTier,
+    UsageEventType,
     UserRole,
 )
 
@@ -31,10 +36,77 @@ class UserLogin(BaseModel):
     password: str
 
 
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str = Field(min_length=8)
+
+
+class PasswordResetRequest(BaseModel):
+    email: EmailStr
+
+
+class PasswordResetConfirm(BaseModel):
+    token: str = Field(min_length=1)
+    new_password: str = Field(min_length=8)
+
+
+class EmailVerificationConfirm(BaseModel):
+    token: str = Field(min_length=1)
+
+
+class TeamCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+
+
+class TeamInviteCreate(BaseModel):
+    email: EmailStr
+
+
+class TeamInviteAccept(BaseModel):
+    token: str = Field(min_length=1)
+
+
+class TeamMemberOut(BaseModel):
+    id: uuid.UUID
+    email: EmailStr
+    role: UserRole
+    is_owner: bool
+
+    model_config = {"from_attributes": True}
+
+
+class TeamInviteOut(BaseModel):
+    id: uuid.UUID
+    email: EmailStr
+    expires_at: datetime
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class TeamOut(BaseModel):
+    id: uuid.UUID
+    name: str
+    owner_user_id: uuid.UUID
+    members: list[TeamMemberOut]
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class GoogleLoginRequest(BaseModel):
+    id_token: str = Field(min_length=1)
+
+
 class UserOut(BaseModel):
     id: uuid.UUID
     email: EmailStr
     role: UserRole
+    share_generations_to_feed: bool
+    has_password: bool
+    email_verified: bool
+    brand_guide: str | None = None
+    default_tone: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -42,6 +114,35 @@ class UserOut(BaseModel):
 
 class UserUpdate(BaseModel):
     role: UserRole
+    # Optional/partial -- share_generations_to_feed has its own default
+    # (by role, see User model) that a plain role-only PATCH shouldn't
+    # silently overwrite back to.
+    share_generations_to_feed: bool | None = None
+    # Brand kit. Omitted = leave as is; an empty string clears it.
+    brand_guide: str | None = Field(default=None, max_length=5000)
+    default_tone: str | None = None
+
+    @field_validator("default_tone")
+    @classmethod
+    def _validate_default_tone(cls, value: str | None) -> str | None:
+        if value and value not in TONE_GUIDANCE:
+            raise ValueError(f"Неизвестный тон: {value}")
+        return value
+
+
+class IdeasRequest(BaseModel):
+    # What this week is about ("запуск осенней коллекции"), optional.
+    focus: str | None = Field(default=None, max_length=500)
+
+
+class ContentIdeaOut(BaseModel):
+    title: str
+    hook: str
+    format: str  # post | image | video
+
+
+class IdeasOut(BaseModel):
+    ideas: list[ContentIdeaOut]
 
 
 class SubscriptionOut(BaseModel):
@@ -59,20 +160,50 @@ class AttachmentRef(BaseModel):
 
 class GenerationRequest(BaseModel):
     topic: str = Field(min_length=1, max_length=5000)
-    # Target accounts are chosen up front (CIN-106), before generation --
-    # content_type/content_kind are validated against the intersection of
-    # what all of them can actually publish (see publish_matrix.py), so
-    # e.g. an Instagram target rules out content_type=text before
-    # anything gets generated, not after, at publish time.
-    target_account_ids: list[uuid.UUID] = Field(min_length=1, max_length=10)
+    # Optional -- a user can generate content before connecting any
+    # social account at all (a connected account is only required at
+    # actual publish time, POST /posts). When target accounts ARE
+    # chosen up front, content_type/content_kind are validated against
+    # the intersection of what all of them can actually publish (see
+    # publish_matrix.py) before spending any generation budget, rather
+    # than only failing later; with none chosen, that same check runs
+    # at publish time instead (posts.py::create_post), against
+    # whichever accounts are picked then.
+    target_account_ids: list[uuid.UUID] = Field(default_factory=list, max_length=10)
     content_type: GenerationContentType = GenerationContentType.text
     content_kind: str = "post"
     brand_guide: str | None = None
+    # CIN-138: optional tone preset -- a key of prompts.TONE_GUIDANCE.
+    # None = the model's default voice.
+    tone: str | None = None
+    # CIN-143: optional image template -- a key of IMAGE_TEMPLATES.
+    # Only meaningful for content_type=image (other generators ignore
+    # it); None = free-form, CIN-142's enhancer works from the topic
+    # alone.
+    image_template: str | None = None
     # Optional context files (CIN-97, extended to a list in CIN-107) --
     # set by the client after successful POST /content/attachment
     # upload(s), one call per file. Up to 5 total, video/audio capped
     # at 1 each -- see content_pipeline/attachments.py.validate_attachment_set.
     attachments: list[AttachmentRef] = Field(default_factory=list, max_length=5)
+
+    @field_validator("tone")
+    @classmethod
+    def _validate_tone(cls, value: str | None) -> str | None:
+        if value is not None and value not in TONE_GUIDANCE:
+            raise ValueError(
+                f"Неизвестный тон: {value}. Доступные: {', '.join(sorted(TONE_GUIDANCE))}"
+            )
+        return value
+
+    @field_validator("image_template")
+    @classmethod
+    def _validate_image_template(cls, value: str | None) -> str | None:
+        if value is not None and value not in IMAGE_TEMPLATES:
+            raise ValueError(
+                f"Неизвестный шаблон: {value}. Доступные: {', '.join(sorted(IMAGE_TEMPLATES))}"
+            )
+        return value
 
     @model_validator(mode="after")
     def _validate_attachment_set(self) -> "GenerationRequest":
@@ -97,6 +228,40 @@ class GenerationJobOut(BaseModel):
     error_message: str | None
     created_at: datetime
     completed_at: datetime | None
+
+    model_config = {"from_attributes": True}
+
+
+class ABTestCreate(BaseModel):
+    topic: str = Field(min_length=1, max_length=5000)
+    content_kind: str = "post"
+    brand_guide: str | None = None
+    tone: str | None = None
+    # 2-5: below 2 there's nothing to compare; above 5 is more
+    # generation spend than a "quick compare" flow should invite in
+    # one request (the user can just run it again for more options).
+    variant_count: int = Field(default=2, ge=2, le=5)
+
+    @field_validator("tone")
+    @classmethod
+    def _validate_tone(cls, value: str | None) -> str | None:
+        if value is not None and value not in TONE_GUIDANCE:
+            raise ValueError(
+                f"Неизвестный тон: {value}. Доступные: {', '.join(sorted(TONE_GUIDANCE))}"
+            )
+        return value
+
+
+class ABTestWinner(BaseModel):
+    generation_job_id: uuid.UUID
+
+
+class ABTestOut(BaseModel):
+    id: uuid.UUID
+    topic: str
+    winner_generation_job_id: uuid.UUID | None
+    variants: list[GenerationJobOut]
+    created_at: datetime
 
     model_config = {"from_attributes": True}
 
@@ -220,10 +385,16 @@ class TelegramConnectRequest(BaseModel):
     verification_token: str = Field(min_length=1)
 
 
+class MetaOAuthStartOut(BaseModel):
+    state: str
+
+
 class InstagramConnectRequest(BaseModel):
     code: str = Field(
         min_length=1, description="Authorization code от Meta OAuth-редиректа (см. CIN-52)"
     )
+    # CIN-154: CSRF-защита, тот же паттерн, что у TikTokConnectRequest.
+    state: str = Field(min_length=1)
 
 
 class TikTokOAuthStartOut(BaseModel):
@@ -252,6 +423,42 @@ class TikTokPublishStatusOut(BaseModel):
     publicly_available_post_id: list[str] = Field(default_factory=list)
 
 
+class YouTubeOAuthStartOut(BaseModel):
+    authorization_url: str
+
+
+class YouTubeConnectRequest(BaseModel):
+    code: str = Field(min_length=1)
+    state: str = Field(min_length=1)
+
+
+class LinkedInOAuthStartOut(BaseModel):
+    authorization_url: str
+
+
+class LinkedInConnectRequest(BaseModel):
+    code: str = Field(min_length=1)
+    state: str = Field(min_length=1)
+
+
+class RedditOAuthStartOut(BaseModel):
+    authorization_url: str
+
+
+class RedditConnectRequest(BaseModel):
+    code: str = Field(min_length=1)
+    state: str = Field(min_length=1)
+
+
+class TwitterOAuthStartOut(BaseModel):
+    authorization_url: str
+
+
+class TwitterConnectRequest(BaseModel):
+    code: str = Field(min_length=1)
+    state: str = Field(min_length=1)
+
+
 class SocialAccountOut(BaseModel):
     id: uuid.UUID
     platform: SocialPlatform
@@ -261,6 +468,148 @@ class SocialAccountOut(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class IntegrationOut(BaseModel):
+    provider: IntegrationProvider
+    account_label: str | None
+    created_at: datetime
+    # False when the connection visible to this user is a teammate's --
+    # the UI says whose account generations will be billed to.
+    is_own: bool
+    # Google Drive only.
+    folder_url: str | None = None
+    auto_save: bool | None = None
+
+
+class TwitchStartOut(BaseModel):
+    authorization_url: str
+
+
+class TwitchConnectRequest(BaseModel):
+    code: str = Field(min_length=1, max_length=2048)
+    state: str = Field(min_length=1, max_length=4096)
+
+
+class StreamTwitchTokenOut(BaseModel):
+    access_token: str
+    client_id: str
+    user_id: str
+    login: str
+    broadcaster_id: str
+    broadcaster_login: str
+    expires_in: int
+
+
+class GoogleDriveStartOut(BaseModel):
+    authorization_url: str
+
+
+class GoogleDriveConnectRequest(BaseModel):
+    code: str = Field(min_length=1, max_length=2048)
+    state: str = Field(min_length=1, max_length=4096)
+    # The browser's IANA zone, so saved files are named in the user's
+    # local time rather than UTC (nothing else in Cindra stores one).
+    timezone: str | None = Field(default=None, max_length=64)
+
+
+class GoogleDriveSettingsIn(BaseModel):
+    auto_save: bool
+
+
+class DriveExportCreate(BaseModel):
+    url: str = Field(min_length=1, max_length=1024)
+    title: str | None = Field(default=None, max_length=200)
+
+
+class DriveExportOut(BaseModel):
+    model_config = {"from_attributes": True}
+
+    id: uuid.UUID
+    file_name: str
+    origin: str
+    status: DriveExportStatus
+    web_view_link: str | None
+    error_message: str | None
+    created_at: datetime
+    completed_at: datetime | None
+
+
+class HeyGenConnectRequest(BaseModel):
+    api_key: str = Field(min_length=8, max_length=512)
+
+    @field_validator("api_key")
+    @classmethod
+    def _strip(cls, value: str) -> str:
+        # Keys get pasted with a trailing newline/space often enough
+        # that rejecting them as "invalid" would just be confusing.
+        return value.strip()
+
+
+class HeyGenAccountOut(BaseModel):
+    account_label: str | None
+    billing_type: str | None
+    remaining_balance: float | None
+    currency: str | None
+
+
+class HeyGenAvatarOut(BaseModel):
+    id: str
+    name: str
+    avatar_type: str | None
+    gender: str | None
+    preview_image_url: str | None
+    preview_video_url: str | None
+    default_voice_id: str | None
+    # Private looks only: anything but "completed" can't render yet.
+    status: str | None = None
+
+
+class HeyGenAvatarPage(BaseModel):
+    items: list[HeyGenAvatarOut]
+    next_token: str | None
+
+
+class HeyGenVoiceOut(BaseModel):
+    voice_id: str
+    name: str
+    language: str | None
+    gender: str | None
+    preview_audio_url: str | None
+
+
+class HeyGenVoicePage(BaseModel):
+    items: list[HeyGenVoiceOut]
+    next_token: str | None
+
+
+class HeyGenVariant(BaseModel):
+    avatar_id: str = Field(min_length=1, max_length=128)
+    # None = the avatar's own default voice (HeyGen's documented fallback).
+    voice_id: str | None = Field(default=None, min_length=1, max_length=128)
+
+
+class HeyGenVideoRequest(BaseModel):
+    script: str = Field(min_length=1, max_length=5000)
+    aspect_ratio: Literal["9:16", "16:9", "1:1"] = "9:16"
+    title: str | None = Field(default=None, max_length=200)
+    # Each variant is a separate render billed to the user's HeyGen
+    # wallet -- capped so one click can't fan out into a big bill.
+    variants: list[HeyGenVariant] = Field(min_length=1, max_length=4)
+
+
+class HeyGenVideoJobOut(BaseModel):
+    id: uuid.UUID
+    batch_id: str
+    avatar_id: str
+    voice_id: str | None
+    script: str
+    aspect_ratio: str
+    status: GenerationStatus
+    video_url: str | None
+    error_message: str | None
+    created_at: datetime
+    completed_at: datetime | None
 
 
 class ConfirmSubscriptionRequest(BaseModel):
@@ -279,6 +628,507 @@ class MetricsSummary(BaseModel):
     publish_success_rate: float | None
 
 
+class PlatformPostStats(BaseModel):
+    platform: SocialPlatform
+    published: int
+    failed: int
+
+
+class ContentKindCount(BaseModel):
+    content_kind: str
+    count: int
+
+
+class DailyPostCount(BaseModel):
+    day: str
+    published: int
+
+
+class ContentTypeGenerationStats(BaseModel):
+    content_type: GenerationContentType
+    completed: int
+    failed: int
+
+
+class UsageLimitStat(BaseModel):
+    event_type: UsageEventType
+    content_type: GenerationContentType | None
+    label: str
+    used: int
+    # None means the tier has no cap for this kind.
+    limit: int | None
+
+
+class AnalyticsSummary(BaseModel):
+    period_days: int
+    posts_total: int
+    posts_scheduled: int
+    posts_publishing: int
+    posts_published: int
+    posts_failed: int
+    publish_success_rate: float | None
+    posts_by_platform: list[PlatformPostStats]
+    posts_by_content_kind: list[ContentKindCount]
+    daily_published_posts: list[DailyPostCount]
+    generations_total: int
+    generations_queued: int
+    generations_processing: int
+    generations_completed: int
+    generations_failed: int
+    generations_flagged: int
+    generation_success_rate: float | None
+    generations_by_content_type: list[ContentTypeGenerationStats]
+    usage_this_period: list[UsageLimitStat]
+
+
 class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"
+
+
+class VideoProjectCreate(BaseModel):
+    topic: str = Field(min_length=1, max_length=5000)
+    brand_guide: str | None = Field(default=None, max_length=5000)
+
+
+class VideoProjectUpdate(BaseModel):
+    """Edit a studio project (CIN-135): all fields optional, only what's
+    passed changes (exclude_unset in the router). `script` covers the
+    review-and-edit step after generation; `style` is validated against
+    the VIDEO_STYLES catalog in the router."""
+
+    topic: str | None = Field(default=None, min_length=1, max_length=5000)
+    brand_guide: str | None = Field(default=None, max_length=5000)
+    script: str | None = Field(default=None, min_length=1, max_length=20000)
+    style: str | None = None
+
+
+class BriefFileOut(BaseModel):
+    filename: str
+    title: str
+    content: str
+
+
+class IllustrationOut(BaseModel):
+    """One auto-generated brief illustration (CIN-137) -- mirrors the
+    linked image GenerationJob, resolved by the router."""
+
+    prompt: str
+    status: GenerationStatus
+    image_url: str | None
+    error_message: str | None
+
+
+class VideoProjectOut(BaseModel):
+    id: uuid.UUID
+    topic: str
+    brand_guide: str | None
+    script: str | None
+    style: str | None
+    brief_files: list[BriefFileOut] | None
+    # The finished video: uploaded file or completed veo_auto job
+    # output -- resolved by the router, which also surfaces the linked
+    # job's in-flight status/error here so the wizard needs no second
+    # polling endpoint.
+    video_url: str | None
+    video_status: GenerationStatus | None
+    video_error: str | None
+    # CIN-137: auto-generated illustrations for blocks/cartoon briefs
+    # (None when never requested for this project).
+    illustrations: list[IllustrationOut] | None
+    # draft -> script_ready -> brief_ready -> video_ready, derived
+    # from field presence (see router _project_status).
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class LayoutSlotOut(BaseModel):
+    name: str
+    label: str
+    max_length: int
+    required: bool
+
+
+class LayoutTemplateOut(BaseModel):
+    # CIN-148: the `blocks` render spec stays server-side -- the UI only
+    # needs to know what to ask the user for and how to preview it.
+    id: str
+    title: str
+    description: str
+    supports_image: bool
+    slots: list[LayoutSlotOut]
+
+
+class LayoutRenderRequest(BaseModel):
+    template_id: str
+    canvas_format: str = "square"
+    theme: str = "dark"
+    # Optional brand accent, "#RRGGBB" -- overrides the theme's accent.
+    accent: str | None = Field(default=None, pattern=r"^#[0-9a-fA-F]{6}$")
+    values: dict[str, str] = Field(default_factory=dict)
+    # Only for templates with supports_image, and only a URL from our
+    # own media bucket (validated in the renderer).
+    background_url: str | None = None
+
+    @field_validator("values")
+    @classmethod
+    def _cap_value_sizes(cls, value: dict[str, str]) -> dict[str, str]:
+        # A cheap guard before the renderer's per-slot max_length: keeps
+        # a giant payload from being wrapped and measured at all.
+        if any(len(v) > 1000 for v in value.values()):
+            raise ValueError("Слишком длинное значение поля")
+        return value
+
+
+class LayoutBackgroundOut(BaseModel):
+    background_url: str
+
+
+class LayoutRenderOut(BaseModel):
+    image_url: str
+
+
+class ImageTemplateOut(BaseModel):
+    # CIN-143: the English `directive` is deliberately not exposed --
+    # it's prompt internals, the UI only needs id/title/description.
+    id: str
+    title: str
+    description: str
+    # CIN-150: a stored example, or None until staff have generated one
+    # (it costs a real image generation, unlike the layout previews).
+    preview_url: str | None = None
+
+
+class ImageTemplatePreviewsOut(BaseModel):
+    generated: list[str]
+    failed: dict[str, str]
+
+
+class VideoStyleOut(BaseModel):
+    id: str
+    title: str
+    description: str
+    # "brief": produces a production brief to shoot from;
+    # "clip": generates the finished clip itself (veo_auto).
+    produces: str
+    # CIN-137: the studio can generate this style's visuals itself.
+    generates_illustrations: bool = False
+
+
+class MontageClipIn(BaseModel):
+    type: Literal["video", "image"]
+    url: str = Field(min_length=1, max_length=2048)
+    name: str | None = Field(default=None, max_length=120)
+    # Images only -- a video clip runs for its own length.
+    duration_seconds: float | None = Field(default=None, ge=0.5, le=30)
+
+
+class MontageMusicIn(BaseModel):
+    url: str = Field(min_length=1, max_length=2048)
+    volume_db: float = Field(default=-18.0, ge=-40.0, le=0.0)
+
+
+class MontageCreate(BaseModel):
+    clips: list[MontageClipIn] = Field(min_length=1, max_length=20)
+    music: MontageMusicIn | None = None
+    # Resolve Studio's own speech-to-text ("Create Subtitles from
+    # Audio"), burned into the render.
+    subtitles: bool = True
+    subtitles_language: Literal["auto", "russian", "english"] = "auto"
+    aspect_ratio: Literal["9:16", "16:9", "1:1"] = "9:16"
+    title: str | None = Field(default=None, max_length=200)
+    # False: only the downloadable timeline, to edit in one's own DaVinci.
+    render: bool = True
+
+
+class MontageJobOut(BaseModel):
+    id: uuid.UUID
+    status: str
+    title: str | None
+    stage: str | None
+    progress: int
+    spec: dict[str, Any]
+    result_video_url: str | None
+    error_message: str | None
+    created_at: datetime
+    completed_at: datetime | None
+    render: bool
+    package_status: str | None
+    package_url: str | None
+    package_error: str | None
+
+    model_config = {"from_attributes": True}
+
+
+class MontageAgentsStatusOut(BaseModel):
+    online: bool
+    last_seen_at: datetime | None
+
+
+class MontageAgentHello(BaseModel):
+    agent_name: str = Field(min_length=1, max_length=120)
+    version: str | None = Field(default=None, max_length=60)
+
+
+class MontageAgentJobOut(BaseModel):
+    id: uuid.UUID
+    spec: dict[str, Any]
+    title: str | None
+
+
+class MontageAgentProgress(BaseModel):
+    agent_name: str = Field(min_length=1, max_length=120)
+    stage: str = Field(min_length=1, max_length=200)
+    progress: int = Field(ge=0, le=100)
+
+
+class MontageAgentFailure(BaseModel):
+    agent_name: str = Field(min_length=1, max_length=120)
+    error: str = Field(min_length=1, max_length=4000)
+
+
+class MontageMediaOut(BaseModel):
+    url: str
+    type: Literal["video", "image", "audio"]
+
+
+_CHANNEL_RE = re.compile(r"^[A-Za-z0-9_]{3,25}$")
+
+
+def _clean_terms(terms: list[str] | None) -> list[str] | None:
+    if terms is None:
+        return None
+    cleaned = []
+    for term in terms:
+        term = " ".join(term.split())
+        if term and term.lower() not in {t.lower() for t in cleaned}:
+            cleaned.append(term[:60])
+    return cleaned[:100]
+
+
+class StreamAvatarIn(BaseModel):
+    avatar_id: str = Field(min_length=1, max_length=200)
+    voice_id: str | None = Field(default=None, max_length=200)
+
+
+class _StreamFields(BaseModel):
+    @field_validator("channel", check_fields=False)
+    @classmethod
+    def _channel(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip().lstrip("@#").lower()
+        if not _CHANNEL_RE.fullmatch(value):
+            raise ValueError("Логин канала Twitch: 3–25 латинских букв, цифр или _")
+        return value
+
+    @field_validator("blocked_terms", check_fields=False)
+    @classmethod
+    def _terms(cls, value: list[str] | None) -> list[str] | None:
+        return _clean_terms(value)
+
+    @field_validator("stream_key", check_fields=False)
+    @classmethod
+    def _key(cls, value: str | None) -> str | None:
+        return value.strip() if value else value
+
+
+class LiveStreamCreate(_StreamFields):
+    title: str = Field(min_length=1, max_length=200)
+    platform: Literal["twitch"] = "twitch"
+    channel: str
+    stream_key: str | None = Field(default=None, max_length=500)
+    persona: str = Field(min_length=10, max_length=4000)
+    idle_topics: str = Field(default="", max_length=4000)
+    blocked_terms: list[str] = Field(default_factory=list)
+    avatar_provider: str = Field(min_length=1, max_length=40)
+    avatar: StreamAvatarIn
+    min_reply_interval_seconds: int = Field(default=15, ge=5, le=300)
+    max_hours: int = Field(default=24, ge=1, le=72)
+    post_replies_to_chat: bool = False
+
+
+class LiveStreamUpdate(_StreamFields):
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    channel: str | None = None
+    stream_key: str | None = Field(default=None, max_length=500)
+    persona: str | None = Field(default=None, min_length=10, max_length=4000)
+    idle_topics: str | None = Field(default=None, max_length=4000)
+    blocked_terms: list[str] | None = None
+    avatar: StreamAvatarIn | None = None
+    min_reply_interval_seconds: int | None = Field(default=None, ge=5, le=300)
+    max_hours: int | None = Field(default=None, ge=1, le=72)
+    post_replies_to_chat: bool | None = None
+
+
+class LiveStreamOut(BaseModel):
+    model_config = {"from_attributes": True}
+
+    id: uuid.UUID
+    title: str
+    platform: str
+    channel: str
+    stream_key_set: bool
+    persona: str
+    idle_topics: str
+    blocked_terms: list[str]
+    avatar_provider: str
+    avatar: dict[str, Any]
+    min_reply_interval_seconds: int
+    max_hours: int
+    post_replies_to_chat: bool
+    status: str
+    stop_requested: bool
+    started_at: datetime | None
+    ended_at: datetime | None
+    heartbeat_at: datetime | None
+    hours_billed: int
+    stats: dict[str, Any]
+    error_message: str | None
+    created_at: datetime
+
+
+class StreamEventOut(BaseModel):
+    model_config = {"from_attributes": True}
+
+    id: uuid.UUID
+    kind: str
+    author: str | None
+    message: str | None
+    text: str
+    emotion: str | None
+    created_at: datetime
+
+
+class StreamVoiceOut(BaseModel):
+    id: str
+    label: str
+
+
+class StreamProviderOut(BaseModel):
+    id: str
+    label: str
+    connected: bool
+
+
+class StreamAgentsStatusOut(BaseModel):
+    online: bool
+    agents: int
+
+
+class StreamAgentHello(BaseModel):
+    agent_name: str = Field(min_length=1, max_length=120)
+    version: str | None = Field(default=None, max_length=60)
+
+
+class StreamAgentJobOut(BaseModel):
+    id: uuid.UUID
+    title: str
+    platform: str
+    channel: str
+    stream_key: str
+    avatar_provider: str
+    avatar: dict[str, Any]
+    # The stream owner's own key with the avatar vendor (BYO-key).
+    avatar_api_key: str
+    min_reply_interval_seconds: int
+    max_hours: int
+    started_at: datetime
+    # The owner connected Twitch: read chat over EventSub (token via
+    # /streams/agent/{id}/twitch-token), else anonymous IRC.
+    twitch_chat: bool = False
+    post_replies_to_chat: bool = False
+
+
+class StreamAgentHeartbeat(BaseModel):
+    agent_name: str = Field(min_length=1, max_length=120)
+    stats: dict[str, Any] = Field(default_factory=dict)
+
+
+class StreamAgentHeartbeatOut(BaseModel):
+    stop: bool
+    stop_reason: str | None = None
+    min_reply_interval_seconds: int
+
+
+class StreamChatLineIn(BaseModel):
+    author: str = Field(min_length=1, max_length=100)
+    text: str = Field(min_length=1, max_length=500)
+
+
+class StreamNoticeIn(BaseModel):
+    type: str = Field(min_length=1, max_length=40)
+    author: str = Field(min_length=1, max_length=100)
+    viewer_count: int = Field(default=0, ge=0)
+    text: str = Field(default="", max_length=500)
+
+
+class StreamReplyRequest(BaseModel):
+    agent_name: str = Field(min_length=1, max_length=120)
+    mode: Literal["answer", "idle", "notice"]
+    target: StreamChatLineIn | None = None
+    notice: StreamNoticeIn | None = None
+    recent_chat: list[StreamChatLineIn] = Field(default_factory=list, max_length=30)
+
+    @model_validator(mode="after")
+    def _needs_subject(self) -> "StreamReplyRequest":
+        if self.mode == "answer" and self.target is None:
+            raise ValueError("mode=answer needs target")
+        if self.mode == "notice" and self.notice is None:
+            raise ValueError("mode=notice needs notice")
+        return self
+
+
+class StreamReplyOut(BaseModel):
+    say: str | None
+    emotion: str | None = None
+    reaction: str | None = None
+    skipped: str | None = None
+    # The spoken line as PCM16 mono, base64 -- the agent forwards it to
+    # the avatar as is.
+    audio_b64: str | None = None
+    sample_rate: int | None = None
+
+
+class StreamAgentEvent(BaseModel):
+    agent_name: str = Field(min_length=1, max_length=120)
+    kind: Literal["system", "error"]
+    text: str = Field(min_length=1, max_length=2000)
+
+
+class StreamAgentFinish(BaseModel):
+    agent_name: str = Field(min_length=1, max_length=120)
+    error: str | None = Field(default=None, max_length=2000)
+
+
+class LiveAvatarConnectRequest(BaseModel):
+    api_key: str = Field(min_length=8, max_length=512)
+
+    @field_validator("api_key")
+    @classmethod
+    def _strip(cls, value: str) -> str:
+        return value.strip()
+
+
+class LiveAvatarAccountOut(BaseModel):
+    credits_left: float | None
+
+
+class LiveAvatarAvatarOut(BaseModel):
+    id: str
+    name: str
+    preview_url: str | None
+    status: str
+    type: str
+    default_voice_name: str | None
+    ready: bool
+
+
+class LiveAvatarAvatarPage(BaseModel):
+    items: list[LiveAvatarAvatarOut]
+    next_page: int | None
+
+
+class SimliAccountOut(BaseModel):
+    active_sessions: int

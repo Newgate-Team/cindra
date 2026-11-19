@@ -33,6 +33,70 @@ def test_tiktok_only_allows_video_posts() -> None:
     ) == {"post"}
 
 
+def test_youtube_only_allows_video_posts() -> None:
+    assert allowed_content_types_for({SocialPlatform.youtube}) == {
+        GenerationContentType.video
+    }
+    assert allowed_content_kinds_for(
+        {SocialPlatform.youtube}, GenerationContentType.video
+    ) == {"post"}
+
+
+def test_youtube_and_tiktok_intersect_to_video_posts() -> None:
+    assert allowed_content_types_for({SocialPlatform.youtube, SocialPlatform.tiktok}) == {
+        GenerationContentType.video
+    }
+
+
+def test_linkedin_allows_text_and_image_but_not_video() -> None:
+    assert allowed_content_types_for({SocialPlatform.linkedin}) == {
+        GenerationContentType.text,
+        GenerationContentType.image,
+    }
+    assert allowed_content_kinds_for(
+        {SocialPlatform.linkedin}, GenerationContentType.text
+    ) == {"post", "video_script"}
+
+
+def test_validate_linkedin_video_raises() -> None:
+    with pytest.raises(InvalidGenerationTargetError):
+        validate_generation_target(
+            {SocialPlatform.linkedin}, GenerationContentType.video, "post"
+        )
+
+
+def test_reddit_allows_text_image_and_video() -> None:
+    assert allowed_content_types_for({SocialPlatform.reddit}) == {
+        GenerationContentType.text,
+        GenerationContentType.image,
+        GenerationContentType.video,
+    }
+    assert allowed_content_kinds_for(
+        {SocialPlatform.reddit}, GenerationContentType.video
+    ) == {"post"}
+
+
+def test_reddit_and_linkedin_intersect_to_text_and_image() -> None:
+    assert allowed_content_types_for({SocialPlatform.reddit, SocialPlatform.linkedin}) == {
+        GenerationContentType.text,
+        GenerationContentType.image,
+    }
+
+
+def test_twitter_only_allows_text_posts() -> None:
+    assert allowed_content_types_for({SocialPlatform.twitter}) == {GenerationContentType.text}
+    assert allowed_content_kinds_for(
+        {SocialPlatform.twitter}, GenerationContentType.text
+    ) == {"post", "video_script"}
+
+
+def test_validate_twitter_image_raises() -> None:
+    with pytest.raises(InvalidGenerationTargetError):
+        validate_generation_target(
+            {SocialPlatform.twitter}, GenerationContentType.image, "post"
+        )
+
+
 def test_mixed_targets_intersect_to_media_only() -> None:
     result = allowed_content_types_for({SocialPlatform.instagram, SocialPlatform.telegram})
     assert result == {GenerationContentType.image, GenerationContentType.video}

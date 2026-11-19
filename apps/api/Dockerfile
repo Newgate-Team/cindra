@@ -6,6 +6,9 @@ WORKDIR /app
 # image -- no build-essential/libpq-dev needed, keeps the image small.
 COPY pyproject.toml ./
 COPY app ./app
+# The timeline package (app/montage_packages.py) builds its FCPXML with
+# the render agent's own code -- one builder for both, stdlib only.
+COPY davinci_agent ./davinci_agent
 COPY migrations ./migrations
 COPY alembic.ini ./
 
@@ -14,8 +17,15 @@ COPY alembic.ini ./
 # lag Railway's Postgres server version -- pg_dump reading from a newer
 # server usually works within a few major versions but isn't guaranteed;
 # revisit if backups start failing after a Postgres major version bump.
+#
+# fonts-dejavu-core is what the CIN-148 template renderer draws with:
+# Pillow's built-in font has no Cyrillic at all (Russian comes out as
+# empty boxes -- verified), and this package is ~3 MB from Debian main.
+# IBM Plex would match the web app's typeface, but Debian ships it in
+# contrib, which this base image doesn't enable; point LAYOUT_FONT_* at
+# it instead if it's ever installed on the host.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends postgresql-client \
+    && apt-get install -y --no-install-recommends postgresql-client fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip install --no-cache-dir .

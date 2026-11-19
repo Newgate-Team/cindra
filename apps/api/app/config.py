@@ -23,6 +23,13 @@ class Settings(BaseSettings):
     # API directly. Same key covers Imagen (CIN-54) and Veo (CIN-55).
     gemini_api_key: str = ""
     gemini_model: str = "gemini-3.5-flash-lite"
+    # The live-stream avatar's voice (Interactions API, PCM 24 kHz out).
+    # Flash-Lite: lowest latency, which matters more on air than studio
+    # fidelity.
+    gemini_tts_model: str = "gemini-3.8-flash-lite-tts"
+    # Only the live-stream reply/voice calls read this -- so a local run
+    # can point them at devtools/gemini_stub.py without a key.
+    gemini_api_base_url: str = "https://generativelanguage.googleapis.com"
     # Imagen 4 (old imagen_model setting) was deprecated by Google,
     # shut down 2026-08-17 -- migrated in CIN-58 to the Interactions
     # API's Nano Banana family. gemini-2.5-flash-image (not
@@ -40,6 +47,37 @@ class Settings(BaseSettings):
     # (confirmed against a real, paid production call, CIN-112).
     veo_duration_seconds: int = 8
     veo_resolution: str = "1080p"
+    # fal.ai API key (CIN-144): one key unlocks Seedance and the rest
+    # of fal's model catalog. Empty until the owner creates a fal.ai
+    # account (gate, like the other keys above) -- while empty the
+    # video studio's «Полное авто» keeps using Veo.
+    # CIN-148: fonts for the laid-out image templates. Empty = fall back
+    # to the well-known system paths in layout_renderer (Debian's
+    # fonts-dejavu-core, installed in the Dockerfile). Point these at
+    # IBM Plex to match the web app's typeface once it's available on
+    # the host -- Debian ships it in contrib, which the slim image
+    # doesn't enable by default.
+    layout_font_regular: str = ""
+    layout_font_bold: str = ""
+    fal_key: str = ""
+    seedance_model: str = "bytedance/seedance-2.5/text-to-video"
+    # Strings by fal's schema (unlike Veo's numeric durationSeconds,
+    # CIN-112): duration "auto"|"4".."30", resolution "480p"|"720p"
+    # (720p is Seedance 2.5's ceiling).
+    #
+    # 15s, not the model's 30s maximum: billing is per second
+    # (~$0.473/s at 720p), so 30s doubles the cost of every clip to
+    # ~$14 while 15s is already a full short-form video. CIN-146's
+    # plan limits are priced off this number -- raising it means
+    # re-deriving max_long_videos_per_month.
+    seedance_duration: str = "15"
+    seedance_resolution: str = "720p"
+    # OAuth 2.0 Web client ID from Google Cloud Console (CIN-133).
+    # Empty until the client is created there (requires browser access
+    # to console.cloud.google.com) -- POST /auth/google returns 503
+    # until configured. The same value goes to the frontend as
+    # NEXT_PUBLIC_GOOGLE_CLIENT_ID.
+    google_client_id: str = ""
     # Empty until CIN-51 is resolved -- see that gate ticket.
     telegram_bot_token: str = ""
     # Empty until CIN-52 is resolved -- see that gate ticket.
@@ -51,12 +89,97 @@ class Settings(BaseSettings):
     tiktok_client_key: str = ""
     tiktok_client_secret: str = ""
     tiktok_redirect_uri: str = "https://cindra-chi.vercel.app/oauth/tiktok/callback"
+    # YouTube Data API v3, a SEPARATE OAuth client from google_client_id
+    # above -- that one is Google Sign-In (ID-token only, no refresh
+    # token); this one needs offline access + the youtube.upload scope
+    # to publish videos, its own consent screen, its own client the
+    # account owner registers in Google Cloud Console. Redirect URI
+    # must be registered verbatim there, same as TikTok's.
+    youtube_client_id: str = ""
+    youtube_client_secret: str = ""
+    youtube_redirect_uri: str = "https://cindra-chi.vercel.app/oauth/youtube/callback"
+    # "Sign In with LinkedIn using OpenID Connect" + "Share on LinkedIn"
+    # products, both auto-approved for any LinkedIn app (no partner
+    # review needed, unlike LinkedIn's Marketing/organization APIs).
+    linkedin_client_id: str = ""
+    linkedin_client_secret: str = ""
+    linkedin_redirect_uri: str = "https://cindra-chi.vercel.app/oauth/linkedin/callback"
+    # LinkedIn's REST API requires a YYYYMM version string on every
+    # call and deprecates old ones roughly a year out -- whoever
+    # configures the real client credentials should also confirm this
+    # against LinkedIn's current Developer Portal docs at that time,
+    # not just trust this default forever.
+    linkedin_api_version: str = "202501"
+    reddit_client_id: str = ""
+    reddit_client_secret: str = ""
+    reddit_redirect_uri: str = "https://cindra-chi.vercel.app/oauth/reddit/callback"
+    # Reddit rejects (or heavily rate-limits) requests with a generic/
+    # missing User-Agent -- every other platform integration in this
+    # app works fine without a custom one, Reddit specifically
+    # requires a descriptive, app-unique string on every API call.
+    reddit_user_agent: str = "cindra/1.0 (web app; by /u/cindra-app)"
+    twitter_client_id: str = ""
+    twitter_client_secret: str = ""
+    twitter_redirect_uri: str = "https://cindra-chi.vercel.app/oauth/twitter/callback"
+    # Twitch (dev.twitch.tv console): the streamer connects their account
+    # so the live-stream agent reads chat over EventSub (Twitch's
+    # documented way) instead of anonymous IRC, and can post the avatar's
+    # replies in chat. Redirect URI must be registered verbatim.
+    twitch_client_id: str = ""
+    twitch_client_secret: str = ""
+    twitch_redirect_uri: str = "https://cindra-chi.vercel.app/oauth/twitch/callback"
+    # Dev-only: one base URL standing in for id.twitch.tv and
+    # api.twitch.tv (devtools/twitch_simulator.py). Empty = Twitch.
+    twitch_base_url: str = ""
+    # Google Drive (Инструменты): finished images/videos are copied into
+    # a "Cindra" folder in the user's own Drive. Scope drive.file only --
+    # the app sees just the files it created itself, and it's a
+    # non-sensitive scope, so publishing the consent screen needs no
+    # Google security assessment. May be the same Google Cloud OAuth
+    # client as YouTube's: enable the Drive API on that project and
+    # register this redirect URI on the client too.
+    google_drive_client_id: str = ""
+    google_drive_client_secret: str = ""
+    google_drive_redirect_uri: str = "https://cindra-chi.vercel.app/oauth/google-drive/callback"
+    # Dev-only: one base URL standing in for accounts.google.com,
+    # oauth2.googleapis.com and www.googleapis.com, to drive the Drive
+    # flow against devtools/google_drive_simulator.py. Empty = Google.
+    google_api_base_url: str = ""
+    # Only ever changed for local runs against devtools/heygen_simulator.py
+    # -- with no paid HeyGen key, that's the only way to drive the whole
+    # avatar-video flow end to end.
+    heygen_api_base_url: str = "https://api.heygen.com"
+    # Same, for devtools/liveavatar_simulator.py.
+    liveavatar_api_base_url: str = "https://api.liveavatar.com"
+    simli_api_base_url: str = "https://api.simli.ai"
+    # Shared secret the DaVinci render agent (davinci_agent/) sends as a
+    # Bearer token on /montage/agent/*. Empty = no agent can connect and
+    # montage jobs just wait in the queue. Generate: openssl rand -hex 32.
+    montage_agent_token: str = ""
+    # Same idea for the live-stream agent (stream_agent/): it receives
+    # stream keys and the users' avatar-vendor keys, so its own secret,
+    # not the DaVinci one. Empty = streams wait in the queue.
+    stream_agent_token: str = ""
     # Comma-separated. Without CORS the browser blocks every request
     # from the web app (blocked at the OPTIONS preflight, not
     # something curl-based manual testing ever exercises) -- found
     # while verifying CIN-60's frontend changes against a real
     # browser for the first time.
     cors_origins: str = "http://localhost:3000"
+    # Rate limits on the public endpoints (app/ratelimit.py). Switch off
+    # only for local load tests; tests turn it off in conftest.
+    rate_limit_enabled: bool = True
+    # How many reverse proxies sit in front of the API and append to
+    # X-Forwarded-For. Default 1 (Railway): the failure modes are not
+    # symmetric -- too LOW behind a proxy makes every user share one
+    # address, so the sign-in/registration limits throttle the whole
+    # product at once; too HIGH only lets a client choose its own address
+    # for abuse limits, which are not a security boundary. Set 0 when the
+    # API is reached directly (local runs).
+    trusted_proxy_hops: int = 1
+    # Error reporting (Sentry-compatible DSN). Empty = off.
+    sentry_dsn: str = ""
+    sentry_environment: str = "production"
     # Empty until CIN-56/CIN-78 gate ticket is resolved (Cloudflare
     # account + bucket not created yet). Generated images/video need a
     # real public URL -- Imagen/Veo return base64/a temporary
@@ -71,6 +194,22 @@ class Settings(BaseSettings):
     # domain) -- uploaded keys are appended to this to build the URL
     # returned to callers.
     r2_public_url_base: str = ""
+    # LOCAL DEVELOPMENT ONLY: when set, upload_bytes writes files to this
+    # directory instead of R2 and the API serves them at /dev-media
+    # (pair with R2_PUBLIC_URL_BASE=http://localhost:8000/dev-media).
+    # Lets every generation flow run end to end on a laptop without R2
+    # credentials. Never set it in production -- Railway's disk is
+    # ephemeral, so files would vanish on the next deploy.
+    media_local_dir: str = ""
+    # CIN-160: separate Fernet key for scheduler/backup.py, deliberately
+    # not social_token_encryption_key -- different security domain.
+    # Postgres dumps go into this same R2 bucket (see CIN-91), which has
+    # to be publicly readable for media to work at all; R2's "public
+    # bucket" mode has no per-prefix ACL, so backups/ is exposed at the
+    # same unauthenticated URL base as every published post's image/
+    # video. Without this key, backup.upload_backup refuses to run
+    # rather than upload the dump in the clear.
+    backup_encryption_key: str = ""
     # CIN-18 (2026-08-04): provider switched from CloudPayments to
     # PayPal -- see that ticket for the full reasoning (CloudPayments
     # approval takes ~2 weeks; PayPal Business can be opened as a sole
@@ -93,6 +232,21 @@ class Settings(BaseSettings):
     # Empty until CIN-87 creates the real Products/Plans.
     paypal_pro_plan_id: str = ""
     paypal_business_plan_id: str = ""
+    # SMTP for transactional email (password reset, email verification).
+    # Deliberately provider-agnostic (plain SMTP, no vendor SDK) -- any
+    # relay that speaks SMTP+STARTTLS (SES, Postmark, SendGrid, Mailgun,
+    # a Gmail app password for local testing, ...) works without app code
+    # changes. Empty until the owner picks a provider -- endpoints that
+    # need to send email fail closed (503), same pattern as R2/PayPal
+    # above, not a silent no-op.
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from_address: str = "Cindra <noreply@cindra.example>"
+    # Base URL of the deployed frontend -- embedded in password-reset/
+    # email-verification links sent by email.
+    frontend_base_url: str = "http://localhost:3000"
 
     model_config = {"env_file": ".env"}
 

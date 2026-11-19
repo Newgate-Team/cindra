@@ -16,7 +16,12 @@ Health-check: `GET /health`.
 
 ## Тесты и линт
 
+Тесты чистят таблицы перед каждым тестом, поэтому идут на отдельной базе — с `test` в имени, иначе pytest остановится сам, не тронув данные (dev-база из `.env` им не подходит):
+
 ```bash
+docker compose -f ../../infra/docker-compose.yml exec postgres createdb -U cindra cindra_test   # один раз
+export DATABASE_URL=postgresql+psycopg://cindra:cindra@localhost:5433/cindra_test
+alembic upgrade head   # после каждой новой миграции
 pytest
 ruff check .
 ```
@@ -28,7 +33,7 @@ ruff check .
 | Сервис | Root directory | Start Command | Примечание |
 |---|---|---|---|
 | API | `apps/api` | (по умолчанию из `Dockerfile`/`railway.toml`) | `alembic upgrade head` + uvicorn. **Healthcheck Path `/health` -- задать вручную в Settings этого сервиса** (Dashboard-оверрайд, не в `railway.toml`, см. CIN-92: файл общий для всех трёх сервисов, worker/beat не слушают HTTP и падают на healthcheck, если он задан в файле) |
-| Worker | `apps/api` | `celery -A app.celery_app worker --loglevel=info` | тот же образ, Custom Start Command в Dashboard, healthcheck НЕ задавать |
+| Worker | `apps/api` | `celery -A app.celery_app worker --loglevel=info` | тот же образ, Custom Start Command в Dashboard, healthcheck НЕ задавать. Собирает в т.ч. архивы «Монтажный лист для DaVinci» (`app/montage_packages.py`) во временной папке — до ~2 ГБ диска на архив, пока он собирается |
 | Beat | `apps/api` | `celery -A app.celery_app beat --loglevel=info` | тот же образ, Custom Start Command в Dashboard, healthcheck НЕ задавать; **не может быть на засыпающем тарифе** -- отвечает за запланированные публикации и ежедневный бэкап БД (см. "Бэкапы" ниже) |
 
 Плюс managed-аддоны Postgres и Redis (Railway создаёт `DATABASE_URL`/`REDIS_URL`-совместимые переменные автоматически при подключении аддона -- сверить с именами, которые ждёт `config.py`, при необходимости смэпить вручную).
@@ -41,6 +46,9 @@ REDIS_URL
 JWT_SECRET
 SOCIAL_TOKEN_ENCRYPTION_KEY
 CORS_ORIGINS               # https://<домен фронтенда на Vercel>
+TRUSTED_PROXY_HOPS         # сколько прокси перед API дописывают X-Forwarded-For; по умолчанию 1 (Railway). 0 -- только для прямого доступа к API без прокси (локально): за прокси лимиты запросов сочтут всех пользователей одним адресом
+SENTRY_DSN                 # необязательно: отчёты об необработанных ошибках (sentry-sdk уже в образе); пусто = выключено
+SENTRY_ENVIRONMENT         # production / staging
 GEMINI_API_KEY
 GEMINI_MODEL
 IMAGE_MODEL
@@ -48,12 +56,40 @@ VEO_MODEL
 TELEGRAM_BOT_TOKEN
 META_APP_ID
 META_APP_SECRET
-META_REDIRECT_URI           # https://<домен API>/oauth/instagram/callback
+META_REDIRECT_URI           # https://<домен фронтенда на Vercel>/oauth/instagram/callback -- страница-колбэк живёт в apps/web, не в API
+GOOGLE_CLIENT_ID             # вход через Google -- см. CIN-133; тот же ID отдельно нужен фронтенду как NEXT_PUBLIC_GOOGLE_CLIENT_ID (Vercel, не Railway)
+TIKTOK_CLIENT_KEY
+TIKTOK_CLIENT_SECRET
+TIKTOK_REDIRECT_URI          # https://<домен фронтенда на Vercel>/oauth/tiktok/callback
+YOUTUBE_CLIENT_ID            # отдельный OAuth-клиент от GOOGLE_CLIENT_ID -- см. .env.example
+YOUTUBE_CLIENT_SECRET
+YOUTUBE_REDIRECT_URI         # https://<домен фронтенда на Vercel>/oauth/youtube/callback
+GOOGLE_DRIVE_CLIENT_ID       # можно тот же OAuth-клиент, что YouTube (+ включить Drive API) -- см. .env.example
+GOOGLE_DRIVE_CLIENT_SECRET
+GOOGLE_DRIVE_REDIRECT_URI    # https://<домен фронтенда на Vercel>/oauth/google-drive/callback; экран согласия -- «In production», иначе токены живут 7 дней
+LINKEDIN_CLIENT_ID
+LINKEDIN_CLIENT_SECRET
+LINKEDIN_REDIRECT_URI        # https://<домен фронтенда на Vercel>/oauth/linkedin/callback
+LINKEDIN_API_VERSION         # YYYYMM, сверить с актуальной документацией LinkedIn перед деплоем
+REDDIT_CLIENT_ID
+REDDIT_CLIENT_SECRET
+REDDIT_REDIRECT_URI          # https://<домен фронтенда на Vercel>/oauth/reddit/callback
+REDDIT_USER_AGENT            # обязателен описательный формат, иначе Reddit режет по rate limit
+TWITTER_CLIENT_ID
+TWITTER_CLIENT_SECRET
+TWITTER_REDIRECT_URI         # https://<домен фронтенда на Vercel>/oauth/twitter/callback -- уточнить, что тариф X API включает write-доступ
 R2_ACCOUNT_ID
 R2_ACCESS_KEY_ID
 R2_SECRET_ACCESS_KEY
 R2_BUCKET_NAME
 R2_PUBLIC_URL_BASE
+BACKUP_ENCRYPTION_KEY        # см. CIN-160 ниже -- без него ежедневный бэкап падает явно
+MONTAGE_AGENT_TOKEN          # секрет агента DaVinci (davinci_agent/); пусто = монтажи ждут в очереди
+STREAM_AGENT_TOKEN           # секрет агента эфиров (stream_agent/), отдельный от DaVinci; пусто = эфиры ждут в очереди
+TWITCH_CLIENT_ID             # приложение dev.twitch.tv (Confidential) -- чат эфира через EventSub; пусто = чат читается анонимно, ответы в чат не пишутся
+TWITCH_CLIENT_SECRET
+TWITCH_REDIRECT_URI          # https://<домен фронтенда на Vercel>/oauth/twitch/callback
+GEMINI_TTS_MODEL             # голос аватара в эфире; по умолчанию gemini-3.8-flash-lite-tts (сверить со списком моделей Gemini TTS перед деплоем)
 PAYPAL_CLIENT_ID             # live, не sandbox
 PAYPAL_CLIENT_SECRET         # live
 PAYPAL_MODE=live
@@ -62,14 +98,62 @@ PAYPAL_BUSINESS_PLAN_ID
 PAYPAL_WEBHOOK_ID             # регистрируется после первого деплоя, когда есть реальный URL
 ```
 
+**Проверки после деплоя.** `GET /health` -- процесс жив (его держит Railway healthcheck). `GET /health/ready` -- ещё и достаётся ли база (503, если нет) и Redis (только отчёт); подходит для внешнего аптайм-монитора. Каждый ответ несёт `X-Request-ID`, тот же идентификатор есть в логе (`cindra.http`) -- по нему находится запрос из жалобы пользователя. Быстрый прогон по живому окружению (ничего не создаёт и не меняет):
+
+```bash
+python devtools/smoke.py --api https://<api> --web https://<фронтенд>
+```
+
+**Лимиты запросов.** Регистрация (10/час с адреса), вход (30 за 10 минут с адреса, поверх блокировки аккаунта), Google-вход, сброс пароля (5/час с адреса и 3/час на почтовый ящик), повторная отправка подтверждения email (5/час на пользователя) -- в Redis, общий для реплик API. Если Redis недоступен, запросы проходят (лимиты -- защита от злоупотреблений, не граница безопасности) и в лог пишется предупреждение. `RATE_LIMIT_ENABLED=false` выключает (только для нагрузочных тестов).
+
+Redirect URI каждой соцсети должен быть зарегистрирован в её же Developer Portal буквально таким же значением -- расхождение (например http vs https, конечный слэш) роняет OAuth-обмен кода на токен с ошибкой на стороне платформы, не Cindra.
+
+## Агент эфиров (stream_agent)
+
+Эфир с AI-аватаром (LiveAvatar или Simli — по ключу пользователя) ведёт отдельный процесс на машине, которая кодирует видео (720p30 H.264 ≈ 2–4 ядра CPU на эфир), — не Railway. Он сам забирает запущенные эфиры из API (`/streams/agent/*`, секрет `STREAM_AGENT_TOKEN`), держит сессии LiveAvatar (меняет их до истечения лимита плана — 20/60 мин — в паузе между репликами), читает чат Twitch и шлёт RTMP на `ingest.global-contribute.live-video.net`.
+
+Чат: если стример подключил Twitch в «Инструментах», агент читает его через EventSub WebSocket (`eventsub.wss.twitch.tv`, подписки, рейды, модерация) и, если в эфире включено «Дублировать ответы…», пишет ответы аватара в чат от имени этого аккаунта (`POST /helix/chat/messages`; свои же сообщения, которые Twitch возвращает в ленту, агент не слышит). Токен доступа агент берёт у API (`/streams/agent/{id}/twitch-token`) — refresh-токен остаётся в БД. Без подключения, при отозванном доступе или если EventSub не отвечает несколько минут — чат читается анонимно по IRC, эфир не прерывается.
+
+```bash
+pip install -e ".[stream-agent]"          # livekit, PyAV (FFmpeg внутри), numpy, aiohttp
+sudo apt-get install -y fonts-dejavu-core # кириллица в подписях на экране
+python -m stream_agent --api https://<api> --token <STREAM_AGENT_TOKEN>
+```
+
+Один процесс = один эфир; для нескольких эфиров — несколько процессов/машин. Упавший агент: эфир через 2 минуты без heartbeat подхватывает другой.
+
+**Проверка всего пути локально, без ключей** (LiveKit в Docker, симулятор LiveAvatar с фейковым аватаром, заглушка Gemini с речью macOS `say`, ffmpeg вместо Twitch):
+
+```bash
+docker run -d --name cindra-livekit -p 7880:7880 -p 7881:7881 -p 7882:7882/udp livekit/livekit-server --dev --bind 0.0.0.0 --node-ip 127.0.0.1
+LIVEAVATAR_SIM_LIVEKIT_URL=ws://localhost:7880 LIVEAVATAR_SIM_MAX_SESSION=120 uvicorn devtools.liveavatar_simulator:app --port 8767
+uvicorn devtools.gemini_stub:app --port 8768
+STREAM_AGENT_TOKEN=dev LIVEAVATAR_API_BASE_URL=http://localhost:8767 GEMINI_API_BASE_URL=http://localhost:8768 GEMINI_API_KEY=stub uvicorn app.main:app --port 8000
+ffmpeg -listen 1 -i rtmp://127.0.0.1:1935/live/<ключ эфира> -c copy received.flv
+python -m stream_agent --api http://localhost:8000 --token dev --rtmp-url "rtmp://127.0.0.1:1935/live/{key}" --liveavatar-url http://localhost:8767
+```
+
+Для Simli — `devtools.simli_simulator` на порту 8769 и `--simli-url http://localhost:8769` у агента (ключ `simli_sim_любой`). Для чата через EventSub — `devtools.twitch_simulator` на порту 8770: API с `TWITCH_BASE_URL=http://localhost:8770 TWITCH_CLIENT_ID=sim-twitch-client TWITCH_CLIENT_SECRET=sim-twitch-secret TWITCH_REDIRECT_URI=http://localhost:3000/oauth/twitch/callback`, агент с `TWITCH_EVENTSUB_URL=ws://localhost:8770/ws TWITCH_HELIX_URL=http://localhost:8770`; сообщения зрителей, рейды и переподключение сессии — `POST /sim/chat`, `/sim/notice`, `/sim/reconnect`, что агент написал в чат — `GET /sim/sent`. Дальше в приложении: «Инструменты» → LiveAvatar с ключом `la_sim_любой` → «Эфир» → создать и запустить. Сессии по 2 минуты — смена аватара видна по цвету фона. **Стенду — своя база** (`createdb cindra_e2e && DATABASE_URL=…/cindra_e2e alembic upgrade head`): каждый тест pytest начинается с `TRUNCATE users … CASCADE`, и прогон тестов на той же базе посреди эфира стирает пользователя и эфир — агент получает 409 и останавливается.
+
 ## Бэкапы
 
-Railway Trial/Hobby не даёт автоматических бэкапов/PITR для managed Postgres (только на Pro). Вместо апгрейда -- см. CIN-91: `app.scheduler.tasks.backup_database`, Celery beat, ежедневно в 03:00 UTC. Дампает БД через `pg_dump`, гзипует и заливает в тот же R2-бакет, что и медиа (`backups/postgres/YYYY-MM-DD.sql.gz`), храня последние 14 дампов.
+Railway Trial/Hobby не даёт автоматических бэкапов/PITR для managed Postgres (только на Pro). Вместо апгрейда -- см. CIN-91: `app.scheduler.tasks.backup_database`, Celery beat, ежедневно в 03:00 UTC. Дампает БД через `pg_dump`, гзипует, шифрует (см. CIN-160 ниже) и заливает в тот же R2-бакет, что и медиа (`backups/postgres/YYYY-MM-DD.sql.gz.enc`), храня последние 14 дампов.
+
+**CIN-160: обязателен `BACKUP_ENCRYPTION_KEY`.** R2-бакет с медиа обязан быть публично читаемым (иначе не работает сама публикация постов), а у R2 нет per-prefix ACL -- значит `backups/` доступен по тому же публичному URL, что и любая опубликованная картинка/видео, без всякой авторизации. Дамп поэтому шифруется Fernet перед загрузкой (`app.scheduler.backup._fernet`); без ключа таск падает явно, а не грузит дамп открытым текстом. Сгенерировать ключ:
+
+```bash
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
 
 Восстановление из дампа:
 
 ```bash
-# скачать дамп конкретного дня из R2 (например через rclone/aws-cli, настроенный на R2-эндпоинт), затем:
+# скачать дамп конкретного дня из R2 (например через rclone/aws-cli, настроенный на R2-эндпоинт), затем расшифровать и распаковать:
+python -c "
+from cryptography.fernet import Fernet
+data = open('2026-08-04.sql.gz.enc', 'rb').read()
+open('2026-08-04.sql.gz', 'wb').write(Fernet('$BACKUP_ENCRYPTION_KEY').decrypt(data))
+"
 gunzip -c 2026-08-04.sql.gz | psql "$DATABASE_URL"
 ```
 

@@ -3,6 +3,8 @@
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
+import { AuthLayout } from "@/app/components/AuthLayout";
+import GoogleSignInButton from "@/app/components/GoogleSignInButton";
 import { ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import type { UserRole } from "@/lib/types";
@@ -22,7 +24,7 @@ export default function RegisterPage() {
     setSubmitting(true);
     try {
       await register(email, password, role);
-      router.push("/generate");
+      router.push("/");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Не удалось зарегистрироваться");
     } finally {
@@ -31,8 +33,12 @@ export default function RegisterPage() {
   }
 
   return (
-    <>
-      <h1>Регистрация</h1>
+    <AuthLayout
+      title="Начните с искры"
+      subtitle="Бесплатный тариф без карты — попробуйте путь от темы до публикации."
+      poster="Контент начинается здесь."
+      alt={{ text: "Уже есть аккаунт?", href: "/login", label: "Войти" }}
+    >
       <form onSubmit={handleSubmit}>
         <label>
           Email
@@ -65,6 +71,7 @@ export default function RegisterPage() {
           {submitting ? "Создаём аккаунт…" : "Зарегистрироваться"}
         </button>
       </form>
-    </>
+      <GoogleSignInButton onError={setError} />
+    </AuthLayout>
   );
 }

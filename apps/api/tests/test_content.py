@@ -10,6 +10,7 @@ from app.content_pipeline.errors import ContentModeratedError
 from app.content_pipeline.registry import register_generator
 from app.models import (
     GenerationContentType,
+    ImageTemplatePreview,
     SocialPlatform,
     Subscription,
     SubscriptionTier,
@@ -66,6 +67,38 @@ def test_generate_runs_synchronously_in_eager_mode_and_completes(client: TestCli
     assert body["content_type"] == "text"
     assert body["status"] == "completed"
     assert body["output_payload"] == {"text": "пост про утренний кофе"}
+
+
+def test_generate_without_any_target_account(client: TestClient, db: Session) -> None:
+    # A user can generate content before connecting any social account
+    # at all -- a connected account is only required at publish time
+    # (POST /posts).
+    headers = _auth_headers(client)
+    response = client.post(
+        "/content/generate",
+        json={"topic": "утренний кофе"},
+        headers=headers,
+    )
+    assert response.status_code == 202
+    body = response.json()
+    assert body["status"] == "completed"
+    assert body["output_payload"] == {"text": "пост про утренний кофе"}
+
+    from app.models import GenerationJob
+
+    job = db.get(GenerationJob, body["id"])
+    assert "platform" not in job.input_payload
+
+
+def test_generate_with_empty_target_account_ids_list(client: TestClient) -> None:
+    # Explicit [] must behave the same as omitting the field entirely.
+    headers = _auth_headers(client)
+    response = client.post(
+        "/content/generate",
+        json={"topic": "тема", "target_account_ids": []},
+        headers=headers,
+    )
+    assert response.status_code == 202
 
 
 def test_get_generation_job(client: TestClient, db: Session) -> None:
@@ -203,8 +236,12 @@ def test_generate_rejects_instagram_text_before_generating(client: TestClient, d
 
 def test_generate_rejects_target_account_not_owned(client: TestClient, db: Session) -> None:
     headers = _auth_headers(client)
+    # CIN-155: upsert_social_account now needs a Subscription to check
+    # the connected-account limit against.
     other = User(email="mallory@cindra.dev", hashed_password="x")
     db.add(other)
+    db.flush()
+    db.add(Subscription(user_id=other.id))
     db.commit()
     other_account = upsert_social_account(db, other, SocialPlatform.telegram, "-999", access_token="t")
 
@@ -221,6 +258,13 @@ def test_generate_with_multiple_targets_uses_intersection_of_content_types(
 ) -> None:
     headers = _auth_headers(client)
     telegram_id = _account_id(db, SocialPlatform.telegram, "-100")
+    # CIN-155: free tier caps connected accounts at 1 -- this test is
+    # about content-type intersection across platforms, not that limit.
+    user = db.scalar(select(User).where(User.email == "ada@cindra.dev"))
+    db.execute(
+        update(Subscription).where(Subscription.user_id == user.id).values(tier=SubscriptionTier.pro)
+    )
+    db.commit()
     instagram_id = _account_id(db, SocialPlatform.instagram, "insta-1")
 
     # text is valid for telegram alone but not for the pair (instagram excludes it)
@@ -396,3 +440,145 @@ def test_generate_flagged_content_reports_status(client: TestClient, db: Session
         headers=headers,
     )
     assert response.json()["status"] == "flagged"
+
+
+def test_generate_rejects_unknown_tone(client: TestClient, db: Session) -> None:
+    # CIN-138: tone must be a known preset key.
+    headers = _auth_headers(client)
+    account_id = _account_id(db)
+    response = client.post(
+        "/content/generate",
+        json={
+            "topic": "тема",
+            "target_account_ids": [account_id],
+            "content_type": "text",
+            "tone": "sarcastic",
+        },
+        headers=headers,
+    )
+    assert response.status_code == 422
+    assert "Неизвестный тон" in response.text
+
+
+def test_generate_rejects_unknown_image_template(client: TestClient, db: Session) -> None:
+    # CIN-143: image_template must be a known catalog key.
+    headers = _auth_headers(client)
+    account_id = _account_id(db)
+    response = client.post(
+        "/content/generate",
+        json={
+            "topic": "тема",
+            "target_account_ids": [account_id],
+            "content_type": "image",
+            "image_template": "vaporwave",
+        },
+        headers=headers,
+    )
+    assert response.status_code == 422
+    assert "Неизвестный шаблон" in response.text
+
+
+def test_image_templates_catalog_is_served(client: TestClient) -> None:
+    # CIN-143: single source of truth for the «Посты» template select --
+    # id/title/description only, the English prompt directive stays
+    # internal. CIN-150 adds preview_url, null until staff generate one.
+    headers = _auth_headers(client)
+    response = client.get("/content/image-templates", headers=headers)
+    assert response.status_code == 200
+    templates = response.json()
+    ids = {t["id"] for t in templates}
+    assert "product_shot" in ids
+    assert "flat_lay" in ids
+    assert all(set(t) == {"id", "title", "description", "preview_url"} for t in templates)
+    assert all(t["title"] and t["description"] for t in templates)
+    assert all(t["preview_url"] is None for t in templates)
+
+
+def test_every_image_template_has_a_preview_topic() -> None:
+    # CIN-150: the preview generator reads this for every entry, so a
+    # template added without one would only fail at generation time.
+    from app.image_templates import IMAGE_TEMPLATES
+
+    assert len(IMAGE_TEMPLATES) >= 12
+    for template_id, template in IMAGE_TEMPLATES.items():
+        assert template["preview_topic"].strip(), template_id
+        assert template["directive"].startswith("Template:"), template_id
+
+
+def test_stored_preview_is_returned_in_the_catalog(client: TestClient, db: Session) -> None:
+    db.add(
+        ImageTemplatePreview(
+            template_id="product_shot",
+            preview_url="https://media.cindra.example/preview.png",
+        )
+    )
+    db.commit()
+    response = client.get("/content/image-templates", headers=_auth_headers(client))
+    previews = {t["id"]: t["preview_url"] for t in response.json()}
+    assert previews["product_shot"] == "https://media.cindra.example/preview.png"
+    assert previews["lifestyle"] is None
+
+
+def test_preview_generation_is_staff_only(client: TestClient) -> None:
+    # It spends a real image generation per template (CIN-150).
+    response = client.post("/content/image-templates/previews", headers=_auth_headers(client))
+    assert response.status_code == 403
+
+
+def test_preview_generation_stores_urls_and_reports_failures(
+    client: TestClient, db: Session
+) -> None:
+    headers = _auth_headers(client)
+    user = db.scalar(select(User).where(User.email == "ada@cindra.dev"))
+    user.is_admin = True
+    db.commit()
+
+    calls: list[str] = []
+
+    def fake_generator(payload: dict) -> dict:
+        calls.append(payload["image_template"])
+        if payload["image_template"] == "diagram":
+            raise RuntimeError("модель отказалась")
+        return {"image_url": f"https://media.cindra.example/{payload['image_template']}.png"}
+
+    with patch("app.routers.content.nano_banana_image_generator", side_effect=fake_generator):
+        response = client.post("/content/image-templates/previews", headers=headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    # One template failing must not abort the rest of the run.
+    assert "diagram" in body["failed"]
+    assert "product_shot" in body["generated"]
+    assert len(calls) == len(body["generated"]) + len(body["failed"])
+
+    stored = {
+        row.template_id: row.preview_url
+        for row in db.scalars(select(ImageTemplatePreview)).all()
+    }
+    assert stored["product_shot"] == "https://media.cindra.example/product_shot.png"
+    assert "diagram" not in stored
+
+
+def test_regenerating_a_preview_replaces_the_row(client: TestClient, db: Session) -> None:
+    db.add(ImageTemplatePreview(template_id="venue", preview_url="https://old.example/v.png"))
+    db.commit()
+    headers = _auth_headers(client)
+    user = db.scalar(select(User).where(User.email == "ada@cindra.dev"))
+    user.is_admin = True
+    db.commit()
+
+    with patch(
+        "app.routers.content.nano_banana_image_generator",
+        return_value={"image_url": "https://new.example/v.png"},
+    ):
+        client.post("/content/image-templates/previews", headers=headers)
+
+    rows = db.scalars(
+        select(ImageTemplatePreview).where(ImageTemplatePreview.template_id == "venue")
+    ).all()
+    assert len(rows) == 1
+    assert rows[0].preview_url == "https://new.example/v.png"
+
+
+def test_image_templates_catalog_requires_auth(client: TestClient) -> None:
+    assert client.get("/content/image-templates").status_code == 401

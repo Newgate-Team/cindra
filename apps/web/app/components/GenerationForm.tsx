@@ -1,29 +1,47 @@
 "use client";
 
+import { Paperclip, Sparkles } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 
 import { ApiError, api } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { CONTENT_KIND_LABELS, allowedContentKindsFor, allowedContentTypesFor } from "@/lib/publish-matrix";
+import { TONE_OPTIONS } from "@/lib/tones";
 import type {
   Attachment,
   GenerationContentType,
   GenerationJob,
-  Post,
+  ImageTemplate,
   SocialAccount,
   SocialPlatform,
-  TikTokCreatorInfo,
 } from "@/lib/types";
 
+import { Poster } from "./Brand";
+import { ReviewAndPublish } from "./ReviewAndPublish";
+import { ChipSelect, PostCard, platformLabel } from "./Studio";
+
 const TERMINAL_STATUSES = new Set(["completed", "failed", "flagged"]);
+
 const POLL_INTERVAL_MS = 2000;
 
-// datetime-local's `min` needs "yyyy-MM-ddTHH:mm" -- called fresh on
-// every render rather than a module-level constant, so it stays "now"
-// across a long-lived page instance instead of freezing at page load.
-function minDatetimeLocal(): string {
-  return new Date().toISOString().slice(0, 16);
-}
+const JOB_STATUS_LABELS: Record<string, string> = {
+  queued: "В очереди",
+  processing: "Генерируем",
+  completed: "Готово",
+  failed: "Ошибка",
+  flagged: "Отклонено",
+};
+
+// No target account chosen yet means no platform to constrain the
+// choice by -- these are the unconstrained fallbacks, mirroring the
+// union of what lib/publish-matrix.ts's ALLOWED_CONTENT_TYPES/
+// ALLOWED_CONTENT_KINDS allow across every platform.
+const ALL_CONTENT_TYPES: GenerationContentType[] = ["text", "image", "video"];
+const ALL_CONTENT_KINDS_BY_TYPE: Record<GenerationContentType, string[]> = {
+  text: ["post", "video_script"],
+  image: ["post", "story"],
+  video: ["post", "story"],
+};
 
 function platformsFor(ids: string[], accounts: SocialAccount[]): SocialPlatform[] {
   const set = new Set<SocialPlatform>();
@@ -32,358 +50,6 @@ function platformsFor(ids: string[], accounts: SocialAccount[]): SocialPlatform[
     if (account) set.add(account.platform);
   }
   return [...set];
-}
-
-interface TikTokPostOptions {
-  mode: "direct_post" | "draft_upload";
-  privacy_level: string;
-  disable_comment: boolean;
-  disable_duet: boolean;
-  disable_stitch: boolean;
-  brand_content_toggle: boolean;
-  brand_organic_toggle: boolean;
-  is_aigc: boolean;
-}
-
-const TIKTOK_PRIVACY_LABELS: Record<string, string> = {
-  PUBLIC_TO_EVERYONE: "Все",
-  MUTUAL_FOLLOW_FRIENDS: "Друзья (взаимные подписки)",
-  FOLLOWER_OF_CREATOR: "Подписчики",
-  SELF_ONLY: "Только я",
-};
-
-// The review/edit-before-publish step (CIN-38): once generation
-// completes, the raw text becomes an editable draft here rather than
-// a separate screen -- reviewing what you just generated is part of
-// the same flow, not a different destination.
-//
-// Target accounts are no longer chosen here (CIN-106) -- they were
-// locked in before generation, since content_type/content_kind were
-// already validated against what those specific accounts can publish.
-// Changing targets after the fact could land on an invalid combo
-// without regenerating, so this just fans the same content out to
-// every target account picked earlier.
-function ReviewAndPublish({
-  job,
-  contentKind,
-  initialCaption,
-  accounts,
-  targetAccountIds,
-}: {
-  job: GenerationJob;
-  contentKind: string;
-  initialCaption: string;
-  accounts: SocialAccount[];
-  targetAccountIds: string[];
-}) {
-  const { token } = useAuth();
-  const imageUrl = job.output_payload?.image_url;
-  const videoUrl = job.output_payload?.video_url;
-  const [text, setText] = useState(job.output_payload?.text ?? initialCaption);
-  const [scheduledFor, setScheduledFor] = useState("");
-  const [posts, setPosts] = useState<Post[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [publishing, setPublishing] = useState(false);
-  const [tiktokCreators, setTikTokCreators] = useState<Record<string, TikTokCreatorInfo>>({});
-  const [tiktokOptions, setTikTokOptions] = useState<Record<string, TikTokPostOptions>>({});
-  const [tiktokError, setTikTokError] = useState<string | null>(null);
-  const [loadingTikTok, setLoadingTikTok] = useState(false);
-
-  const targetAccounts = useMemo(
-    () => accounts.filter((account) => targetAccountIds.includes(account.id)),
-    [accounts, targetAccountIds]
-  );
-  const targetTikTokAccounts = useMemo(
-    () => targetAccounts.filter((account) => account.platform === "tiktok"),
-    [targetAccounts]
-  );
-
-  useEffect(() => {
-    if (targetTikTokAccounts.length === 0) return;
-    let cancelled = false;
-    setLoadingTikTok(true);
-    setTikTokError(null);
-    Promise.all(
-      targetTikTokAccounts.map(async (account) => {
-        const creator = await api.get<TikTokCreatorInfo>(
-          `/social-accounts/${account.id}/tiktok/creator-info`,
-          token
-        );
-        return { account, creator };
-      })
-    )
-      .then((results) => {
-        if (cancelled) return;
-        setTikTokCreators((previous) => {
-          const next = { ...previous };
-          for (const { account, creator } of results) next[account.id] = creator;
-          return next;
-        });
-        setTikTokOptions((previous) => {
-          const next = { ...previous };
-          for (const { account, creator } of results) {
-            next[account.id] = next[account.id] ?? {
-              mode: "direct_post",
-              // TikTok explicitly forbids silently preselecting a
-              // privacy level: the creator must choose every time.
-              privacy_level: "",
-              disable_comment: creator.comment_disabled,
-              disable_duet: creator.duet_disabled,
-              disable_stitch: creator.stitch_disabled,
-              brand_content_toggle: false,
-              brand_organic_toggle: false,
-              // Every video in this flow was generated by Veo.
-              is_aigc: true,
-            };
-          }
-          return next;
-        });
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          setTikTokError(
-            err instanceof ApiError ? err.message : "Не удалось получить настройки TikTok"
-          );
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLoadingTikTok(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [targetTikTokAccounts, token]);
-
-  function updateTikTokOption<K extends keyof TikTokPostOptions>(
-    accountId: string,
-    key: K,
-    value: TikTokPostOptions[K]
-  ) {
-    setTikTokOptions((previous) => ({
-      ...previous,
-      [accountId]: { ...previous[accountId], [key]: value },
-    }));
-  }
-
-  const tiktokReady =
-    targetTikTokAccounts.length === 0 ||
-    (targetTikTokAccounts.every(
-      (account) => {
-        const options = tiktokOptions[account.id];
-        return (
-          tiktokCreators[account.id] &&
-          options &&
-          (options.mode === "draft_upload" || Boolean(options.privacy_level))
-        );
-      }
-    ) && !tiktokError);
-
-  async function handlePublish(event: FormEvent) {
-    event.preventDefault();
-    setError(null);
-    setPublishing(true);
-    try {
-      const created = await api.post<Post[]>(
-        "/posts",
-        {
-          social_account_ids: targetAccountIds,
-          text,
-          image_url: imageUrl ?? null,
-          video_url: videoUrl ?? null,
-          content_kind: contentKind,
-          generation_job_id: job.id,
-          scheduled_for: scheduledFor ? new Date(scheduledFor).toISOString() : null,
-          platform_options: {
-            tiktok: { accounts: tiktokOptions },
-          },
-        },
-        token
-      );
-      setPosts(created);
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 402) {
-        setError("Лимит публикаций по тарифу исчерпан.");
-      } else if (err instanceof ApiError) {
-        setError(err.message);
-      } else {
-        // Not an ApiError -- the request never got a proper response at
-        // all (network failure, CORS, backend restart mid-request), as
-        // opposed to every other publish failure in this app, which
-        // comes back as a specific backend detail message (CIN-120).
-        // Surface the real message instead of a generic string so the
-        // next report is diagnosable without a live repro.
-        setError(err instanceof Error ? `Не удалось опубликовать: ${err.message}` : "Не удалось опубликовать");
-      }
-    } finally {
-      setPublishing(false);
-    }
-  }
-
-  return (
-    <form onSubmit={handlePublish}>
-      {imageUrl && (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={imageUrl} alt="Сгенерированное изображение" style={{ maxWidth: "100%", borderRadius: 8 }} />
-      )}
-      {videoUrl && <video src={videoUrl} controls style={{ maxWidth: "100%", borderRadius: 8 }} />}
-      <label>
-        {imageUrl || videoUrl ? "Подпись (можно отредактировать перед публикацией)" : "Текст (можно отредактировать перед публикацией)"}
-        <textarea rows={6} value={text} onChange={(e) => setText(e.target.value)} />
-      </label>
-      <p>
-        Куда опубликовать:{" "}
-        {targetAccounts.map((a) => `${a.platform} — ${a.display_name ?? a.external_account_id}`).join(", ")}
-      </p>
-      {targetTikTokAccounts.map((account) => {
-        const creator = tiktokCreators[account.id];
-        const options = tiktokOptions[account.id];
-        if (!creator || !options) return null;
-        return (
-          <fieldset key={account.id} className="card">
-            <legend>TikTok — @{creator.creator_username || creator.creator_nickname}</legend>
-            <p className="muted">
-              Настройки получены прямо из TikTok. Максимальная длительность: {creator.max_video_post_duration_sec} сек.
-            </p>
-            <label>
-              Способ отправки
-              <select
-                required
-                value={options.mode}
-                onChange={(event) =>
-                  updateTikTokOption(
-                    account.id,
-                    "mode",
-                    event.target.value as TikTokPostOptions["mode"]
-                  )
-                }
-              >
-                <option value="direct_post">Опубликовать напрямую</option>
-                <option value="draft_upload">Отправить в TikTok как черновик</option>
-              </select>
-            </label>
-            {options.mode === "draft_upload" ? (
-              <p className="muted">
-                Видео появится во входящих TikTok. Откройте уведомление в мобильном приложении,
-                отредактируйте черновик и завершите публикацию там.
-              </p>
-            ) : (
-              <>
-                <label>
-                  Кто увидит видео
-                  <select
-                    required
-                    value={options.privacy_level}
-                    onChange={(event) =>
-                      updateTikTokOption(account.id, "privacy_level", event.target.value)
-                    }
-                  >
-                    <option value="">Выберите приватность</option>
-                    {creator.privacy_level_options.map((level) => (
-                      <option key={level} value={level}>
-                        {TIKTOK_PRIVACY_LABELS[level] ?? level}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={options.disable_comment}
-                    disabled={creator.comment_disabled}
-                    onChange={(event) =>
-                      updateTikTokOption(account.id, "disable_comment", event.target.checked)
-                    }
-                  />
-                  Отключить комментарии
-                </label>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={options.disable_duet}
-                    disabled={creator.duet_disabled}
-                    onChange={(event) =>
-                      updateTikTokOption(account.id, "disable_duet", event.target.checked)
-                    }
-                  />
-                  Отключить Duet
-                </label>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={options.disable_stitch}
-                    disabled={creator.stitch_disabled}
-                    onChange={(event) =>
-                      updateTikTokOption(account.id, "disable_stitch", event.target.checked)
-                    }
-                  />
-                  Отключить Stitch
-                </label>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={options.brand_organic_toggle}
-                    onChange={(event) =>
-                      updateTikTokOption(account.id, "brand_organic_toggle", event.target.checked)
-                    }
-                  />
-                  Видео продвигает наш собственный бренд, продукт или услугу
-                </label>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={options.brand_content_toggle}
-                    onChange={(event) =>
-                      updateTikTokOption(account.id, "brand_content_toggle", event.target.checked)
-                    }
-                  />
-                  Видео содержит платное продвижение стороннего бренда
-                </label>
-                <label>
-                  <input type="checkbox" checked={options.is_aigc} disabled readOnly />
-                  Контент создан с помощью ИИ
-                </label>
-              </>
-            )}
-          </fieldset>
-        );
-      })}
-      {loadingTikTok && <p className="muted">Загружаем актуальные настройки TikTok…</p>}
-      {tiktokError && <p className="error">{tiktokError}</p>}
-      <label>
-        Запланировать на (необязательно — иначе публикуем сразу)
-        <input
-          type="datetime-local"
-          min={minDatetimeLocal()}
-          value={scheduledFor}
-          onChange={(e) => setScheduledFor(e.target.value)}
-        />
-      </label>
-      {error && <p className="error">{error}</p>}
-      <button type="submit" disabled={publishing || loadingTikTok || !tiktokReady}>
-        {publishing ? "Публикуем…" : scheduledFor ? "Запланировать" : "Опубликовать сейчас"}
-      </button>
-      {posts && (
-        <div>
-          {posts.map((post) => (
-            <div key={post.id} className="card list-row">
-              <div className="list-row-body">
-                <strong>{post.platform}</strong>
-                <p className="muted list-row-meta">
-                  <span>{post.account_label}</span>
-                </p>
-                {post.status === "failed" && post.error_message && (
-                  <p className="error">{post.error_message}</p>
-                )}
-              </div>
-              <div className="list-row-side">
-                <span className={`badge ${post.status}`}>{post.status}</span>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </form>
-  );
 }
 
 // Video scripts aren't meant to be posted anywhere directly (CIN-130)
@@ -469,15 +135,19 @@ export interface GenerationFormProps {
   // e.g. the main Генерация page excludes "video_script" now that it
   // has its own page, without touching what the backend still allows.
   excludeContentKinds?: string[];
+  // Content types to hide entirely (CIN-136): the Посты page excludes
+  // "video" now that video lives in the studio (/video). Accounts
+  // whose platform can publish nothing but excluded types (TikTok is
+  // video-only) drop out of the target picker with it.
+  excludeContentTypes?: GenerationContentType[];
   topicLabel?: string;
   topicPlaceholder?: string;
-  emptyAccountsMessage?: string;
   // CIN-130: hides "Куда опубликовать" entirely -- for content that
   // isn't meant to be posted anywhere (a video script). Target
-  // accounts are still sent to /content/generate under the hood
-  // (every eligible one, silently) since the backend still requires
-  // >=1 for its content_type/content_kind validation and tone
-  // guidance, but the user never has to think about "publishing".
+  // accounts are optional at generation time regardless (a connected
+  // account is only required at actual publish time, ReviewAndPublish),
+  // so hiding the picker here just means the user never has to think
+  // about "publishing" for this kind of content at all.
   hideTargetPicker?: boolean;
   // "download" skips the publish step after generation entirely and
   // shows an edit-then-download-as-.txt step instead (ReviewAndDownload).
@@ -490,20 +160,25 @@ export function GenerationForm({
   lockedContentType,
   lockedContentKind,
   excludeContentKinds,
+  excludeContentTypes,
   topicLabel = "Запрос",
   topicPlaceholder = "например, осенняя коллекция кофе",
-  emptyAccountsMessage = "Чтобы начать генерацию, сначала подключите соцсеть на странице «Соцсети».",
   hideTargetPicker = false,
   postGenerationAction = "publish",
 }: GenerationFormProps) {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const [accounts, setAccounts] = useState<SocialAccount[]>([]);
-  const [accountsLoaded, setAccountsLoaded] = useState(false);
   const [targetAccountIds, setTargetAccountIds] = useState<string[]>([]);
   const [topic, setTopic] = useState("");
   const [contentType, setContentType] = useState<GenerationContentType>(lockedContentType ?? "text");
   const [contentKind, setContentKind] = useState(lockedContentKind ?? "post");
-  const [brandGuide, setBrandGuide] = useState("");
+  // Brand kit (Settings) pre-fills both; each run may still change them.
+  const [brandGuide, setBrandGuide] = useState(user?.brand_guide ?? "");
+  const [tone, setTone] = useState(user?.default_tone ?? "");
+  // CIN-143: image templates come from the backend catalog -- the
+  // frontend renders whatever GET /content/image-templates returns.
+  const [imageTemplates, setImageTemplates] = useState<ImageTemplate[]>([]);
+  const [imageTemplate, setImageTemplate] = useState("");
   const [attachments, setAttachments] = useState<NamedAttachment[]>([]);
   const [uploadingAttachment, setUploadingAttachment] = useState(false);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
@@ -513,32 +188,45 @@ export function GenerationForm({
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
-    api.get<SocialAccount[]>("/social-accounts", token).then((list) => {
-      setAccounts(list);
-      setAccountsLoaded(true);
-    });
+    api.get<SocialAccount[]>("/social-accounts", token).then(setAccounts);
+  }, [token]);
+
+  // The dashboard's "Что создадим сегодня?" box hands over its idea as
+  // ?topic= (and ?format=image for the picture chip). Read once: a ref
+  // guards against the effect re-running with a fresh excludeContentTypes
+  // array each render and overwriting what the user has typed since.
+  const prefilled = useRef(false);
+  useEffect(() => {
+    if (prefilled.current) return;
+    prefilled.current = true;
+    const params = new URLSearchParams(window.location.search);
+    const idea = params.get("topic");
+    if (idea) setTopic(idea.slice(0, 5000));
+    if (params.get("format") === "image" && !lockedContentType && !excludeContentTypes?.includes("image")) {
+      setContentType("image");
+    }
+  }, [lockedContentType, excludeContentTypes]);
+
+  useEffect(() => {
+    // Best-effort: if the catalog fails to load, the select simply
+    // stays hidden and generation works template-less as before.
+    api.get<ImageTemplate[]>("/content/image-templates", token).then(setImageTemplates).catch(() => {});
   }, [token]);
 
   // Only accounts that can actually publish the locked content type
   // are offered -- e.g. Instagram never appears on the "Сценарий
   // видео" page, since it doesn't support content_type=text at all.
-  const selectableAccounts = useMemo(
-    () =>
-      lockedContentType
-        ? accounts.filter((a) => allowedContentTypesFor([a.platform]).includes(lockedContentType))
-        : accounts,
-    [accounts, lockedContentType]
-  );
-
-  // CIN-130: when the picker itself is hidden, every eligible account
-  // is sent along silently -- /content/generate still requires >=1
-  // for its own validation/tone guidance, even though nothing here
-  // ever gets published to any of them.
-  useEffect(() => {
-    if (hideTargetPicker) {
-      setTargetAccountIds(selectableAccounts.map((a) => a.id));
+  const selectableAccounts = useMemo(() => {
+    if (lockedContentType) {
+      return accounts.filter((a) => allowedContentTypesFor([a.platform]).includes(lockedContentType));
     }
-  }, [hideTargetPicker, selectableAccounts]);
+    if (excludeContentTypes?.length) {
+      return accounts.filter((a) =>
+        allowedContentTypesFor([a.platform]).some((ct) => !excludeContentTypes.includes(ct))
+      );
+    }
+    return accounts;
+  }, [accounts, lockedContentType, excludeContentTypes]);
 
   function toggleTargetAccount(accountId: string, checked: boolean) {
     const next = checked ? [...targetAccountIds, accountId] : targetAccountIds.filter((id) => id !== accountId);
@@ -547,7 +235,11 @@ export function GenerationForm({
     if (lockedContentType && lockedContentKind) return;
 
     const nextPlatforms = platformsFor(next, accounts);
-    const allowedTypes = allowedContentTypesFor(nextPlatforms);
+    if (nextPlatforms.length === 0) return; // back to unconstrained -- nothing to reconcile
+
+    const allowedTypes = allowedContentTypesFor(nextPlatforms).filter(
+      (ct) => !excludeContentTypes?.includes(ct)
+    );
     const nextContentType = allowedTypes.length > 0 && !allowedTypes.includes(contentType) ? allowedTypes[0] : contentType;
     if (nextContentType !== contentType) setContentType(nextContentType);
 
@@ -555,11 +247,20 @@ export function GenerationForm({
     if (!allowedKinds.includes(contentKind)) setContentKind(allowedKinds[0] ?? "post");
   }
 
+  // Nothing constrains the choice yet when no target account is picked
+  // (now optional -- a connected account is only required at actual
+  // publish time, ReviewAndPublish) -- fall back to every kind that
+  // exists for this content_type on ANY platform, same union
+  // publish_matrix.py itself draws from.
   const selectedPlatforms = platformsFor(targetAccountIds, accounts);
-  const allowedContentTypes = allowedContentTypesFor(selectedPlatforms);
-  const allowedContentKinds = allowedContentKindsFor(selectedPlatforms, contentType).filter(
-    (kind) => !excludeContentKinds?.includes(kind)
-  );
+  const allowedContentTypes = (
+    selectedPlatforms.length > 0 ? allowedContentTypesFor(selectedPlatforms) : ALL_CONTENT_TYPES
+  ).filter((ct) => !excludeContentTypes?.includes(ct));
+  const allowedContentKinds = (
+    selectedPlatforms.length > 0
+      ? allowedContentKindsFor(selectedPlatforms, contentType)
+      : ALL_CONTENT_KINDS_BY_TYPE[contentType]
+  ).filter((kind) => !excludeContentKinds?.includes(kind));
 
   async function handleAttachmentChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -627,6 +328,8 @@ export function GenerationForm({
           content_type: contentType,
           content_kind: contentKind,
           brand_guide: brandGuide || null,
+          tone: tone || null,
+          image_template: contentType === "image" && imageTemplate ? imageTemplate : null,
           attachments: attachments.map((a) => ({ url: a.url, attachment_type: a.attachment_type })),
         },
         token
@@ -644,19 +347,14 @@ export function GenerationForm({
     }
   }
 
-  if (accountsLoaded && selectableAccounts.length === 0) {
-    return (
-      <>
-        <div className="page-header">
-          <div>
-            <h1>{heading}</h1>
-            <p className="muted">{subtitle}</p>
-          </div>
-        </div>
-        <p className="muted">{emptyAccountsMessage}</p>
-      </>
-    );
-  }
+  // What the preview card pretends to be before there is a result: the
+  // first picked account's platform, else Telegram (every plan has it).
+  const previewPlatform = selectedPlatforms[0] ?? "telegram";
+  const previewAccount = accounts.find((a) => a.id === targetAccountIds[0]);
+  const jobDone =
+    job?.status === "completed" &&
+    (job.output_payload?.text || job.output_payload?.image_url || job.output_payload?.video_url);
+  const selectedTemplate = imageTemplates.find((t) => t.id === imageTemplate);
 
   return (
     <>
@@ -666,137 +364,198 @@ export function GenerationForm({
           <p className="muted">{subtitle}</p>
         </div>
       </div>
-      <form onSubmit={handleSubmit} className="card">
-        {!hideTargetPicker && (
-          <fieldset className="chip-group">
-            <legend>Куда опубликовать</legend>
-            {selectableAccounts.map((a) => (
-              <label key={a.id}>
-                <input
-                  type="checkbox"
-                  checked={targetAccountIds.includes(a.id)}
-                  onChange={(e) => toggleTargetAccount(a.id, e.target.checked)}
-                />
-                {a.platform} — {a.display_name ?? a.external_account_id}
-              </label>
-            ))}
-          </fieldset>
-        )}
-        <label>
-          {topicLabel}
-          <textarea
-            required
-            rows={6}
-            maxLength={5000}
-            value={topic}
-            onChange={(e) => setTopic(e.target.value)}
-            placeholder={topicPlaceholder}
-          />
-        </label>
-        {!lockedContentType && (
-          <label>
-            Формат
-            <select
+      <div className="studio">
+        <form onSubmit={handleSubmit} className="panel studio-form">
+          <h2>Ваша идея</h2>
+          {/* Optional -- a connected account is only required at actual
+              publish time (ReviewAndPublish), not to generate. Narrows
+              Формат/Тип контента to what the picked account(s) can
+              actually publish when used, same as before; skipped
+              entirely when there's nothing to pick from yet. */}
+          {!hideTargetPicker && selectableAccounts.length > 0 && (
+            <fieldset className="field-block plain">
+              <legend className="field-label">Куда опубликовать (необязательно)</legend>
+              <div className="chip-group">
+                {selectableAccounts.map((a) => (
+                  <label key={a.id}>
+                    <input
+                      type="checkbox"
+                      checked={targetAccountIds.includes(a.id)}
+                      onChange={(e) => toggleTargetAccount(a.id, e.target.checked)}
+                    />
+                    {platformLabel(a.platform)} — {a.display_name ?? a.external_account_id}
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+          )}
+          {!lockedContentType && allowedContentTypes.length > 1 && (
+            <ChipSelect
+              label="Формат"
               value={contentType}
-              disabled={targetAccountIds.length === 0}
-              onChange={(e) => {
-                const nextContentType = e.target.value as GenerationContentType;
+              options={allowedContentTypes.map((value) => ({ value, label: CONTENT_TYPE_LABELS[value] }))}
+              onChange={(nextContentType) => {
                 setContentType(nextContentType);
-                const available = allowedContentKindsFor(selectedPlatforms, nextContentType).filter(
-                  (kind) => !excludeContentKinds?.includes(kind)
-                );
+                const available = (
+                  selectedPlatforms.length > 0
+                    ? allowedContentKindsFor(selectedPlatforms, nextContentType)
+                    : ALL_CONTENT_KINDS_BY_TYPE[nextContentType]
+                ).filter((kind) => !excludeContentKinds?.includes(kind));
                 if (!available.includes(contentKind)) setContentKind(available[0] ?? "post");
               }}
-            >
-              {allowedContentTypes.map((value) => (
-                <option key={value} value={value}>
-                  {CONTENT_TYPE_LABELS[value]}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
-        {!lockedContentKind && (
-          <label>
-            Тип контента
-            <select
+            />
+          )}
+          {!lockedContentKind && allowedContentKinds.length > 1 && (
+            <ChipSelect
+              label="Тип контента"
               value={contentKind}
-              disabled={targetAccountIds.length === 0}
-              onChange={(e) => setContentKind(e.target.value)}
-            >
-              {allowedContentKinds.map((value) => (
-                <option key={value} value={value}>
-                  {CONTENT_KIND_LABELS[value] ?? value}
-                </option>
-              ))}
-            </select>
+              options={allowedContentKinds.map((value) => ({ value, label: CONTENT_KIND_LABELS[value] ?? value }))}
+              onChange={setContentKind}
+            />
+          )}
+          <label className="field-block">
+            <span className="field-label">{topicLabel}</span>
+            <textarea
+              required
+              rows={6}
+              maxLength={5000}
+              value={topic}
+              onChange={(e) => setTopic(e.target.value)}
+              placeholder={topicPlaceholder}
+            />
           </label>
-        )}
-        <label>
-          Бренд-гайд (необязательно)
-          <textarea
-            rows={3}
-            value={brandGuide}
-            onChange={(e) => setBrandGuide(e.target.value)}
-            placeholder="тон и стиль, которых нужно придерживаться"
-          />
-        </label>
-        <label>
-          Прикрепить файлы (необязательно, до {MAX_TOTAL_ATTACHMENTS}: видео и аудио — не больше 1 каждого)
-          <input
-            type="file"
-            accept={ATTACHMENT_ACCEPT}
-            onChange={handleAttachmentChange}
-            disabled={uploadingAttachment || attachments.length >= MAX_TOTAL_ATTACHMENTS}
-          />
-        </label>
-        {uploadingAttachment && <p className="muted">Загружаем файл…</p>}
-        {attachmentError && <p className="error">{attachmentError}</p>}
-        {attachments.length > 0 && (
-          <ul>
-            {attachments.map((a, index) => (
-              <li key={`${a.url}-${index}`} className="muted">
-                {a.name} ({ATTACHMENT_TYPE_LABELS[a.attachment_type]}){" "}
-                <button type="button" className="secondary" onClick={() => removeAttachment(index)}>
-                  Убрать
+          <ChipSelect label="Тон" value={tone} options={TONE_OPTIONS} onChange={setTone} />
+          {contentType === "image" && imageTemplates.length > 0 && (
+            <div className="field-block" role="group" aria-label="Шаблон изображения">
+              <span className="field-label">Шаблон изображения (необязательно)</span>
+              <div className="template-grid">
+                <button
+                  type="button"
+                  className={`template-pick${imageTemplate === "" ? " selected" : ""}`}
+                  aria-pressed={imageTemplate === ""}
+                  onClick={() => setImageTemplate("")}
+                >
+                  <span className="template-pick-art default" aria-hidden="true" />
+                  <b>По умолчанию</b>
                 </button>
-              </li>
-            ))}
-          </ul>
-        )}
-        {error && <p className="error">{error}</p>}
-        <button type="submit" disabled={submitting || uploadingAttachment || targetAccountIds.length === 0}>
-          {submitting ? "Запускаем…" : "Сгенерировать"}
-        </button>
-      </form>
+                {imageTemplates.map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    className={`template-pick${imageTemplate === t.id ? " selected" : ""}`}
+                    aria-pressed={imageTemplate === t.id}
+                    title={t.description}
+                    onClick={() => setImageTemplate(t.id)}
+                  >
+                    {t.preview_url ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={t.preview_url} alt="" className="template-pick-art" />
+                    ) : (
+                      <span className="template-pick-art" aria-hidden="true" />
+                    )}
+                    <b>{t.title}</b>
+                  </button>
+                ))}
+              </div>
+              {selectedTemplate && (
+                <p className="muted hint">{selectedTemplate.description}</p>
+              )}
+            </div>
+          )}
+          <details className="field-block">
+            <summary>Бренд-гайд</summary>
+            <label>
+              <span className="visually-hidden">Бренд-гайд</span>
+              <textarea
+                rows={3}
+                value={brandGuide}
+                onChange={(e) => setBrandGuide(e.target.value)}
+                placeholder="тон и стиль, которых нужно придерживаться"
+              />
+            </label>
+          </details>
+          <label className="drop">
+            <Paperclip size={16} aria-hidden="true" /> Прикрепить файлы
+            <small>до {MAX_TOTAL_ATTACHMENTS}: видео и аудио — не больше 1 каждого</small>
+            <input
+              type="file"
+              accept={ATTACHMENT_ACCEPT}
+              onChange={handleAttachmentChange}
+              disabled={uploadingAttachment || attachments.length >= MAX_TOTAL_ATTACHMENTS}
+            />
+          </label>
+          {uploadingAttachment && <p className="muted">Загружаем файл…</p>}
+          {attachmentError && <p className="error">{attachmentError}</p>}
+          {attachments.length > 0 && (
+            <ul className="attachment-list">
+              {attachments.map((a, index) => (
+                <li key={`${a.url}-${index}`} className="muted">
+                  {a.name} ({ATTACHMENT_TYPE_LABELS[a.attachment_type]}){" "}
+                  <button type="button" className="secondary" onClick={() => removeAttachment(index)}>
+                    Убрать
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          {error && <p className="error">{error}</p>}
+          <button type="submit" disabled={submitting || uploadingAttachment}>
+            <Sparkles size={16} aria-hidden="true" /> {submitting ? "Запускаем…" : "Сгенерировать"}
+          </button>
+        </form>
 
-      {job && (
-        <div className="card" style={{ marginTop: 24 }}>
-          <p>
-            Статус генерации: <span className={`badge ${job.status}`}>{job.status}</span>
-          </p>
-          {job.status === "completed" &&
-            (job.output_payload?.text || job.output_payload?.image_url || job.output_payload?.video_url) &&
-            (postGenerationAction === "download" ? (
+        <section className="panel studio-preview" aria-live="polite">
+          <div className="section-head">
+            <h2>Предпросмотр</h2>
+            {job ? (
+              <span className={`badge ${job.status}`}>{JOB_STATUS_LABELS[job.status] ?? job.status}</span>
+            ) : (
+              <span className="tag purple">Пример</span>
+            )}
+          </div>
+          {jobDone && job ? (
+            postGenerationAction === "download" ? (
               <ReviewAndDownload job={job} initialCaption={topic} />
             ) : (
               <ReviewAndPublish
-                job={job}
+                imageUrl={job.output_payload?.image_url}
+                videoUrl={job.output_payload?.video_url}
+                generatedText={job.output_payload?.text}
+                generationJobId={job.id}
                 contentKind={contentKind}
                 initialCaption={topic}
                 accounts={accounts}
                 targetAccountIds={targetAccountIds}
               />
-            ))}
-          {job.status === "failed" && <p className="error">{job.error_message}</p>}
-          {job.status === "flagged" && (
-            <p className="error">Отклонено модерацией: {job.error_message}</p>
+            )
+          ) : (
+            <>
+              <PostCard
+                platform={previewPlatform}
+                author={previewAccount?.display_name ?? previewAccount?.external_account_id ?? "Ваш аккаунт"}
+                media={
+                  contentType !== "text" && (
+                    <Poster title={topic.trim().slice(0, 48) || "Хорошие идеи зажигают."} tone="violet" />
+                  )
+                }
+              >
+                <p className="post-caption placeholder">
+                  {job?.status === "queued" || job?.status === "processing"
+                    ? "Генерируем… можно продолжать работу — результат появится здесь."
+                    : topic.trim() || "Здесь появится ваш пост. Опишите идею слева и нажмите «Сгенерировать»."}
+                </p>
+              </PostCard>
+              {(job?.status === "queued" || job?.status === "processing") && (
+                <div className="progress" aria-hidden="true">
+                  <span className="indeterminate" />
+                </div>
+              )}
+              {job?.status === "failed" && <p className="error">{job.error_message}</p>}
+              {job?.status === "flagged" && <p className="error">Отклонено модерацией: {job.error_message}</p>}
+            </>
           )}
-          {(job.status === "queued" || job.status === "processing") && (
-            <p className="muted">Генерируем…</p>
-          )}
-        </div>
-      )}
+        </section>
+      </div>
     </>
   );
 }

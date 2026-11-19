@@ -28,3 +28,17 @@ def test_business_tier_gives_far_more_video() -> None:
 def test_generation_limit_requires_content_type() -> None:
     with pytest.raises(ValueError):
         limit_for(SubscriptionTier.free, UsageEventType.generation)
+
+
+def test_long_video_limit_is_business_only() -> None:
+    # CIN-146: a 15s Seedance clip costs ~$7.10 -- more than a whole
+    # Pro subscription, so only Business gets any, and only a few.
+    assert limit_for(SubscriptionTier.free, UsageEventType.long_video_generation) == 0
+    assert limit_for(SubscriptionTier.pro, UsageEventType.long_video_generation) == 0
+    assert limit_for(SubscriptionTier.business, UsageEventType.long_video_generation) == 3
+
+
+def test_long_video_limit_needs_no_content_type() -> None:
+    # It's an event type, not a content type -- the job itself is an
+    # ordinary video everywhere except billing.
+    assert limit_for(SubscriptionTier.business, UsageEventType.long_video_generation) == 3

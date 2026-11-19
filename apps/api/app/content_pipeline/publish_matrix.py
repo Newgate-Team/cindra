@@ -13,6 +13,33 @@ ALLOWED_CONTENT_TYPES: dict[SocialPlatform, frozenset[GenerationContentType]] = 
     SocialPlatform.facebook: frozenset({_TEXT, _IMAGE, _VIDEO}),
     SocialPlatform.instagram: frozenset({_IMAGE, _VIDEO}),
     SocialPlatform.tiktok: frozenset({_VIDEO}),
+    SocialPlatform.youtube: frozenset({_VIDEO}),
+    # Video deliberately excluded for now -- linkedin.py's publish()
+    # only implements text + image, LinkedIn's multi-part video
+    # finalize flow is a scoped-out follow-up (see that module's
+    # docstring). Not declaring it here means a generation targeting
+    # LinkedIn is rejected up front (CIN-style "check before spending
+    # budget") instead of generating a video that then fails at the
+    # very last step.
+    SocialPlatform.linkedin: frozenset({_TEXT, _IMAGE}),
+    # Unlike LinkedIn's video exclusion, this isn't a scoped-out corner
+    # -- reddit.py deliberately never implements Reddit's native
+    # asset-upload lease/S3 protocol at all, for text OR media. Every
+    # Cindra-generated image/video already has a stable public R2 URL,
+    # and Reddit's "link" post kind (a first-class post type, not a
+    # workaround) auto-embeds a direct image/video URL the same way a
+    # native upload would display. So image and video are both fully
+    # supported here, just via `kind=link` instead of asset upload.
+    SocialPlatform.reddit: frozenset({_TEXT, _IMAGE, _VIDEO}),
+    # Text-only, deliberately -- twitter.py never implements X's media
+    # upload at all (not even scoped down like LinkedIn's video, or
+    # substituted like Reddit's link posts). X's media upload lives on
+    # a separate legacy v1.1 endpoint with its own chunked INIT/APPEND/
+    # FINALIZE/STATUS protocol, and unlike Reddit there's no first-class
+    # "link post" equivalent that displays inline media without it --
+    # a URL in tweet text only ever renders as a link-preview card, not
+    # an attached image/video. See twitter.py's module docstring.
+    SocialPlatform.twitter: frozenset({_TEXT}),
 }
 
 # content_kind per platform+content_type. "story" only exists as a
@@ -35,6 +62,21 @@ ALLOWED_CONTENT_KINDS: dict[SocialPlatform, dict[GenerationContentType, frozense
     },
     SocialPlatform.tiktok: {
         _VIDEO: frozenset({"post"}),
+    },
+    SocialPlatform.youtube: {
+        _VIDEO: frozenset({"post"}),
+    },
+    SocialPlatform.linkedin: {
+        _TEXT: frozenset({"post", "video_script"}),
+        _IMAGE: frozenset({"post"}),
+    },
+    SocialPlatform.reddit: {
+        _TEXT: frozenset({"post", "video_script"}),
+        _IMAGE: frozenset({"post"}),
+        _VIDEO: frozenset({"post"}),
+    },
+    SocialPlatform.twitter: {
+        _TEXT: frozenset({"post", "video_script"}),
     },
 }
 

@@ -1,5 +1,5 @@
 export const metadata = {
-  title: "Удаление данных — Cindra",
+  title: "Удаление данных",
 };
 
 export default function DataDeletionPage() {

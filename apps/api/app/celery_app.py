@@ -20,6 +20,10 @@ celery_app.conf.update(
             "task": "app.scheduler.tasks.enqueue_due_posts",
             "schedule": 60.0,
         },
+        "sweep-drive-exports": {
+            "task": "app.tool_integrations.tasks.sweep_drive_exports",
+            "schedule": 600.0,
+        },
         "backup-database-daily": {
             "task": "app.scheduler.tasks.backup_database",
             "schedule": crontab(hour=3, minute=0),
@@ -27,7 +31,7 @@ celery_app.conf.update(
     },
 )
 
-celery_app.autodiscover_tasks(["app.content_pipeline", "app.scheduler"])
+celery_app.autodiscover_tasks(["app.content_pipeline", "app.scheduler", "app.tool_integrations"])
 
 # Registers every generator/publisher into their registries. Runs
 # here (not just in main.py) because the Celery worker process

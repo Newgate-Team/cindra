@@ -4,7 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ApiError, api } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
-import type { Subscription, SubscriptionTier } from "@/lib/types";
+import { TIER_FEATURES, TIER_NAME, TIER_ORDER, TIER_PRICE } from "@/lib/plans";
+import type { Subscription, SubscriptionTier, Team } from "@/lib/types";
 
 import { RequireAuth } from "../components/RequireAuth";
 
@@ -12,21 +13,6 @@ const TIER_LABELS: Record<string, string> = {
   free: "Free",
   pro: "Pro ($19/мес)",
   business: "Business ($100/мес)",
-};
-
-// Grid rendering for the tier-comparison cards below -- kept as
-// separate lookup tables (rather than reusing/reparsing TIER_LABELS)
-// so the numbers stay a direct, readable mirror of app/plans.py's
-// real PLAN_LIMITS (free: 20 text/3 image/0 video, 10 publications,
-// 1 account; pro/business already matched what the upgrade copy
-// below said before this page was restyled).
-const TIER_ORDER: SubscriptionTier[] = ["free", "pro", "business"];
-const TIER_NAME: Record<SubscriptionTier, string> = { free: "Free", pro: "Pro", business: "Business" };
-const TIER_PRICE: Record<SubscriptionTier, string> = { free: "0 $", pro: "19 $", business: "100 $" };
-const TIER_FEATURES: Record<SubscriptionTier, string[]> = {
-  free: ["20 текстов, 3 фото в месяц", "10 публикаций в месяц", "1 подключённый аккаунт"],
-  pro: ["300 текстов, 60 фото, 6 видео в месяц", "Без лимита публикаций", "Без лимита аккаунтов"],
-  business: ["600 текстов, 150 фото, 55 видео в месяц", "Без лимита публикаций", "Без лимита аккаунтов"],
 };
 
 const PAYPAL_CLIENT_ID = process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID ?? "";
@@ -151,6 +137,12 @@ function BillingSummary() {
   const { token, user } = useAuth();
   const [subscription, setSubscription] = useState<Subscription | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Whether *this* account can change the plan shown above. Solo
+  // (not on a team) by default; a team's plan is shared (roadmap item
+  // 5), so only its owner may change it -- the backend enforces this
+  // regardless, but showing a working-looking button to a member who'd
+  // just get a 403 after the full PayPal flow is a bad experience.
+  const [canManageBilling, setCanManageBilling] = useState(true);
 
   // Memoized so it's a stable reference across renders (CIN-88) --
   // UpgradeButton's useEffect depends on it, and an unmemoized
@@ -167,16 +159,28 @@ function BillingSummary() {
 
   useEffect(reload, [reload]);
 
+  useEffect(() => {
+    if (!user) return;
+    api
+      .get<Team>("/team", token)
+      .then((team) => setCanManageBilling(team.owner_user_id === user.id))
+      .catch((err) => {
+        if (err instanceof ApiError && err.status === 404) setCanManageBilling(true);
+      });
+  }, [token, user]);
+
   const currentIndex = subscription ? TIER_ORDER.indexOf(subscription.tier) : -1;
 
   return (
     <>
       <div className="page-header">
         <div>
-          <h1>Тариф</h1>
+          <h1>Больше пространства для идей</h1>
           {subscription && (
             <p className="muted">
-              {TIER_LABELS[subscription.tier] ?? subscription.tier}
+              Ваш тариф {TIER_LABELS[subscription.tier] ?? subscription.tier}
+              {" · "}
+              <span className={`badge ${subscription.status}`}>{subscription.status === "active" ? "активен" : subscription.status}</span>
               {subscription.current_period_end &&
                 ` · продление ${new Date(subscription.current_period_end).toLocaleDateString("ru-RU")}`}
             </p>
@@ -184,23 +188,24 @@ function BillingSummary() {
         </div>
       </div>
       {error && <p className="error">{error}</p>}
+      {!subscription && !error && (
+        <div className="grid three" aria-busy="true">
+          <div className="skeleton" />
+          <div className="skeleton" />
+          <div className="skeleton" />
+        </div>
+      )}
       {subscription && (
         <>
-          <p>
-            Статус: <span className={`badge ${subscription.status}`}>{subscription.status}</span>
-          </p>
-
-          <div className="tile-grid">
+          <div className="tier-grid">
             {TIER_ORDER.map((tier) => {
               const isCurrent = subscription.tier === tier;
               const tierIndex = TIER_ORDER.indexOf(tier);
               return (
-                <div key={tier} className={`card tier-card${isCurrent ? " current" : ""}`}>
-                  <div className="tile-header">
-                    <div className="tile-header-body">
-                      <strong>{TIER_NAME[tier]}</strong>
-                    </div>
-                    {isCurrent && <span className="badge active">Текущий</span>}
+                <section key={tier} className={`panel tier-card${isCurrent ? " current" : ""}`}>
+                  <div className="section-head">
+                    <h2>{TIER_NAME[tier]}</h2>
+                    {isCurrent && <span className="tag purple">Текущий</span>}
                   </div>
                   <p className="tier-price">
                     {TIER_PRICE[tier]}
@@ -218,14 +223,20 @@ function BillingSummary() {
                   ) : (
                     tierIndex > currentIndex &&
                     user &&
-                    (tier === "pro" || tier === "business") && (
+                    (tier === "pro" || tier === "business") &&
+                    (canManageBilling ? (
                       <UpgradeButton tier={tier} userId={user.id} onConfirmed={reload} />
-                    )
+                    ) : (
+                      <p className="muted">Изменить тариф команды может только её владелец</p>
+                    ))
                   )}
-                </div>
+                </section>
               );
             })}
           </div>
+          <p className="muted section">
+            Оплата через PayPal. Генерации аватаров и эфир оплачиваются отдельно — с ваших аккаунтов у этих сервисов.
+          </p>
         </>
       )}
     </>

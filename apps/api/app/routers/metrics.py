@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.deps import get_current_user
+from app.deps import require_admin
 from app.metrics import (
     average_time_to_first_post_seconds,
     publish_success_rate,
@@ -16,11 +16,11 @@ router = APIRouter(prefix="/metrics", tags=["metrics"])
 
 @router.get("/summary", response_model=MetricsSummary)
 def get_metrics_summary(
-    # Authenticated, but not yet admin-restricted -- there's no admin
-    # role in the User model. Fine for a 2-person team's own MVP
-    # dashboard; needs a real access check before this is exposed
-    # beyond that (see README.md metrics: "≥500 установок").
-    current_user: User = Depends(get_current_user),
+    # Staff only (CIN-147): this aggregates the whole user base, and
+    # registration is open and unverified (spec §6), so plain
+    # authentication would have published retention and conversion to
+    # anyone who signed up.
+    current_user: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> MetricsSummary:
     return MetricsSummary(

@@ -1,7 +1,7 @@
 """add TikTok platform and per-platform post options
 
 Revision ID: 1e4f962cb0a7
-Revises: e71eff5e2e59
+Revises: 2677d6aeb403
 """
 
 from collections.abc import Sequence
@@ -11,7 +11,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "1e4f962cb0a7"
-down_revision: str | None = "e71eff5e2e59"
+down_revision: str | None = "2677d6aeb403"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

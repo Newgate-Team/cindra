@@ -1,12 +1,48 @@
+import logging
+import smtplib
 import subprocess
 from datetime import UTC, datetime
 
 from app.celery_app import celery_app
+from app.config import get_settings
 from app.db import SessionLocal
-from app.models import Post, PostStatus, SocialAccount
+from app.email import send_email
+from app.models import Post, PostStatus, SocialAccount, User
 from app.scheduler import backup
 from app.scheduler.registry import get_publisher
 from app.social_integrations.errors import PermanentPublishError, TransientPublishError
+
+_MAX_RETRIES = 3
+
+logger = logging.getLogger(__name__)
+
+
+def _notify_publish_failure(db, post: Post, account: SocialAccount) -> None:
+    """Tell the author a scheduled post did not go out.
+
+    A post scheduled for Friday 9:00 that quietly fails is worse than one
+    that was never scheduled: nobody looks at it again. Called once, at
+    the point a post reaches its final `failed` state (not on retries).
+    Best-effort -- a broken mail relay must never change what happens to
+    the post -- and silent when SMTP is not configured.
+    """
+    if not get_settings().smtp_host:
+        return
+    try:
+        user = db.get(User, post.user_id)
+        if user is None:
+            return
+        snippet = post.text if len(post.text) <= 120 else f"{post.text[:119]}…"
+        calendar_link = f"{get_settings().frontend_base_url}/calendar"
+        send_email_task.delay(
+            user.email,
+            "Cindra — публикация не вышла",
+            f"Публикация в {account.platform.value} ({account.display_name or account.external_account_id}) "
+            f"не ушла.\n\nТекст: «{snippet}»\nПричина: {post.error_message or 'неизвестна'}\n\n"
+            f"Открыть календарь, чтобы перенести или повторить: {calendar_link}\n",
+        )
+    except Exception:
+        logger.warning("failure notification for post %s was not sent", post.id, exc_info=True)
 
 
 @celery_app.task(
@@ -14,7 +50,7 @@ from app.social_integrations.errors import PermanentPublishError, TransientPubli
     autoretry_for=(TransientPublishError,),
     retry_backoff=True,
     retry_backoff_max=60,
-    retry_kwargs={"max_retries": 3},
+    retry_kwargs={"max_retries": _MAX_RETRIES},
 )
 def publish_post(self, post_id: str) -> None:
     with SessionLocal() as db:
@@ -35,17 +71,32 @@ def publish_post(self, post_id: str) -> None:
             post.status = PostStatus.failed
             post.error_message = str(exc)
             db.commit()
+            _notify_publish_failure(db, post, account)
             return
-        except TransientPublishError:
+        except TransientPublishError as exc:
             # Persist the attempt count now -- Celery re-raises this
-            # to trigger autoretry (same pattern as
-            # content_pipeline.tasks.run_generation_job).
+            # to trigger autoretry, so nothing past this point runs on
+            # a retryable attempt. But on the last allowed attempt,
+            # autoretry_for's wrapper won't schedule another run -- it
+            # just re-raises the same exception past us, and without
+            # this check the post would stay "publishing" forever with
+            # no error_message, exactly the CIN-94 bug already fixed in
+            # content_pipeline.tasks.run_generation_job (this comment
+            # used to claim the same pattern without actually carrying
+            # the fix over).
+            exhausted = self.request.retries >= _MAX_RETRIES
+            if exhausted:
+                post.status = PostStatus.failed
+                post.error_message = str(exc)
             db.commit()
+            if exhausted:
+                _notify_publish_failure(db, post, account)
             raise
         except Exception as exc:  # noqa: BLE001 -- adapter failures fail the post, not the worker
             post.status = PostStatus.failed
             post.error_message = str(exc)
             db.commit()
+            _notify_publish_failure(db, post, account)
             return
 
         post.status = PostStatus.published
@@ -104,3 +155,17 @@ def backup_database(self) -> str:
     key = backup.upload_backup(data)
     backup.rotate_backups()
     return key
+
+
+@celery_app.task(
+    bind=True,
+    # Retry on real delivery flakiness (relay unreachable/times out),
+    # not on EmailNotConfiguredError -- that's a standing config gap,
+    # not a transient failure, so retrying it would just spin uselessly.
+    autoretry_for=(smtplib.SMTPException, ConnectionError, OSError, TimeoutError),
+    retry_backoff=True,
+    retry_backoff_max=300,
+    retry_kwargs={"max_retries": 3},
+)
+def send_email_task(self, to: str, subject: str, body: str) -> None:
+    send_email(to, subject, body)

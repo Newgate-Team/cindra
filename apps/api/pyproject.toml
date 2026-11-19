@@ -20,19 +20,46 @@ dependencies = [
     "pypdf>=5.1",
     "python-docx>=1.1",
     "Pillow>=11.0",
+    "sentry-sdk>=2.0",
 ]
 
 [project.optional-dependencies]
+# The live-stream agent (stream_agent/) on the machine that encodes the
+# broadcast: LiveKit to receive the avatar, PyAV (bundles FFmpeg) to
+# encode H.264/AAC and push RTMP.
+stream-agent = [
+    "livekit>=1.1",
+    "av>=14",
+    "numpy>=2",
+    "aiohttp>=3.9",
+]
 dev = [
     "pytest>=8.3",
     "ruff>=0.8",
+    "jsonschema>=4.23",
+    "livekit>=1.1",
+    "livekit-api>=1.0",
+    "av>=14",
+    "numpy>=2",
+    "aiohttp>=3.9",
 ]
 
 [tool.setuptools.packages.find]
-include = ["app*"]
+include = ["app*", "davinci_agent*"]
 
 [tool.ruff]
 extend-exclude = ["migrations/versions"]
 
 [tool.ruff.lint]
 extend-ignore = ["B008"]
+
+[tool.pytest.ini_options]
+# devtools/ (the HeyGen simulator) isn't part of the installed `app`
+# package but is imported by the contract tests.
+pythonpath = ["."]
+filterwarnings = [
+    # The contract tests hand heygen.py a Starlette TestClient (pointed
+    # at devtools/heygen_simulator) as its httpx client; TestClient just
+    # ignores timeout=, which real httpx honours in production.
+    "ignore:You should not use the 'timeout' argument with the TestClient",
+]

@@ -3,7 +3,17 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -20,6 +30,47 @@ class SocialPlatform(str, enum.Enum):
     instagram = "instagram"
     facebook = "facebook"
     tiktok = "tiktok"
+    youtube = "youtube"
+    linkedin = "linkedin"
+    reddit = "reddit"
+    twitter = "twitter"
+
+
+class IntegrationProvider(str, enum.Enum):
+    heygen = "heygen"
+    google_drive = "google_drive"
+    # HeyGen's real-time avatar product: its own key and credits.
+    liveavatar = "liveavatar"
+    # Real-time avatars too, ~10x cheaper per minute than LiveAvatar.
+    simli = "simli"
+    # The streamer's own Twitch account: reads chat for live streams.
+    twitch = "twitch"
+
+
+class StreamPlatform(str, enum.Enum):
+    twitch = "twitch"
+
+
+class StreamStatus(str, enum.Enum):
+    draft = "draft"  # set up, never started
+    queued = "queued"  # start pressed, waiting for a stream agent
+    live = "live"  # an agent has it on air
+    ended = "ended"
+    failed = "failed"
+
+
+class DriveExportStatus(str, enum.Enum):
+    queued = "queued"
+    processing = "processing"
+    completed = "completed"
+    failed = "failed"
+
+
+class MontageStatus(str, enum.Enum):
+    queued = "queued"
+    processing = "processing"
+    completed = "completed"
+    failed = "failed"
 
 
 class SubscriptionTier(str, enum.Enum):
@@ -55,6 +106,29 @@ class SubscriptionStore(str, enum.Enum):
 class UsageEventType(str, enum.Enum):
     generation = "generation"
     publication = "publication"
+    # CIN-146: a Seedance clip (CIN-144) costs ~15x a Veo one, so it
+    # gets its own small counter instead of eating the video quota.
+    # Deliberately an event type rather than a GenerationContentType
+    # value: that enum is shared with generation_jobs.content_type and
+    # is user-supplied on /content/generate, and a long clip is still
+    # an ordinary video everywhere except billing.
+    long_video_generation = "long_video_generation"
+    # CIN-148: a laid-out template render costs no AI money at all --
+    # only CPU and a file in R2. Capped separately (generously) so it
+    # can't be looped to fill the bucket, not because it's expensive.
+    layout_render = "layout_render"
+    # An avatar video rendered on the user's own HeyGen key: HeyGen
+    # bills their wallet, so this isn't our AI spend -- it bounds the
+    # worker time spent polling the render and the copy kept in R2.
+    byo_avatar_video = "byo_avatar_video"
+    # A montage assembled and rendered in DaVinci Resolve on Cindra's
+    # render machine -- one Resolve instance renders one job at a time,
+    # so this bounds queue time for everyone, not AI spend.
+    davinci_montage = "davinci_montage"
+    # One started hour on air of a live avatar stream: Cindra's stream
+    # machine encodes the video and Cindra pays for the chat replies
+    # (the avatar itself bills the user's own vendor account).
+    stream_hour = "stream_hour"
 
 
 class GenerationContentType(str, enum.Enum):
@@ -85,12 +159,202 @@ class User(Base):
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     email: Mapped[str] = mapped_column(String(320), unique=True, index=True, nullable=False)
-    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
+    # NULL for accounts created through Google sign-in (CIN-133) --
+    # they have no password and can only log in via Google.
+    hashed_password: Mapped[str | None] = mapped_column(String(255), nullable=True)
     role: Mapped[UserRole] = mapped_column(
         Enum(UserRole, name="user_role"), default=UserRole.solo, nullable=False
     )
+    # CIN-147: staff flag for endpoints that expose data about the whole
+    # user base (/metrics/summary). Deliberately NOT a UserRole value:
+    # `role` is chosen by the user at registration and editable from
+    # their profile, so an "admin" role would be self-assignable. This
+    # column appears in no request schema -- it's set by hand in the DB.
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # CIN-159: brute-force lockout on /auth/login. failed_login_attempts
+    # resets to 0 on any successful login; locked_until is set once the
+    # threshold is hit and is NOT extended by further attempts during
+    # the lockout window (see app/security.py) -- otherwise an attacker
+    # could keep a victim locked out indefinitely just by continuing to
+    # guess.
+    failed_login_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # CIN-109's Лента is a shared feed across ALL users by design (confirmed
+    # with the user at the time) -- but for an agency, that means an
+    # unreleased client campaign's generated image/video is visible to every
+    # other user (competitors included) before the client ever sees it
+    # published. register() sets this False for role=agency, True for
+    # role=solo -- preserving the original shared-feed experience for the
+    # audience it was designed for, closing the gap for the one it wasn't.
+    # Editable via PATCH /auth/me regardless of role, so either audience can
+    # override the default in either direction.
+    share_generations_to_feed: Mapped[bool] = mapped_column(
+        Boolean, default=True, nullable=False
+    )
+    # Brand kit: written once in Settings, used as the default brand guide
+    # and tone everywhere content is generated, so nobody retypes "short
+    # sentences, no jargon" into every form. A tone is a key of
+    # prompts.TONE_GUIDANCE.
+    brand_guide: Mapped[str | None] = mapped_column(String(5000), nullable=True)
+    default_tone: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # False until the address is confirmed via a mailed link, or the
+    # account came from Google (which already proved ownership, same
+    # reasoning as CIN-140's password-drop on Google sign-in). Informational
+    # only for now -- nothing in the product is gated on this yet.
+    email_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # NULL = solo user, resources scoped to just this user_id (the
+    # original, only behaviour before roadmap item 5). Set once this
+    # user creates or accepts a team -- app/teams.py's
+    # visible_user_ids() is the single place that turns this into "who
+    # else can see this user's stuff", so every resource-ownership
+    # query goes through that helper rather than re-deriving team
+    # membership itself.
+    team_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("teams.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+
+    @property
+    def has_password(self) -> bool:
+        """UserOut exposes this, never hashed_password itself -- a
+        Google-only account (see hashed_password's own comment) has
+        nothing for POST /auth/change-password to check against, so the
+        frontend needs to know whether to offer that form at all."""
+        return self.hashed_password is not None
+
+
+class Team(Base):
+    """Roadmap item 5 -- a shared agency workspace. Deliberately thin:
+    creation is gated to role=agency (see POST /team), and everything
+    a team actually shares (connected accounts, posts, generations,
+    billing quota) is wired in as separate, incremental follow-ups via
+    app/teams.py::visible_user_ids() rather than all at once here --
+    each resource type gets its own dedicated cross-team isolation
+    tests before its queries start trusting team_id.
+    """
+
+    __tablename__ = "teams"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    # The billing/management authority -- who can invite, remove
+    # members, and (once wired in) whose Subscription the whole team
+    # draws quota from. Not just "whoever created it" forever: nothing
+    # currently supports transferring this, but the column exists
+    # separately from "first member" so that's addable later without a
+    # schema change.
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+
+
+class TeamInvite(Base):
+    """One outstanding invite to join a team, identified by email (the
+    invitee doesn't need an account yet to be invited). Accepting is a
+    separate, AUTHENTICATED action (POST /team/invites/accept) that
+    requires the logged-in user's own email to match -- deliberately
+    not "anyone who has the link joins automatically", and deliberately
+    not auto-creating an account either: an existing user's own
+    pre-team resources stay theirs until they explicitly accept, so a
+    careless invite can't silently expose someone's private drafts to
+    a team they never agreed to join.
+    """
+
+    __tablename__ = "team_invites"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    team_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("teams.id", ondelete="CASCADE"), nullable=False
+    )
+    email: Mapped[str] = mapped_column(String(320), nullable=False)
+    invited_by_user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+
+
+class PasswordResetToken(Base):
+    """One row per outstanding "forgot password" request. Only a
+    SHA-256 hash of the token is stored -- the raw, high-entropy token
+    only ever exists in the emailed link, same reasoning as never
+    storing a plaintext password (a DB leak alone shouldn't hand over
+    reset capability for every account). used_at makes each row
+    single-use; expires_at bounds how long a leaked/intercepted link
+    stays dangerous.
+    """
+
+    __tablename__ = "password_reset_tokens"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+
+
+class EmailVerificationToken(Base):
+    """Same shape and reasoning as PasswordResetToken (hash-only
+    storage, single-use, expiring) -- a separate table rather than a
+    shared one because the two token kinds have different lifetimes
+    (see EMAIL_VERIFICATION_TOKEN_EXPIRE_MINUTES) and mixing them would
+    make expiry logic depend on a "kind" column instead of the table
+    itself.
+    """
+
+    __tablename__ = "email_verification_tokens"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+
+
+class ImageTemplatePreview(Base):
+    """One generated example per AI image template (CIN-150).
+
+    Unlike the code-rendered layout templates (CIN-148), whose previews
+    are drawn on the fly for free, an example for these costs a real
+    image generation -- so it is produced once by staff and stored,
+    not rendered per request. `template_id` is a key of
+    IMAGE_TEMPLATES, deliberately a plain string so adding or renaming
+    a template needs no migration.
+    """
+
+    __tablename__ = "image_template_previews"
+
+    template_id: Mapped[str] = mapped_column(String(50), primary_key=True)
+    preview_url: Mapped[str] = mapped_column(String(1024), nullable=False)
+    generated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
     )
 
 
@@ -174,6 +438,13 @@ class GenerationJob(Base):
     output_payload: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     error_message: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    # Set when this job is one variant of an A/B test (see ABTest) --
+    # NULL for every plain, standalone generation, which is most of
+    # them. ondelete SET NULL (not CASCADE): deleting a test shouldn't
+    # take a real, already-paid-for generation result down with it.
+    ab_test_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("ab_tests.id", ondelete="SET NULL"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
@@ -182,8 +453,60 @@ class GenerationJob(Base):
     )
 
 
+class ABTest(Base):
+    """A set of independently generated text variants for the same
+    brief (CIN roadmap item 4) -- each variant is a completely ordinary
+    GenerationJob (content_type=text), just tagged with this test's id
+    (GenerationJob.ab_test_id). Reuses the exact same generation
+    pipeline/Celery task as a standalone text generation; this table
+    only owns the grouping and the (manually chosen) winner.
+
+    There's no automated winner-picking: no platform integration in
+    this codebase reads back engagement data (likes/views/comments) to
+    compare variants against -- see app/analytics.py's own docstring
+    reasoning. So the user reviews the generated variants themselves
+    and marks one via POST /ab-tests/{id}/winner once they've decided
+    (typically after publishing and checking the platform's own
+    insights) -- winner_generation_job_id is purely a record of that
+    choice, not a computed result.
+    """
+
+    __tablename__ = "ab_tests"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    topic: Mapped[str] = mapped_column(String(5000), nullable=False)
+    winner_generation_job_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("generation_jobs.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+
+
 class Post(Base):
     __tablename__ = "posts"
+    __table_args__ = (
+        # CIN-122's idempotency check in routers/posts.py relies on
+        # (generation_job_id, social_account_id) uniquely identifying
+        # "this generated content, published to this account" -- but
+        # only ever enforced it by reading first, racily, with no lock
+        # or constraint backing it. Concurrent retries of the same
+        # create_post request (the exact CIN-120 scenario CIN-122 was
+        # written for) could both pass the check and both insert,
+        # double-charging usage and double-publishing to the real
+        # platform. Postgres treats NULL as distinct from NULL in a
+        # UNIQUE constraint, so this only ever constrains generated
+        # posts (generation_job_id IS NOT NULL) -- manually-composed
+        # posts (NULL) are unaffected and can repeat freely.
+        UniqueConstraint(
+            "generation_job_id", "social_account_id", name="uq_post_generation_job_account"
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
@@ -257,4 +580,316 @@ class SocialAccount(Base):
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+
+
+class Integration(Base):
+    """A third-party tool the user plugged in with their own credentials
+    (e.g. a HeyGen API key) -- unlike SocialAccount, it's not somewhere
+    we publish *to*, it's something we generate *with*, billed to the
+    user's own account with that provider rather than to Cindra."""
+
+    __tablename__ = "integrations"
+    __table_args__ = (
+        UniqueConstraint("user_id", "provider", name="uq_integration_user_provider"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    provider: Mapped[IntegrationProvider] = mapped_column(
+        Enum(IntegrationProvider, name="integration_provider"), nullable=False
+    )
+    # Fernet-encrypted at rest, same as SocialAccount's tokens -- never
+    # returned to the client, not even masked.
+    encrypted_secret: Mapped[str] = mapped_column(String(2048), nullable=False)
+    account_label: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Provider-specific, non-secret: for Google Drive the "Cindra" folder
+    # id/link and whether finished content is saved there automatically.
+    settings: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+
+
+class DriveExport(Base):
+    """One finished image/video being copied into a connected Google
+    Drive. A row per file, so the UI can show what landed where -- and
+    so a retried upload resumes the same Drive upload session instead of
+    leaving a second copy of the file in the user's Drive."""
+
+    __tablename__ = "drive_exports"
+    __table_args__ = (
+        # A double-clicked "save" (or a generation finishing while the
+        # user saves it by hand) must not upload the same file twice.
+        Index(
+            "uq_drive_export_in_flight",
+            "integration_id",
+            "source_url",
+            unique=True,
+            postgresql_where=text("status IN ('queued', 'processing')"),
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    integration_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("integrations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    source_url: Mapped[str] = mapped_column(String(1024), nullable=False)
+    file_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    # generation | montage | manual
+    origin: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[DriveExportStatus] = mapped_column(
+        Enum(DriveExportStatus, name="drive_export_status"),
+        nullable=False,
+        default=DriveExportStatus.queued,
+        index=True,
+    )
+    # Google's resumable-upload session URI. Kept so a retry asks Google
+    # how much it already has instead of starting a new file.
+    upload_session_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    drive_file_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    web_view_link: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # Last time the row was (re)queued -- the periodic sweep re-sends
+    # rows whose Celery message was lost (enqueue failed, broker reset).
+    queued_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    # When a worker took it -- a worker killed mid-upload leaves the row
+    # "processing"; the sweep puts rows stuck there back in the queue.
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+
+
+class LiveStream(Base):
+    """A 24/7-capable live stream hosted by an AI avatar that reads the
+    channel's chat and answers out loud. Like MontageJob it's run by an
+    agent process on another machine (stream_agent/), which claims it,
+    heartbeats, and asks the API what the avatar should say."""
+
+    __tablename__ = "live_streams"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    platform: Mapped[StreamPlatform] = mapped_column(
+        Enum(StreamPlatform, name="stream_platform"), nullable=False
+    )
+    # Whose chat the avatar reads (the user's Twitch channel login).
+    channel: Mapped[str] = mapped_column(String(100), nullable=False)
+    # RTMP stream key: whoever has it can broadcast as the channel, so
+    # Fernet-encrypted and never returned to the client.
+    encrypted_stream_key: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    # Who the avatar is, what the channel is about, how it talks.
+    persona: Mapped[str] = mapped_column(String(4000), nullable=False)
+    # What to talk about when chat is quiet, one topic per line.
+    idle_topics: Mapped[str] = mapped_column(String(4000), nullable=False, default="")
+    # Words the avatar must never say (on top of the built-in list).
+    blocked_terms: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    avatar_provider: Mapped[str] = mapped_column(String(40), nullable=False)
+    # Provider-specific avatar/voice choice.
+    avatar: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    min_reply_interval_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=15)
+    max_hours: Mapped[int] = mapped_column(Integer, nullable=False, default=24)
+    # Also post each spoken reply as a chat message (needs Twitch
+    # connected) -- viewers who watch muted still see the answer.
+    post_replies_to_chat: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    status: Mapped[StreamStatus] = mapped_column(
+        Enum(StreamStatus, name="stream_status"),
+        nullable=False,
+        default=StreamStatus.draft,
+        index=True,
+    )
+    stop_requested: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    agent_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Started hours already counted against the plan for this run.
+    hours_billed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    stats: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    error_message: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+
+    @property
+    def stream_key_set(self) -> bool:
+        return bool(self.encrypted_stream_key)
+
+
+class StreamAgent(Base):
+    """Last check-in of each stream agent -- the UI says whether a
+    started stream will go live now or wait for a stream machine."""
+
+    __tablename__ = "stream_agents"
+
+    name: Mapped[str] = mapped_column(String(120), primary_key=True)
+    version: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class StreamEvent(Base):
+    """What happened on air: every line the avatar spoke (and to whom),
+    skipped/blocked messages, errors. The user's audit trail of what an
+    AI said on their channel -- and the live feed on the stream page."""
+
+    __tablename__ = "stream_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    stream_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("live_streams.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    # reply | idle | notice | blocked | system | error
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    author: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    message: Mapped[str | None] = mapped_column(String(600), nullable=True)
+    text: Mapped[str] = mapped_column(String(2000), nullable=False)
+    emotion: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), index=True
+    )
+
+
+class MontageJob(Base):
+    """A montage (clips + music + subtitles) to be assembled and
+    rendered in DaVinci Resolve by a davinci_agent on a render machine.
+
+    Not a GenerationJob: Celery can't run it -- Resolve lives on another
+    machine, so the agent pulls work from the API (claim/progress/
+    result) instead of the API pushing it."""
+
+    __tablename__ = "montage_jobs"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    status: Mapped[MontageStatus] = mapped_column(
+        Enum(MontageStatus, name="montage_status"),
+        nullable=False,
+        default=MontageStatus.queued,
+        index=True,
+    )
+    title: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    spec: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    stage: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    progress: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    result_video_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    agent_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    # False: "only the timeline" -- the user edits in their own DaVinci
+    # (the free one can import it, it just can't be scripted), so no
+    # agent ever renders it; the job is born completed.
+    render: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true"
+    )
+    # The downloadable package (timeline + media), built once per job by
+    # app.montage_packages: None | "building" | "ready" | "failed".
+    package_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    package_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    package_error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    package_requested_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+class MontageAgent(Base):
+    """Last check-in of each DaVinci render agent -- the UI says whether
+    montage can run right now or will wait for the render machine."""
+
+    __tablename__ = "montage_agents"
+
+    name: Mapped[str] = mapped_column(String(120), primary_key=True)
+    version: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class VideoProject(Base):
+    """A video-studio project (CIN-135): script -> style -> brief ->
+    finished video. Unlike a one-shot GenerationJob this is long-lived
+    state the user returns to across days (shoot the footage, come
+    back, download the brief again), so it's a first-class table.
+    Status is derived from which fields are filled -- see the router's
+    _project_status -- rather than stored, so it can never contradict
+    the data."""
+
+    __tablename__ = "video_projects"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    topic: Mapped[str] = mapped_column(String(5000), nullable=False)
+    brand_guide: Mapped[str | None] = mapped_column(String(5000), nullable=True)
+    script: Mapped[str | None] = mapped_column(String(20000), nullable=True)
+    # A key from video_styles.VIDEO_STYLES -- validated at the API
+    # boundary, a loose string here so adding styles needs no migration.
+    style: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    # list of {"filename", "title", "content"} -- the generated brief,
+    # rendered in-app and downloadable as separate .md files.
+    brief_files: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB, nullable=True)
+    # The finished video: either uploaded by the user (edited outside
+    # the app from the brief) or produced by the veo_auto style via the
+    # linked generation job. video_url wins when both exist.
+    video_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    video_generation_job_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("generation_jobs.id", ondelete="SET NULL"), nullable=True
+    )
+    # CIN-137: image GenerationJob ids (as strings) for the
+    # auto-generated illustrations of blocks/cartoon briefs, in prompt
+    # order. A JSONB list rather than a link table -- capped at 10,
+    # only ever read back with the project.
+    illustration_job_ids: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
     )

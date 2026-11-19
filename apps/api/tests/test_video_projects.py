@@ -1,0 +1,942 @@
+import io
+import json
+import threading
+import uuid
+from unittest.mock import patch
+
+import httpx
+import pytest
+from fastapi import HTTPException
+from fastapi.testclient import TestClient
+from sqlalchemy import select, update
+from sqlalchemy.orm import Session
+
+from app.config import get_settings
+from app.content_pipeline.errors import TransientGenerationError
+from app.content_pipeline.video_studio import (
+    VideoStudioFailedError,
+    _split_brief_files,
+    extract_illustration_prompts,
+    generate_brief_files,
+)
+from app.db import SessionLocal
+from app.models import (
+    GenerationContentType,
+    GenerationJob,
+    GenerationStatus,
+    Subscription,
+    SubscriptionTier,
+    UsageEvent,
+    UsageEventType,
+    User,
+    VideoProject,
+)
+from app.routers.video_projects import generate_illustrations, start_video_generation
+
+
+def _auth_headers(client: TestClient, email: str = "studio@cindra.dev") -> dict[str, str]:
+    client.post("/auth/register", json={"email": email, "password": "supersecret1"})
+    token = client.post(
+        "/auth/login", json={"email": email, "password": "supersecret1"}
+    ).json()["access_token"]
+    return {"Authorization": f"Bearer {token}"}
+
+
+def _create_project(client: TestClient, headers: dict[str, str], topic: str = "запуск Cindra") -> dict:
+    response = client.post("/video-projects", json={"topic": topic}, headers=headers)
+    assert response.status_code == 201
+    return response.json()
+
+
+def test_create_project_starts_as_draft(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    project = _create_project(client, headers)
+    assert project["status"] == "draft"
+    assert project["script"] is None
+    assert project["brief_files"] is None
+
+
+def test_list_projects_scoped_to_owner(client: TestClient) -> None:
+    mine = _auth_headers(client, "mine@cindra.dev")
+    other = _auth_headers(client, "other@cindra.dev")
+    _create_project(client, mine, topic="мой проект")
+    _create_project(client, other, topic="чужой проект")
+    listed = client.get("/video-projects", headers=mine).json()
+    assert [p["topic"] for p in listed["items"]] == ["мой проект"]
+
+
+def test_list_projects_is_paginated(client: TestClient) -> None:
+    # CWE-400 backstop: creating a draft project is a free, uncapped
+    # INSERT (unlike SocialAccount/GenerationJob), so this endpoint's
+    # response has to stay bounded no matter how many a user creates.
+    headers = _auth_headers(client)
+    for i in range(3):
+        _create_project(client, headers, topic=f"проект {i}")
+
+    response = client.get("/video-projects?limit=2&offset=0", headers=headers)
+    body = response.json()
+    assert body["total"] == 3
+    assert body["limit"] == 2
+    assert len(body["items"]) == 2
+
+    response = client.get("/video-projects?limit=2&offset=2", headers=headers)
+    assert len(response.json()["items"]) == 1
+
+
+def test_list_projects_rejects_limit_over_max(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    assert client.get("/video-projects?limit=101", headers=headers).status_code == 422
+
+
+def test_get_someone_elses_project_returns_404(client: TestClient) -> None:
+    mine = _auth_headers(client, "mine@cindra.dev")
+    other = _auth_headers(client, "other@cindra.dev")
+    project = _create_project(client, mine)
+    response = client.get(f"/video-projects/{project['id']}", headers=other)
+    assert response.status_code == 404
+
+
+def test_get_project_with_garbage_id_returns_404(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    response = client.get("/video-projects/not-a-uuid", headers=headers)
+    assert response.status_code == 404
+
+
+def test_requires_auth(client: TestClient) -> None:
+    assert client.get("/video-projects").status_code in (401, 403)
+    assert client.post("/video-projects", json={"topic": "x"}).status_code in (401, 403)
+
+
+def test_styles_catalog_includes_blocks_and_veo(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    styles = {s["id"]: s for s in client.get("/video-projects/styles", headers=headers).json()}
+    assert styles["blocks"]["produces"] == "brief"
+    assert styles["veo_auto"]["produces"] == "clip"
+    assert len(styles) >= 5
+
+
+def test_generate_script_stores_script_and_advances_status(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    project = _create_project(client, headers)
+    with patch(
+        "app.routers.video_projects.generate_script_text",
+        return_value="Хук: 3 ошибки в постах. Дальше по кадрам...",
+    ):
+        response = client.post(f"/video-projects/{project['id']}/script", headers=headers)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["script"].startswith("Хук")
+    assert body["status"] == "script_ready"
+
+
+def test_generate_script_gemini_downtime_returns_503(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    project = _create_project(client, headers)
+    with patch(
+        "app.routers.video_projects.generate_script_text",
+        side_effect=TransientGenerationError("Gemini API 503"),
+    ):
+        response = client.post(f"/video-projects/{project['id']}/script", headers=headers)
+    assert response.status_code == 503
+
+
+def test_update_script_and_style(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    project = _create_project(client, headers)
+    response = client.patch(
+        f"/video-projects/{project['id']}",
+        json={"script": "мой отредактированный сценарий", "style": "blocks"},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    assert response.json()["script"] == "мой отредактированный сценарий"
+    assert response.json()["style"] == "blocks"
+
+
+def test_unknown_style_returns_400(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    project = _create_project(client, headers)
+    response = client.patch(
+        f"/video-projects/{project['id']}", json={"style": "vhs-retro"}, headers=headers
+    )
+    assert response.status_code == 400
+
+
+def test_brief_requires_script_and_style(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    project = _create_project(client, headers)
+    assert (
+        client.post(f"/video-projects/{project['id']}/brief", headers=headers).status_code
+        == 400
+    )
+    client.patch(f"/video-projects/{project['id']}", json={"script": "сценарий"}, headers=headers)
+    assert (
+        client.post(f"/video-projects/{project['id']}/brief", headers=headers).status_code
+        == 400
+    )
+
+
+def test_brief_rejected_for_veo_auto_style(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    project = _create_project(client, headers)
+    client.patch(
+        f"/video-projects/{project['id']}",
+        json={"script": "сценарий", "style": "veo_auto"},
+        headers=headers,
+    )
+    response = client.post(f"/video-projects/{project['id']}/brief", headers=headers)
+    assert response.status_code == 400
+    assert "ролик" in response.json()["detail"]
+
+
+def test_generate_brief_stores_files_and_advances_status(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    project = _create_project(client, headers)
+    client.patch(
+        f"/video-projects/{project['id']}",
+        json={"script": "сценарий", "style": "blocks"},
+        headers=headers,
+    )
+    files = [
+        {"filename": "voiceover.md", "title": "Аудио", "content": "текст"},
+        {"filename": "production.md", "title": "Продакшн", "content": "иллюстрации"},
+        {"filename": "edit.md", "title": "Монтаж", "content": "таймлайн"},
+    ]
+    with patch("app.routers.video_projects.generate_brief_files", return_value=files):
+        response = client.post(f"/video-projects/{project['id']}/brief", headers=headers)
+    assert response.status_code == 200
+    body = response.json()
+    assert [f["filename"] for f in body["brief_files"]] == [
+        "voiceover.md",
+        "production.md",
+        "edit.md",
+    ]
+    assert body["status"] == "brief_ready"
+
+
+def test_video_generation_only_for_veo_auto(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    project = _create_project(client, headers)
+    client.patch(
+        f"/video-projects/{project['id']}",
+        json={"script": "сценарий", "style": "blocks"},
+        headers=headers,
+    )
+    response = client.post(
+        f"/video-projects/{project['id']}/video-generation", headers=headers
+    )
+    assert response.status_code == 400
+
+
+def test_video_generation_links_job_and_surfaces_result(
+    client: TestClient, db: Session
+) -> None:
+    headers = _auth_headers(client)
+    # free tier has 0 video generations -- bump to pro like test_content
+    db.execute(
+        update(Subscription)
+        .where(Subscription.user_id == select(User.id).where(User.email == "studio@cindra.dev").scalar_subquery())
+        .values(tier=SubscriptionTier.pro)
+    )
+    db.commit()
+    project = _create_project(client, headers)
+    client.patch(
+        f"/video-projects/{project['id']}",
+        json={"script": "сценарий", "style": "veo_auto"},
+        headers=headers,
+    )
+    # task_always_eager runs the job synchronously; the registered real
+    # Veo generator fails without credentials, which is fine -- the
+    # linked job and its terminal state must surface on the project.
+    response = client.post(
+        f"/video-projects/{project['id']}/video-generation", headers=headers
+    )
+    assert response.status_code == 200
+    body = client.get(f"/video-projects/{project['id']}", headers=headers).json()
+    assert body["video_status"] in ("queued", "processing", "completed", "failed")
+
+    user_id = db.scalar(select(User.id).where(User.email == "studio@cindra.dev"))
+    job_id = db.scalar(select(GenerationJob.id).where(GenerationJob.user_id == user_id))
+    assert job_id is not None
+    # CIN-145: the studio's clip is a vertical short -- pinned in the
+    # payload rather than derived (no publish targets exist yet here).
+    job = db.get(GenerationJob, job_id)
+    assert job.input_payload["aspect_ratio"] == "9:16"
+    # CIN-144: no FAL_KEY in the test environment -> Veo
+    assert job.input_payload["provider"] == "veo"
+
+
+def test_video_generation_prefers_seedance_when_fal_key_configured(
+    client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # CIN-144: the provider is decided at enqueue time from the config
+    # and recorded on the job. CIN-146: a Seedance clip draws on the
+    # long-video counter, which only Business has -- hence business here.
+    monkeypatch.setattr(get_settings(), "fal_key", "test-fal-key")
+    headers = _auth_headers(client)
+    db.execute(
+        update(Subscription)
+        .where(Subscription.user_id == select(User.id).where(User.email == "studio@cindra.dev").scalar_subquery())
+        .values(tier=SubscriptionTier.business)
+    )
+    db.commit()
+    project = _create_project(client, headers)
+    client.patch(
+        f"/video-projects/{project['id']}",
+        json={"script": "сценарий", "style": "veo_auto"},
+        headers=headers,
+    )
+    client.post(f"/video-projects/{project['id']}/video-generation", headers=headers)
+
+    user_id = db.scalar(select(User.id).where(User.email == "studio@cindra.dev"))
+    job_id = db.scalar(select(GenerationJob.id).where(GenerationJob.user_id == user_id))
+    job = db.get(GenerationJob, job_id)
+    assert job.input_payload["provider"] == "seedance"
+    # CIN-146: charged to the long-video counter, not the video quota
+    events = db.scalars(select(UsageEvent).where(UsageEvent.user_id == user_id)).all()
+    assert [e.event_type for e in events] == [UsageEventType.long_video_generation]
+    assert events[0].content_type is None
+
+
+def test_long_video_blocked_on_pro_tier(
+    client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # CIN-146: Pro has 0 long clips -- one costs more than the whole
+    # subscription. The ordinary video quota must not cover for it.
+    monkeypatch.setattr(get_settings(), "fal_key", "test-fal-key")
+    headers = _auth_headers(client)
+    db.execute(
+        update(Subscription)
+        .where(Subscription.user_id == select(User.id).where(User.email == "studio@cindra.dev").scalar_subquery())
+        .values(tier=SubscriptionTier.pro)
+    )
+    db.commit()
+    project = _create_project(client, headers)
+    client.patch(
+        f"/video-projects/{project['id']}",
+        json={"script": "сценарий", "style": "veo_auto"},
+        headers=headers,
+    )
+    response = client.post(
+        f"/video-projects/{project['id']}/video-generation", headers=headers
+    )
+    assert response.status_code == 402
+    assert "длинных AI-роликов" in response.json()["detail"]
+    user_id = db.scalar(select(User.id).where(User.email == "studio@cindra.dev"))
+    assert db.scalar(select(GenerationJob.id).where(GenerationJob.user_id == user_id)) is None
+
+
+def test_business_long_video_quota_runs_out_after_three(
+    client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(get_settings(), "fal_key", "test-fal-key")
+    headers = _auth_headers(client)
+    user_id = db.scalar(select(User.id).where(User.email == "studio@cindra.dev"))
+    db.execute(
+        update(Subscription)
+        .where(Subscription.user_id == user_id)
+        .values(tier=SubscriptionTier.business)
+    )
+    # Three long clips already generated this period.
+    for _ in range(3):
+        db.add(
+            UsageEvent(
+                user_id=user_id, event_type=UsageEventType.long_video_generation
+            )
+        )
+    db.commit()
+
+    project = _create_project(client, headers)
+    client.patch(
+        f"/video-projects/{project['id']}",
+        json={"script": "сценарий", "style": "veo_auto"},
+        headers=headers,
+    )
+    response = client.post(
+        f"/video-projects/{project['id']}/video-generation", headers=headers
+    )
+    assert response.status_code == 402
+    assert "3 длинных AI-роликов" in response.json()["detail"]
+
+
+def test_get_project_batches_illustration_job_lookups(client: TestClient, db: Session) -> None:
+    # N+1 regression: get_project used to do one db.get(GenerationJob)
+    # per illustration id instead of a single batched IN query -- and
+    # this endpoint is the one the studio wizard polls repeatedly while
+    # a generation is in flight, so the per-call saving compounds over
+    # a run. Assert the actual statement count, not just that the
+    # response is still correct (that part was never broken).
+    from sqlalchemy import event
+
+    from app.db import engine
+
+    headers = _auth_headers(client)
+    project = _create_project(client, headers)
+    user = db.query(User).filter(User.email == "studio@cindra.dev").one()
+
+    job_ids = []
+    for i in range(5):
+        job = GenerationJob(
+            user_id=user.id,
+            content_type="image",
+            status=GenerationStatus.completed,
+            input_payload={"topic": f"кадр {i}"},
+            output_payload={"image_url": f"https://media.cindra.example/{i}.jpg"},
+        )
+        db.add(job)
+        db.flush()
+        job_ids.append(str(job.id))
+    db_project = db.get(VideoProject, uuid.UUID(project["id"]))
+    db_project.illustration_job_ids = job_ids
+    db.commit()
+
+    generation_job_selects = []
+
+    def _count_generation_job_selects(conn, cursor, statement, *args):
+        if "generation_jobs" in statement and statement.strip().upper().startswith("SELECT"):
+            generation_job_selects.append(statement)
+
+    event.listen(engine, "before_cursor_execute", _count_generation_job_selects)
+    try:
+        response = client.get(f"/video-projects/{project['id']}", headers=headers)
+    finally:
+        event.remove(engine, "before_cursor_execute", _count_generation_job_selects)
+
+    assert response.status_code == 200
+    assert len(response.json()["illustrations"]) == 5
+    # One batched `IN (...)` query for all 5 illustration jobs, not 5
+    # separate ones.
+    assert len(generation_job_selects) == 1
+
+
+def test_completed_veo_job_marks_project_video_ready(
+    client: TestClient, db: Session
+) -> None:
+    headers = _auth_headers(client)
+    project = _create_project(client, headers)
+    user = db.query(User).filter(User.email == "studio@cindra.dev").one()
+    job = GenerationJob(
+        user_id=user.id,
+        content_type="video",
+        status=GenerationStatus.completed,
+        input_payload={"topic": "x"},
+        output_payload={"video_url": "https://media.cindra.example/final.mp4"},
+    )
+    db.add(job)
+    db.commit()
+    client.patch(
+        f"/video-projects/{project['id']}",
+        json={"script": "сценарий", "style": "veo_auto"},
+        headers=headers,
+    )
+    db_project = db.get(VideoProject, uuid.UUID(project["id"]))
+    db_project.video_generation_job_id = job.id
+    db.commit()
+    body = client.get(f"/video-projects/{project['id']}", headers=headers).json()
+    assert body["video_url"] == "https://media.cindra.example/final.mp4"
+    assert body["status"] == "video_ready"
+
+
+def test_upload_video_stores_url_and_marks_ready(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    project = _create_project(client, headers)
+    with patch(
+        "app.routers.video_projects.upload_bytes",
+        return_value="https://media.cindra.example/upload.mp4",
+    ) as upload:
+        response = client.post(
+            f"/video-projects/{project['id']}/video",
+            files={"file": ("final.mp4", io.BytesIO(b"fake-mp4-bytes"), "video/mp4")},
+            headers=headers,
+        )
+    assert response.status_code == 200
+    assert upload.call_args.args[1] == "video/mp4"
+    body = response.json()
+    assert body["video_url"] == "https://media.cindra.example/upload.mp4"
+    assert body["status"] == "video_ready"
+
+
+def test_upload_rejects_non_video_file(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    project = _create_project(client, headers)
+    response = client.post(
+        f"/video-projects/{project['id']}/video",
+        files={"file": ("notes.txt", io.BytesIO(b"text"), "text/plain")},
+        headers=headers,
+    )
+    assert response.status_code == 400
+
+
+def test_upload_rejects_empty_file(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    project = _create_project(client, headers)
+    response = client.post(
+        f"/video-projects/{project['id']}/video",
+        files={"file": ("final.mp4", io.BytesIO(b""), "video/mp4")},
+        headers=headers,
+    )
+    assert response.status_code == 400
+
+
+def test_delete_project(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    project = _create_project(client, headers)
+    assert (
+        client.delete(f"/video-projects/{project['id']}", headers=headers).status_code == 204
+    )
+    assert client.get(f"/video-projects/{project['id']}", headers=headers).status_code == 404
+
+
+def test_split_brief_files_parses_markers() -> None:
+    raw = (
+        "=== FILE: voiceover.md | Аудио: текст для записи ===\n"
+        "строка 1\nстрока 2\n"
+        "=== FILE: production.md | Продакшн ===\n"
+        "иллюстрация 1\n"
+        "=== FILE: edit.md | Монтаж ===\n"
+        "таймлайн\n"
+    )
+    files = _split_brief_files(raw)
+    assert [f["filename"] for f in files] == ["voiceover.md", "production.md", "edit.md"]
+    assert files[0]["content"] == "строка 1\nстрока 2"
+    assert files[1]["title"] == "Продакшн"
+
+
+def test_split_brief_files_falls_back_to_single_file() -> None:
+    files = _split_brief_files("просто сплошной текст без маркеров")
+    assert len(files) == 1
+    assert files[0]["filename"] == "brief.md"
+
+
+def test_generate_brief_files_calls_gemini_with_style_guidance() -> None:
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["prompt"] = json.loads(request.content)["contents"][0]["parts"][0]["text"]
+        return httpx.Response(
+            200,
+            json={
+                "candidates": [
+                    {
+                        "content": {
+                            "parts": [
+                                {
+                                    "text": (
+                                        "=== FILE: voiceover.md | Аудио ===\nтекст\n"
+                                        "=== FILE: production.md | Продакшн ===\nсписок\n"
+                                        "=== FILE: edit.md | Монтаж ===\nплан\n"
+                                    )
+                                }
+                            ]
+                        }
+                    }
+                ]
+            },
+        )
+
+    files = generate_brief_files(
+        "тема",
+        "сценарий",
+        "blocks",
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    assert len(files) == 3
+    assert "по блокам" in captured["prompt"]
+    assert "сценарий" in captured["prompt"]
+
+
+def test_video_generation_free_tier_hits_402(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    project = _create_project(client, headers)
+    client.patch(
+        f"/video-projects/{project['id']}",
+        json={"script": "сценарий", "style": "veo_auto"},
+        headers=headers,
+    )
+    response = client.post(
+        f"/video-projects/{project['id']}/video-generation", headers=headers
+    )
+    assert response.status_code == 402
+
+
+def _brief_ready_project(client: TestClient, headers: dict[str, str], style: str = "blocks") -> dict:
+    project = _create_project(client, headers)
+    client.patch(
+        f"/video-projects/{project['id']}",
+        json={"script": "сценарий", "style": style},
+        headers=headers,
+    )
+    files = [
+        {"filename": "voiceover.md", "title": "Аудио", "content": "текст"},
+        {
+            "filename": "production.md",
+            "title": "Продакшн",
+            "content": "1. ноутбук со стикерами\n2. тающие часы",
+        },
+        {"filename": "edit.md", "title": "Монтаж", "content": "план"},
+    ]
+    with patch("app.routers.video_projects.generate_brief_files", return_value=files):
+        client.post(f"/video-projects/{project['id']}/brief", headers=headers)
+    return project
+
+
+def test_illustrations_rejected_for_filmed_styles(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    project = _brief_ready_project(client, headers, style="cinematic")
+    response = client.post(
+        f"/video-projects/{project['id']}/illustrations", headers=headers
+    )
+    assert response.status_code == 400
+
+
+def test_illustrations_require_brief(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    project = _create_project(client, headers)
+    client.patch(
+        f"/video-projects/{project['id']}",
+        json={"script": "сценарий", "style": "blocks"},
+        headers=headers,
+    )
+    response = client.post(
+        f"/video-projects/{project['id']}/illustrations", headers=headers
+    )
+    assert response.status_code == 400
+    assert "бриф" in response.json()["detail"]
+
+
+def test_illustrations_create_image_jobs_and_surface_on_project(
+    client: TestClient, db: Session
+) -> None:
+    headers = _auth_headers(client)
+    project = _brief_ready_project(client, headers)
+    prompts = ["ноутбук со стикерами, тёмный фон", "тающие часы, тёмный фон"]
+    with patch(
+        "app.routers.video_projects.extract_illustration_prompts", return_value=prompts
+    ):
+        response = client.post(
+            f"/video-projects/{project['id']}/illustrations", headers=headers
+        )
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["illustrations"]) == 2
+    assert [i["prompt"] for i in body["illustrations"]] == prompts
+    # task_always_eager ran the real image generator without
+    # credentials -- jobs exist and reached a terminal/queued state.
+    assert all(
+        i["status"] in ("queued", "processing", "completed", "failed")
+        for i in body["illustrations"]
+    )
+    jobs = db.scalars(
+        select(GenerationJob).where(
+            GenerationJob.content_type == GenerationContentType.image
+        )
+    ).all()
+    assert len(jobs) == 2
+    assert all(job.input_payload["image_kind"] == "illustration" for job in jobs)
+
+
+def test_illustrations_free_tier_limit_is_atomic(client: TestClient) -> None:
+    # free tier allows 3 images/month -- a 4-prompt brief must charge
+    # nothing and start nothing.
+    headers = _auth_headers(client)
+    project = _brief_ready_project(client, headers)
+    prompts = ["a", "b", "c", "d"]
+    with patch(
+        "app.routers.video_projects.extract_illustration_prompts", return_value=prompts
+    ):
+        response = client.post(
+            f"/video-projects/{project['id']}/illustrations", headers=headers
+        )
+    assert response.status_code == 402
+    body = client.get(f"/video-projects/{project['id']}", headers=headers).json()
+    assert body["illustrations"] is None
+
+
+def test_illustration_extraction_failure_does_not_charge(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    project = _brief_ready_project(client, headers)
+    with patch(
+        "app.routers.video_projects.extract_illustration_prompts",
+        side_effect=VideoStudioFailedError("не разобрали"),
+    ):
+        response = client.post(
+            f"/video-projects/{project['id']}/illustrations", headers=headers
+        )
+    assert response.status_code == 502
+    # image limit untouched: 3 real generations must still fit
+    prompts = ["a", "b", "c"]
+    with patch(
+        "app.routers.video_projects.extract_illustration_prompts", return_value=prompts
+    ):
+        response = client.post(
+            f"/video-projects/{project['id']}/illustrations", headers=headers
+        )
+    assert response.status_code == 200
+
+
+def test_styles_expose_generates_illustrations_flag(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    styles = {s["id"]: s for s in client.get("/video-projects/styles", headers=headers).json()}
+    assert styles["blocks"]["generates_illustrations"] is True
+    assert styles["cartoon"]["generates_illustrations"] is True
+    assert styles["cinematic"]["generates_illustrations"] is False
+    assert styles["veo_auto"]["generates_illustrations"] is False
+
+
+def test_extract_illustration_prompts_parses_json_array() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "candidates": [
+                    {"content": {"parts": [{"text": '```json\n["промпт 1", "промпт 2"]\n```'}]}}
+                ]
+            },
+        )
+
+    prompts = extract_illustration_prompts(
+        "1. промпт 1\n2. промпт 2", client=httpx.Client(transport=httpx.MockTransport(handler))
+    )
+    assert prompts == ["промпт 1", "промпт 2"]
+
+
+def test_extract_illustration_prompts_rejects_non_json() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"candidates": [{"content": {"parts": [{"text": "вот промпты: раз, два"}]}}]},
+        )
+
+    with pytest.raises(VideoStudioFailedError):
+        extract_illustration_prompts(
+            "план", client=httpx.Client(transport=httpx.MockTransport(handler))
+        )
+
+
+def test_extract_illustration_prompts_caps_at_ten() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "candidates": [
+                    {"content": {"parts": [{"text": json.dumps([f"p{i}" for i in range(15)])}]}}
+                ]
+            },
+        )
+
+    prompts = extract_illustration_prompts(
+        "план", client=httpx.Client(transport=httpx.MockTransport(handler))
+    )
+    assert len(prompts) == 10
+
+
+def _usage_count(db: Session, content_type: GenerationContentType) -> int:
+    from app.models import UsageEvent
+
+    return len(
+        db.scalars(
+            select(UsageEvent).where(UsageEvent.content_type == content_type)
+        ).all()
+    )
+
+
+def test_failed_script_generation_does_not_consume_quota(
+    client: TestClient, db: Session
+) -> None:
+    # CIN-139: the studio knows within the request whether Gemini
+    # answered -- a failure must not burn a text generation.
+    headers = _auth_headers(client)
+    project = _create_project(client, headers)
+    with patch(
+        "app.routers.video_projects.generate_script_text",
+        side_effect=TransientGenerationError("Gemini API 503"),
+    ):
+        assert (
+            client.post(f"/video-projects/{project['id']}/script", headers=headers).status_code
+            == 503
+        )
+    assert _usage_count(db, GenerationContentType.text) == 0
+
+
+def test_successful_script_generation_consumes_one_text_generation(
+    client: TestClient, db: Session
+) -> None:
+    headers = _auth_headers(client)
+    project = _create_project(client, headers)
+    with patch(
+        "app.routers.video_projects.generate_script_text", return_value="сценарий"
+    ):
+        client.post(f"/video-projects/{project['id']}/script", headers=headers)
+    assert _usage_count(db, GenerationContentType.text) == 1
+
+
+def test_failed_brief_generation_does_not_consume_quota(
+    client: TestClient, db: Session
+) -> None:
+    headers = _auth_headers(client)
+    project = _create_project(client, headers)
+    client.patch(
+        f"/video-projects/{project['id']}",
+        json={"script": "сценарий", "style": "blocks"},
+        headers=headers,
+    )
+    with patch(
+        "app.routers.video_projects.generate_brief_files",
+        side_effect=VideoStudioFailedError("Gemini 400"),
+    ):
+        assert (
+            client.post(f"/video-projects/{project['id']}/brief", headers=headers).status_code
+            == 502
+        )
+    assert _usage_count(db, GenerationContentType.text) == 0
+
+
+def test_second_illustration_run_while_in_flight_returns_409(
+    client: TestClient, db: Session
+) -> None:
+    # CIN-139: double-clicking must not charge the image quota twice
+    # and orphan the running jobs.
+    headers = _auth_headers(client)
+    project = _brief_ready_project(client, headers)
+    with patch(
+        "app.routers.video_projects.extract_illustration_prompts", return_value=["a"]
+    ):
+        client.post(f"/video-projects/{project['id']}/illustrations", headers=headers)
+    job = db.scalars(
+        select(GenerationJob).where(
+            GenerationJob.content_type == GenerationContentType.image
+        )
+    ).first()
+    job.status = GenerationStatus.processing
+    db.commit()
+    with patch(
+        "app.routers.video_projects.extract_illustration_prompts", return_value=["b"]
+    ):
+        response = client.post(
+            f"/video-projects/{project['id']}/illustrations", headers=headers
+        )
+    assert response.status_code == 409
+    assert _usage_count(db, GenerationContentType.image) == 1
+
+
+def test_second_veo_run_while_in_flight_returns_409(client: TestClient, db: Session) -> None:
+    headers = _auth_headers(client)
+    db.execute(
+        update(Subscription)
+        .where(
+            Subscription.user_id
+            == select(User.id).where(User.email == "studio@cindra.dev").scalar_subquery()
+        )
+        .values(tier=SubscriptionTier.pro)
+    )
+    db.commit()
+    project = _create_project(client, headers)
+    client.patch(
+        f"/video-projects/{project['id']}",
+        json={"script": "сценарий", "style": "veo_auto"},
+        headers=headers,
+    )
+    client.post(f"/video-projects/{project['id']}/video-generation", headers=headers)
+    job = db.scalars(
+        select(GenerationJob).where(
+            GenerationJob.content_type == GenerationContentType.video
+        )
+    ).first()
+    job.status = GenerationStatus.processing
+    db.commit()
+    response = client.post(
+        f"/video-projects/{project['id']}/video-generation", headers=headers
+    )
+    assert response.status_code == 409
+    assert _usage_count(db, GenerationContentType.video) == 1
+
+
+def test_concurrent_illustration_requests_do_not_both_start(
+    client: TestClient, db: Session
+) -> None:
+    # CIN-162: the sequential 409 test above can't catch a TOCTOU race --
+    # it checks project.illustration_job_ids is empty and only sets it
+    # several statements later. Two real requests arriving together can
+    # both read "nothing running" before either writes, both charging
+    # the image quota and starting duplicate jobs (exactly what the
+    # CIN-139 guard's own comment says it exists to prevent). Real
+    # threads, real separate DB connections -- a mock can't exercise
+    # Postgres's own row locking.
+    headers = _auth_headers(client)
+    project = _brief_ready_project(client, headers)
+    user_id = db.scalar(select(User.id).where(User.email == "studio@cindra.dev"))
+
+    results: list[int] = []
+    barrier = threading.Barrier(2)
+
+    def attempt() -> None:
+        with SessionLocal() as session:
+            local_user = session.get(User, user_id)
+            barrier.wait(timeout=5)
+            try:
+                generate_illustrations(project["id"], local_user, session)
+                results.append(200)
+            except HTTPException as exc:
+                results.append(exc.status_code)
+
+    with (
+        patch("app.routers.video_projects.extract_illustration_prompts", return_value=["a"]),
+        patch("app.routers.video_projects.run_generation_job.delay"),
+    ):
+        threads = [threading.Thread(target=attempt) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=10)
+
+    assert sorted(results) == [200, 409]
+    with SessionLocal() as verify:
+        assert _usage_count(verify, GenerationContentType.image) == 1
+
+
+def test_concurrent_video_generation_requests_do_not_both_start(
+    client: TestClient, db: Session
+) -> None:
+    # CIN-162: same race as the illustrations one above, for the
+    # single most expensive call in the app (CIN-139's own words).
+    headers = _auth_headers(client)
+    db.execute(
+        update(Subscription)
+        .where(
+            Subscription.user_id
+            == select(User.id).where(User.email == "studio@cindra.dev").scalar_subquery()
+        )
+        .values(tier=SubscriptionTier.pro)
+    )
+    db.commit()
+    project = _create_project(client, headers)
+    client.patch(
+        f"/video-projects/{project['id']}",
+        json={"script": "сценарий", "style": "veo_auto"},
+        headers=headers,
+    )
+    user_id = db.scalar(select(User.id).where(User.email == "studio@cindra.dev"))
+
+    results: list[int] = []
+    barrier = threading.Barrier(2)
+
+    def attempt() -> None:
+        with SessionLocal() as session:
+            local_user = session.get(User, user_id)
+            barrier.wait(timeout=5)
+            try:
+                start_video_generation(project["id"], local_user, session)
+                results.append(200)
+            except HTTPException as exc:
+                results.append(exc.status_code)
+
+    with patch("app.routers.video_projects.run_generation_job.delay"):
+        threads = [threading.Thread(target=attempt) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=10)
+
+    assert sorted(results) == [200, 409]
+    with SessionLocal() as verify:
+        assert _usage_count(verify, GenerationContentType.video) == 1

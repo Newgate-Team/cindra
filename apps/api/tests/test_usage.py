@@ -1,3 +1,4 @@
+import threading
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -5,14 +6,17 @@ from fastapi import HTTPException
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
+from app.db import SessionLocal
 from app.models import (
     GenerationContentType,
     Subscription,
+    SubscriptionStatus,
     SubscriptionTier,
     UsageEvent,
     UsageEventType,
     User,
 )
+from app.plans import effective_tier
 from app.usage import enforce_and_record_usage, enforce_and_record_usage_bulk
 
 
@@ -115,6 +119,87 @@ def test_business_tier_allows_far_more_video_than_pro(db: Session, user: User) -
         )
 
 
+def test_effective_tier_is_free_for_a_cancelled_business_subscription() -> None:
+    # CIN-153: subscription.tier only ever moves forward (set once by
+    # confirm_paypal_subscription, never reset) -- effective_tier is
+    # what everything enforcing a limit must use instead.
+    subscription = Subscription(
+        user_id=None, tier=SubscriptionTier.business, status=SubscriptionStatus.canceled
+    )
+    assert effective_tier(subscription) is SubscriptionTier.free
+
+
+def test_effective_tier_is_free_for_a_past_due_subscription() -> None:
+    subscription = Subscription(
+        user_id=None, tier=SubscriptionTier.pro, status=SubscriptionStatus.past_due
+    )
+    assert effective_tier(subscription) is SubscriptionTier.free
+
+
+def test_effective_tier_is_the_real_tier_when_active() -> None:
+    subscription = Subscription(
+        user_id=None, tier=SubscriptionTier.business, status=SubscriptionStatus.active
+    )
+    assert effective_tier(subscription) is SubscriptionTier.business
+
+
+def test_cancelled_business_subscription_gets_free_tier_quota(
+    db: Session, user: User
+) -> None:
+    # The concrete exploit CIN-153 closes: subscribe to Business once,
+    # cancel, and previously keep Business-level quota forever.
+    db.execute(
+        update(Subscription)
+        .where(Subscription.user_id == user.id)
+        .values(tier=SubscriptionTier.business, status=SubscriptionStatus.canceled)
+    )
+    db.commit()
+
+    for _ in range(3):  # free tier image limit, see app/plans.py
+        enforce_and_record_usage(
+            db, user, UsageEventType.generation, GenerationContentType.image
+        )
+    with pytest.raises(HTTPException) as exc_info:
+        enforce_and_record_usage(
+            db, user, UsageEventType.generation, GenerationContentType.image
+        )
+    assert exc_info.value.status_code == 402
+    # The 402 message must not claim a tier the user no longer has.
+    assert "business" not in exc_info.value.detail
+    assert "free" in exc_info.value.detail
+
+
+def test_past_due_pro_subscription_gets_free_tier_quota(db: Session, user: User) -> None:
+    db.execute(
+        update(Subscription)
+        .where(Subscription.user_id == user.id)
+        .values(tier=SubscriptionTier.pro, status=SubscriptionStatus.past_due)
+    )
+    db.commit()
+
+    # free tier has zero video generations -- pro would allow 6
+    with pytest.raises(HTTPException) as exc_info:
+        enforce_and_record_usage(
+            db, user, UsageEventType.generation, GenerationContentType.video
+        )
+    assert exc_info.value.status_code == 402
+
+
+def test_active_business_subscription_is_unaffected(db: Session, user: User) -> None:
+    db.execute(
+        update(Subscription)
+        .where(Subscription.user_id == user.id)
+        .values(tier=SubscriptionTier.business, status=SubscriptionStatus.active)
+    )
+    db.commit()
+
+    for _ in range(55):  # business tier video limit, unaffected by this fix
+        enforce_and_record_usage(
+            db, user, UsageEventType.generation, GenerationContentType.video
+        )
+    assert _usage_count(db, user) == 55
+
+
 def test_only_current_period_counts_toward_the_limit(db: Session, user: User) -> None:
     last_month = datetime.now(UTC).replace(day=1) - timedelta(days=1)
     for _ in range(3):
@@ -168,3 +253,40 @@ def test_bulk_raises_402_when_the_whole_batch_would_exceed_the_limit(
 def test_bulk_exactly_at_the_limit_succeeds(db: Session, user: User) -> None:
     enforce_and_record_usage_bulk(db, user, UsageEventType.publication, count=10)
     assert _usage_count(db, user) == 10
+
+
+def test_concurrent_requests_for_the_last_slot_do_not_both_succeed(
+    db: Session, user: User
+) -> None:
+    # CIN-158: TOCTOU race in the check-then-insert sequence -- without
+    # the row lock, two concurrent requests can both read the same
+    # (pre-insert) count, both see room, and both record, going over
+    # the tier limit. Real concurrency, real separate DB connections --
+    # a mock can't exercise Postgres's own row locking.
+    for _ in range(2):  # free tier image limit is 3 -- exactly 1 slot left
+        enforce_and_record_usage(db, user, UsageEventType.generation, GenerationContentType.image)
+
+    results: list[str] = []
+    barrier = threading.Barrier(2)
+
+    def attempt() -> None:
+        with SessionLocal() as session:
+            local_user = session.get(User, user.id)
+            barrier.wait(timeout=5)  # maximize overlap between the two threads
+            try:
+                enforce_and_record_usage(
+                    session, local_user, UsageEventType.generation, GenerationContentType.image
+                )
+                results.append("ok")
+            except HTTPException:
+                results.append("blocked")
+
+    threads = [threading.Thread(target=attempt) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert sorted(results) == ["blocked", "ok"]
+    with SessionLocal() as verify:
+        assert _usage_count(verify, user) == 3  # never 4 -- the limit held exactly

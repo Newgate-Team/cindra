@@ -1,4 +1,5 @@
 import json
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import httpx
@@ -15,7 +16,22 @@ def _client(handler) -> httpx.Client:
     return httpx.Client(transport=httpx.MockTransport(handler))
 
 
+@pytest.fixture(autouse=True)
+def _r2_settings():
+    # CIN-161: attachment URLs below must resolve against Cindra's own
+    # R2 bucket now that fetch_attachment_bytes validates the host.
+    with patch(
+        "app.social_integrations.media_validation.get_settings",
+        return_value=SimpleNamespace(media_local_dir="", r2_public_url_base="https://media.cindra.test"),
+    ):
+        yield
+
+
 def test_sends_correct_request_shape_and_parses_response() -> None:
+    # CIN-142: the image model receives the enhancer's engineered
+    # English prompt, not the raw Russian wrapper -- the wrapper is
+    # exercised separately as the fallback path below.
+    engineered = "A steaming cup of coffee on a sunlit wooden table, soft morning light"
     captured = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -35,8 +51,13 @@ def test_sends_correct_request_shape_and_parses_response() -> None:
                     },
                 },
             )
-        # CIN-114: nano_banana_image_generator also generates a caption
-        # via a separate generateContent call after the image succeeds.
+        # generateContent serves two internal calls: the prompt
+        # enhancer (CIN-142, before the image) and the caption
+        # (CIN-114, after it) -- told apart by the meta-prompt marker.
+        if b"prompt engineer" in request.content:
+            return httpx.Response(
+                200, json={"candidates": [{"content": {"parts": [{"text": engineered}]}}]}
+            )
         return httpx.Response(
             200, json={"candidates": [{"content": {"parts": [{"text": "Подпись"}]}}]}
         )
@@ -50,12 +71,107 @@ def test_sends_correct_request_shape_and_parses_response() -> None:
 
     upload.assert_called_once_with(b"fake-image", "image/png", "png")
     assert result["image_url"] == "https://media.cindra.example/abc.png"
-    assert "утренний кофе" in result["prompt"]
+    assert result["prompt"] == engineered
+    assert result["text"] == "Подпись"
     assert captured["url"] == "https://generativelanguage.googleapis.com/v1beta/interactions"
     assert "x-goog-api-key" in captured["headers"]
     body = json.loads(captured["body"])
     assert body["model"] == "gemini-2.5-flash-image"
-    assert "утренний кофе" in body["input"]
+    assert body["input"] == engineered
+
+
+def test_enhancer_failure_falls_back_to_baseline_prompt() -> None:
+    # CIN-142: the enhancer is best-effort -- when it fails, the image
+    # is still generated with _build_image_prompt's wrapper (which the
+    # CIN-117/125/132 tests below pin down in detail).
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "interactions" in str(request.url):
+            captured["body"] = json.loads(request.content)
+            return httpx.Response(
+                200,
+                json={
+                    "status": "completed",
+                    "output_image": {"data": "ZmFrZS1pbWFnZQ==", "mime_type": "image/png"},
+                },
+            )
+        return httpx.Response(500, json={"error": {"status": "INTERNAL"}})
+
+    payload = {"topic": "утренний кофе", "platform": "instagram"}
+    with patch(
+        "app.content_pipeline.image_generator.upload_bytes",
+        return_value="https://media.cindra.example/abc.png",
+    ):
+        result = nano_banana_image_generator(payload, client=_client(handler))
+    assert result["image_url"] == "https://media.cindra.example/abc.png"
+    assert "утренний кофе" in captured["body"]["input"]
+    assert "Фотореалистичное изображение" in captured["body"]["input"]
+
+
+def test_aspect_ratio_follows_content_kind_and_platform() -> None:
+    # CIN-145: story -> vertical, instagram feed post -> square,
+    # anything else -> no response_format at all (model default).
+    def run(payload: dict) -> dict:
+        captured = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if "interactions" in str(request.url):
+                captured["body"] = json.loads(request.content)
+                return httpx.Response(
+                    200,
+                    json={
+                        "status": "completed",
+                        "output_image": {"data": "ZmFrZS1pbWFnZQ==", "mime_type": "image/png"},
+                    },
+                )
+            return httpx.Response(500, json={"error": {"status": "INTERNAL"}})
+
+        with patch(
+            "app.content_pipeline.image_generator.upload_bytes",
+            return_value="https://media.cindra.example/abc.png",
+        ):
+            nano_banana_image_generator(payload, client=_client(handler))
+        return captured["body"]
+
+    story = run({"topic": "x", "platform": "instagram", "content_kind": "story"})
+    assert story["response_format"] == {"type": "image", "aspect_ratio": "9:16"}
+
+    feed_post = run({"topic": "x", "platform": "instagram", "content_kind": "post"})
+    assert feed_post["response_format"] == {"type": "image", "aspect_ratio": "1:1"}
+
+    telegram_post = run({"topic": "x", "platform": "telegram", "content_kind": "post"})
+    assert "response_format" not in telegram_post
+
+
+def test_template_directive_survives_enhancer_fallback() -> None:
+    # CIN-143: the user picked a template -- its art direction must not
+    # silently disappear just because the enhancer call failed.
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "interactions" in str(request.url):
+            captured["body"] = json.loads(request.content)
+            return httpx.Response(
+                200,
+                json={
+                    "status": "completed",
+                    "output_image": {"data": "ZmFrZS1pbWFnZQ==", "mime_type": "image/png"},
+                },
+            )
+        return httpx.Response(500, json={"error": {"status": "INTERNAL"}})
+
+    payload = {
+        "topic": "новая кофемашина",
+        "platform": "instagram",
+        "image_template": "product_shot",
+    }
+    with patch(
+        "app.content_pipeline.image_generator.upload_bytes",
+        return_value="https://media.cindra.example/abc.png",
+    ):
+        nano_banana_image_generator(payload, client=_client(handler))
+    assert "Template: product shot." in captured["body"]["input"]
 
 
 def test_429_is_transient() -> None:
@@ -114,7 +230,7 @@ def test_image_attachment_becomes_reference_image_in_input_array() -> None:
     payload = {
         "topic": "утренний кофе",
         "platform": "instagram",
-        "attachments": [{"url": "https://r2.example/mood.jpg", "attachment_type": "image"}],
+        "attachments": [{"url": "https://media.cindra.test/mood.jpg", "attachment_type": "image"}],
     }
     with patch(
         "app.content_pipeline.image_generator.upload_bytes",
@@ -144,8 +260,8 @@ def test_two_image_attachments_both_become_reference_images() -> None:
         "topic": "утренний кофе",
         "platform": "instagram",
         "attachments": [
-            {"url": "https://r2.example/mood1.jpg", "attachment_type": "image"},
-            {"url": "https://r2.example/mood2.jpg", "attachment_type": "image"},
+            {"url": "https://media.cindra.test/mood1.jpg", "attachment_type": "image"},
+            {"url": "https://media.cindra.test/mood2.jpg", "attachment_type": "image"},
         ],
     }
     with patch(
@@ -173,7 +289,7 @@ def test_document_attachment_adds_context_without_changing_input_shape() -> None
     payload = {
         "topic": "утренний кофе",
         "platform": "instagram",
-        "attachments": [{"url": "https://r2.example/brief.txt", "attachment_type": "document"}],
+        "attachments": [{"url": "https://media.cindra.test/brief.txt", "attachment_type": "document"}],
     }
     with patch(
         "app.content_pipeline.image_generator.upload_bytes",
@@ -221,8 +337,11 @@ def test_missing_output_image_logs_raw_response_for_diagnosis(caplog: pytest.Log
             {"topic": "x", "platform": "instagram"}, client=_client(handler)
         )
 
-    assert len(caplog.records) == 1
-    message = caplog.records[0].getMessage()
+    # only this module's diagnostic record -- the prompt enhancer
+    # (CIN-142) legitimately logs its own fallback warning here too
+    records = [r for r in caplog.records if r.name == "app.content_pipeline.image_generator"]
+    assert len(records) == 1
+    message = records[0].getMessage()
     assert "status=completed" in message
     assert '"steps"' in message
 
@@ -334,6 +453,37 @@ def test_prompt_nudges_toward_short_correctly_spelled_text() -> None:
     assert "без орфографических и грамматических ошибок" in captured["body"]["input"]
 
 
+def test_prompt_nudges_toward_clean_credible_composition_with_negative_space() -> None:
+    # CIN-132: grounded in the run-social-content skill's
+    # create-social-image-posts reference (prompt-contracts.md's
+    # exclusion list, visual-formats.md's "natural moment over generic
+    # pose"). Negative space matters specifically here since Instagram
+    # Stories composite a caption onto the image afterward (CIN-123).
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "interactions" in str(request.url):
+            captured["body"] = json.loads(request.content)
+            return httpx.Response(
+                200,
+                json={
+                    "status": "completed",
+                    "output_image": {"data": "ZmFrZS1pbWFnZQ==", "mime_type": "image/png"},
+                },
+            )
+        return httpx.Response(500, json={"error": {"status": "INTERNAL"}})
+
+    payload = {"topic": "осенняя коллекция кофе", "platform": "instagram"}
+    with patch(
+        "app.content_pipeline.image_generator.upload_bytes",
+        return_value="https://media.cindra.example/abc.png",
+    ):
+        nano_banana_image_generator(payload, client=_client(handler))
+    body = captured["body"]["input"]
+    assert "свободного пространства" in body
+    assert "искажённых лиц" in body
+
+
 def test_image_found_in_steps_is_used_when_output_image_is_missing() -> None:
     # CIN-118: a real production response had status=completed and a
     # genuinely generated image, but no top-level output_image at all
@@ -394,3 +544,41 @@ def test_last_image_in_steps_is_used_when_multiple_are_present() -> None:
     ) as upload:
         nano_banana_image_generator(payload, client=_client(handler))
     upload.assert_called_once_with(b"last", "image/png", "png")
+
+
+def test_illustration_kind_uses_illustration_wrapper_and_skips_caption() -> None:
+    # CIN-137: studio illustrations are drawn assets -- the
+    # photorealistic lead would fight the illustration prompt, and the
+    # caption call is wasted money for an asset that never becomes a
+    # post.
+    captured = {"calls": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["calls"] += 1
+        if "interactions" in str(request.url):
+            captured["body"] = json.loads(request.content)
+            return httpx.Response(
+                200,
+                json={
+                    "status": "completed",
+                    "output_image": {"data": "ZmFrZS1pbWFnZQ==", "mime_type": "image/png"},
+                },
+            )
+        return httpx.Response(200, json={"candidates": []})
+
+    payload = {
+        "topic": "тающие часы, тёмный фон",
+        "image_kind": "illustration",
+        "content_kind": "post",
+    }
+    with patch(
+        "app.content_pipeline.image_generator.upload_bytes",
+        return_value="https://media.cindra.example/illustration.png",
+    ):
+        result = nano_banana_image_generator(payload, client=_client(handler))
+    prompt = captured["body"]["input"]
+    assert prompt.startswith("Иллюстрация:")
+    assert "Фотореалистичное" not in prompt
+    # only the image call itself -- no caption generateContent call
+    assert captured["calls"] == 1
+    assert "text" not in result
